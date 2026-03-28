@@ -1,0 +1,135 @@
+{
+  "1": {
+    "inputs": {
+      "model_name": "wan2.1-1.3b"
+    },
+    "class_type": "WanVideoModelLoader",
+    "output_slots": [
+      "MODEL"
+    ],
+    "_meta": {
+      "title": "Load Wan2.1 Model"
+    }
+  },
+  "2": {
+    "inputs": {
+      "text": "a vibrant short video clip showing {scene}, cinematic quality, smooth motion, engaging content",
+      "clip": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "output_slots": [
+      "CONDITIONING"
+    ],
+    "_meta": {
+      "title": "Video Prompt"
+    }
+  },
+  "3": {
+    "inputs": {
+      "text": "low quality, static, blurry, watermark, distorted, shaky, unstable",
+      "clip": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "output_slots": [
+      "CONDITIONING"
+    ],
+    "_meta": {
+      "title": "Negative Prompt"
+    }
+  },
+  "4": {
+    "inputs": {
+      "width": 832,
+      "height": 480,
+      "length": 48,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentVideo",
+    "output_slots": [
+      "LATENT"
+    ],
+    "_meta": {
+      "title": "Empty Latent Video (48 frames @ 24fps = 2 seconds)"
+    }
+  },
+  "5": {
+    "inputs": {
+      "seed": 0,
+      "steps": 30,
+      "cfg": 7.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1.0,
+      "model": [
+        "1",
+        0
+      ],
+      "positive": [
+        "2",
+        0
+      ],
+      "negative": [
+        "3",
+        0
+      ],
+      "latent_video": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "WanVideoSampler",
+    "output_slots": [
+      "LATENT"
+    ],
+    "_meta": {
+      "title": "Wan2.1 Video Sampler (30 steps, CFG 7.0)"
+    }
+  },
+  "6": {
+    "inputs": {
+      "samples": [
+        "5",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "WanVideoVAEDecode",
+    "output_slots": [
+      "VIDEO"
+    ],
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "7": {
+    "inputs": {
+      "filename_prefix": "short_video",
+      "format": "video/webp",
+      "fps": 24,
+      "quality": 90,
+      "optimize": true,
+      "video": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "SaveAnimatedWEBP",
+    "output_slots": [],
+    "_meta": {
+      "title": "Save as Animated WEBP"
+    }
+  },
+  "_notes": {
+    "class_type": "_notes",
+    "content": "Wan2.1 Short Video Generator Workflow\n\nThis workflow generates 2-second short video clips (832x480) using Wan2.1 1.3B model.\n\nUsage:\n1. Replace {scene} in the prompt with your desired scene description\n2. Examples: 'a cat playing with yarn', 'a sunset over mountains', 'a person dancing'\n3. Adjust seed (node 5) for different variations\n4. Output is saved as animated WEBP format\n\nWorkflow Details:\n- Resolution: 832x480 (optimal for short-form video)\n- Duration: 48 frames at 24fps = 2 seconds\n- Steps: 30 (good balance of quality and speed)\n- CFG: 7.0 (prompt adherence level)\n\nRecommended Adjustments:\n- Increase steps to 40-50 for higher quality (slower generation)\n- Lower CFG to 5.0-6.0 for more creative interpretations\n- Higher CFG to 8.0-10.0 for more literal prompt matching\n- Change seed for variations\n\nOutput Format:\n- WEBP format provides good quality at small file sizes\n- Perfect for social media sharing\n- 24fps ensures smooth motion perception\n\nNotes:\n- Ensure wan2.1-1.3b model is downloaded in models directory\n- Generation time varies by GPU VRAM\n- Can be run multiple times with different prompts"
+  }
+}

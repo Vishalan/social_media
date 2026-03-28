@@ -1,0 +1,292 @@
+================================================================================
+GPU CLOUD DEPLOYMENT SCRIPTS - COMPLETE SUITE SUMMARY
+================================================================================
+
+Location: /sessions/nice-great-hawking/mnt/social_media/deploy/
+
+Total Files Created: 11
+Total Size: ~96KB
+Date: March 26, 2026
+
+================================================================================
+FILES CREATED
+================================================================================
+
+DOCUMENTATION (4 files)
+├─ INDEX.md                      - Navigation guide and quick reference
+├─ README.md                      - Complete technical documentation
+├─ QUICKSTART.md                  - 5-minute getting started guide
+└─ DEPLOYMENT_OPTIONS.md          - Provider comparison and recommendations
+
+PYTHON SCRIPTS (2 files)
+├─ gpu_cost_comparison.py         - Cost analysis tool with detailed comparisons
+└─ runpod/run_workflow.py         - ComfyUI workflow executor for RunPod
+
+BASH SCRIPTS (2 files)
+├─ runpod/setup_comfyui.sh        - ComfyUI installation script for RunPod
+└─ vastai/setup.sh                - Automated setup for Vast.ai instances
+
+CONFIGURATION (3 files)
+├─ docker-compose.yml             - Docker setup for local GPU testing
+├─ nginx.conf                      - Nginx reverse proxy configuration
+└─ requirements.txt                - Python package dependencies
+
+================================================================================
+WHAT YOU CAN DO
+================================================================================
+
+✓ ANALYZE COSTS
+  Run: python3 gpu_cost_comparison.py
+  Get: Cost per video, monthly estimates, ROI analysis for all providers
+
+✓ CHOOSE PROVIDER
+  Read: DEPLOYMENT_OPTIONS.md
+  Get: Detailed comparison (RunPod vs Vast.ai vs Lambda Labs vs Local)
+  Includes: Decision matrix, pros/cons, cost examples
+
+✓ SET UP RUNPOD
+  Run: python3 runpod/run_workflow.py (requires RUNPOD_API_KEY)
+  Get: Automatic pod creation, workflow submission, result download
+
+✓ SET UP VAST.AI
+  Run: bash vastai/setup.sh (requires VASTAI_API_KEY)
+  Get: Find cheapest GPU, create instance, get connection details
+
+✓ TEST LOCALLY
+  Run: docker-compose up
+  Get: ComfyUI running on your local GPU (if available)
+  Access: http://localhost:8188
+
+================================================================================
+QUICK START GUIDE
+================================================================================
+
+1. READ documentation (5 min)
+   Start with: INDEX.md or QUICKSTART.md
+
+2. CHECK COSTS (2 min)
+   Run: python3 gpu_cost_comparison.py
+
+3. CHOOSE PROVIDER (5 min)
+   Read: DEPLOYMENT_OPTIONS.md
+   Decision: RunPod (easiest), Vast.ai (cheapest), or Local (free)
+
+4. CREATE ACCOUNT (10 min)
+   Visit provider website
+   Get API key
+
+5. SET UP (5-15 min)
+   RunPod: python3 runpod/run_workflow.py
+   Vast.ai: bash vastai/setup.sh
+   Local: docker-compose up
+
+6. GENERATE VIDEO (varies)
+   Submit ComfyUI workflow
+   Monitor progress
+   Download results
+
+7. STOP INSTANCE (1 min)
+   IMPORTANT: Stop pod to avoid charges!
+
+================================================================================
+COST SUMMARY (March 2026)
+================================================================================
+
+HOURLY RATES:
+  GPU Model      | Vast.ai | RunPod | Lambda Labs
+  ────────────────────────────────────────────────
+  RTX 4090       |  $0.30  |  $0.44 |   $0.50
+  L40            |  $0.45  |  $0.60 |   $0.70
+  A100 40GB      |  $0.70  |  $0.95 |   $1.20
+  A100 80GB      |  $1.10  |  $1.49 |   $1.80
+  H100           |  $2.50  |  $3.09 |   $3.50
+
+COST PER VIDEO (5-minute generation):
+  Vast.ai RTX 4090:     $0.04
+  RunPod RTX 4090:      $0.06
+  Vast.ai L40:          $0.06
+  RunPod L40:           $0.10
+
+MONTHLY BUDGET (20 videos):
+  Vast.ai RTX 4090:     ~$60
+  RunPod L40:           ~$120
+  Lambda Labs L40:      ~$140
+  Local (electricity):  ~$60
+
+================================================================================
+KEY RECOMMENDATIONS
+================================================================================
+
+BEST FOR COST:
+  → Vast.ai with RTX 4090 GPU
+  → $60/month for 20 videos
+  → Trade-off: Less guaranteed availability
+
+BEST FOR RELIABILITY:
+  → RunPod with L40 GPU
+  → $120/month for 20 videos
+  → Trade-off: 30% more expensive, better support
+
+BEST FOR TESTING:
+  → Local Docker (if you have GPU)
+  → Free (just electricity ~$60/month)
+  → Trade-off: Limited by your hardware
+
+BEST FOR PRODUCTION:
+  → Lambda Labs with A100 40GB
+  → $240/month for 20 videos
+  → Trade-off: Most expensive, guaranteed SLA
+
+================================================================================
+WHAT'S INSTALLED
+================================================================================
+
+COMFYUI MODELS:
+  ✓ Wan2.1 1.3B (GGUF quantized) - Fast, low VRAM (~8GB)
+  ✓ CogVideoX-5B - Higher quality, more VRAM
+  ✓ SDXL Base - For image/thumbnail generation
+  ✓ VAE decoder - For video frame generation
+
+CUSTOM NODES:
+  ✓ ComfyUI-Manager - Easy model management
+  ✓ ComfyUI-CogVideoXWrapper - CogVideoX integration
+  ✓ ComfyUI-WanVideoWrapper - Wan video integration
+  ✓ ComfyUI-VideoHelperSuite - Video processing tools
+  ✓ ComfyUI-RIFE - Frame interpolation (optional)
+
+DEPENDENCIES:
+  ✓ Python 3 runtime environment
+  ✓ CUDA 11.8/12.1 support
+  ✓ PyTorch with GPU acceleration
+  ✓ FFmpeg for video processing
+
+================================================================================
+IMPORTANT SECURITY REMINDERS
+================================================================================
+
+⚠️  NEVER commit API keys to git!
+    Set via environment variables: export RUNPOD_API_KEY="..."
+
+⚠️  ALWAYS stop pods when done!
+    Forgetting = unexpected charges accumulating
+
+⚠️  VERIFY costs in cloud dashboard
+    Pricing may have changed since March 2026
+
+⚠️  MONITOR GPU usage during generation
+    Confirm GPU is actually being utilized
+
+⚠️  BACK UP important workflows
+    Save ComfyUI workflow JSONs locally
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+Script won't run?
+  → Check Python version: python3 --version (need 3.8+)
+  → Install dependencies: pip install -r requirements.txt
+  → Verify working directory: pwd (should be /deploy)
+
+API key rejected?
+  → Regenerate key in provider dashboard
+  → Check for extra spaces: echo $RUNPOD_API_KEY
+  → Verify correct key set: echo $VASTAI_API_KEY
+
+Out of memory?
+  → Use smaller model: Wan2.1 instead of CogVideoX
+  → Reduce batch size to 1
+  → Check: nvidia-smi (GPU utilization)
+
+Pod won't start?
+  → Wait 2-3 minutes (startup takes time)
+  → Check cloud provider dashboard status
+  → Verify API key has correct permissions
+
+Generation too slow?
+  → Confirm GPU is allocated and in use
+  → May need faster GPU (A100 vs RTX 4090)
+  → Simplify prompt for faster generation
+
+================================================================================
+NEXT STEPS
+================================================================================
+
+1. Read INDEX.md for navigation
+2. Run: python3 gpu_cost_comparison.py
+3. Read: DEPLOYMENT_OPTIONS.md for comparison
+4. Choose provider
+5. Create account and get API key
+6. Run appropriate setup script
+7. Submit your first workflow
+8. Monitor costs
+9. Optimize based on real data
+
+================================================================================
+FILE MANIFEST
+================================================================================
+
+/deploy/
+├── INDEX.md                 (8.2KB)  - Start here
+├── README.md                (6.8KB)  - Complete docs
+├── QUICKSTART.md            (5.4KB)  - 5-min setup
+├── DEPLOYMENT_OPTIONS.md    (7.6KB)  - Provider comparison
+├── SUMMARY.txt              (this)   - Overview
+│
+├── gpu_cost_comparison.py   (11KB)   - Cost analysis tool
+├── requirements.txt         (452B)   - Python deps
+├── docker-compose.yml       (2.4KB)  - Local Docker setup
+├── nginx.conf               (3.3KB)  - Nginx config
+│
+├── runpod/
+│   ├── setup_comfyui.sh              - ComfyUI installation
+│   └── run_workflow.py               - Workflow executor
+│
+└── vastai/
+    └── setup.sh                      - Instance setup
+
+Total: 11 files, ~96KB
+
+================================================================================
+SUPPORT & RESOURCES
+================================================================================
+
+Official Documentation:
+  RunPod:        https://docs.runpod.io/
+  Vast.ai:       https://vast.ai/help/
+  Lambda Labs:   https://lambdalabs.com/docs
+  ComfyUI:       https://github.com/comfyanonymous/ComfyUI
+
+Model Resources:
+  Hugging Face:  https://huggingface.co/
+  Models Hub:    https://huggingface.co/models
+
+Video Generation Models:
+  Wan2.1:        https://huggingface.co/wan-space/wan2.1-1.3b
+  CogVideoX:     https://huggingface.co/THUDM/CogVideoX-5B
+  SDXL:          https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0
+
+================================================================================
+FINAL CHECKLIST BEFORE RUNNING
+================================================================================
+
+□ Read relevant documentation (INDEX.md, QUICKSTART.md, or DEPLOYMENT_OPTIONS.md)
+□ Have chosen a GPU cloud provider (or using local GPU)
+□ Created account on chosen provider
+□ Obtained API key from provider dashboard
+□ Set environment variable (export RUNPOD_API_KEY="..." or VASTAI_API_KEY="...")
+□ Installed Python dependencies (pip install -r requirements.txt)
+□ Verified Python version is 3.8+ (python3 --version)
+□ Ran cost comparison (python3 gpu_cost_comparison.py)
+□ Ready to execute setup script or run workflow
+□ Will monitor costs actively during runs
+□ Will stop pods immediately after completion
+
+================================================================================
+You're all set! Start with INDEX.md or QUICKSTART.md
+================================================================================
+
+Last updated: March 2026
+All pricing subject to change - verify with providers
+Contact provider support for latest information
+

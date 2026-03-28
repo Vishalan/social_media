@@ -1,0 +1,25 @@
+# GPU Cloud Deployment Script Requirements
+
+# RunPod SDK for pod management
+runpod>=0.10.0
+
+# HTTP requests for API communication
+requests>=2.31.0
+
+# Rich terminal output (optional, for prettier tables)
+rich>=13.5.0
+
+# Progress bar and logging
+tqdm>=4.66.0
+
+# JSON validation and processing
+jsonschema>=4.19.0
+
+# Environment variable loading
+python-dotenv>=1.0.0
+
+# Async support for efficient polling
+aiohttp>=3.9.0
+
+# Data validation
+pydantic>=2.0.0

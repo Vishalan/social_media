@@ -1,0 +1,133 @@
+{
+  "1": {
+    "inputs": {
+      "ckpt_name": "sd_xl_base_1.0.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "output_slots": [
+      "MODEL",
+      "CLIP",
+      "VAE"
+    ],
+    "_meta": {
+      "title": "Load SDXL Checkpoint"
+    }
+  },
+  "2": {
+    "inputs": {
+      "text": "eye-catching YouTube thumbnail, {topic}, bold colors, high contrast, 4k, professional",
+      "clip": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "output_slots": [
+      "CONDITIONING"
+    ],
+    "_meta": {
+      "title": "Positive Prompt"
+    }
+  },
+  "3": {
+    "inputs": {
+      "text": "blurry, distorted, low quality, watermark, text, deformed, disfigured",
+      "clip": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "output_slots": [
+      "CONDITIONING"
+    ],
+    "_meta": {
+      "title": "Negative Prompt"
+    }
+  },
+  "4": {
+    "inputs": {
+      "width": 1280,
+      "height": 720,
+      "length": 1,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "output_slots": [
+      "LATENT"
+    ],
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "5": {
+    "inputs": {
+      "seed": 0,
+      "steps": 30,
+      "cfg": 7.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1.0,
+      "model": [
+        "1",
+        0
+      ],
+      "positive": [
+        "2",
+        0
+      ],
+      "negative": [
+        "3",
+        0
+      ],
+      "latent_image": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "output_slots": [
+      "LATENT"
+    ],
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "6": {
+    "inputs": {
+      "samples": [
+        "5",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "output_slots": [
+      "IMAGE"
+    ],
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "7": {
+    "inputs": {
+      "filename_prefix": "thumbnail",
+      "images": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "output_slots": [],
+    "_meta": {
+      "title": "Save Thumbnail"
+    }
+  },
+  "_notes": {
+    "class_type": "_notes",
+    "content": "YouTube Thumbnail Generator Workflow\n\nThis workflow generates eye-catching YouTube thumbnails (1280x720) using Stable Diffusion XL.\n\nUsage:\n1. Replace {topic} in the positive prompt with your actual topic (e.g., 'cat, gaming, tech')\n2. Adjust the seed (node 5) for different variations\n3. Modify CFG scale to control prompt adherence (lower = more creative, higher = more prompt-focused)\n4. Outputs to 'thumbnail' folder with numbered suffixes\n\nRecommended Settings:\n- Steps: 30-50 (higher = better quality but slower)\n- CFG: 7.0-10.0 (good balance for thumbnails)\n- Sampler: euler or dpmpp_2m for best results\n\nNotes:\n- Ensure sd_xl_base_1.0.safetensors is in your checkpoints folder\n- 1280x720 is optimal for YouTube thumbnails\n- Generate multiple variations by changing the seed"
+  }
+}

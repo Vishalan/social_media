@@ -1,0 +1,27 @@
+{
+  "_comment": "superseded by HeyGen/Kling AvatarClient (2026-03-29) — kept for reference only",
+  "1": {
+    "inputs": {
+      "reference_video": "{{reference_video}}",
+      "audio_path": "{{audio_path}}",
+      "output_path": "{{output_path}}",
+      "seed": "{{seed}}",
+      "width": 576,
+      "height": 1024,
+      "fps": 24,
+      "num_frames": -1,
+      "cfg": 3.5,
+      "steps": 20
+    },
+    "class_type": "EchoMimicV3Sampler",
+    "_meta": { "title": "EchoMimic V3 — Avatar Sampler" }
+  },
+  "2": {
+    "inputs": {
+      "images": ["1", 0],
+      "filename_prefix": "avatar_"
+    },
+    "class_type": "SaveVideo",
+    "_meta": { "title": "Save Avatar Video" }
+  }
+}

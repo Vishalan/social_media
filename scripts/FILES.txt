@@ -1,0 +1,95 @@
+Social Media Content Automation Pipeline - File Listing
+======================================================
+
+CORE MODULES
+============
+
+1. content_gen/script_generator.py (540 lines)
+   - ScriptGenerator class
+   - Methods: generate_long_form(), generate_short_form(), generate_twitter_thread(), suggest_topics()
+   - Support for Anthropic Claude and OpenAI GPT
+   - Detailed system prompts and JSON output
+
+2. voiceover/voice_generator.py (380 lines)
+   - VoiceGenerator class
+   - Methods: generate(), list_voices(), estimate_cost()
+   - Intelligent text chunking (5000 char limit)
+   - Exponential backoff retry logic
+   - ElevenLabs API integration
+
+3. video_gen/comfyui_client.py (480 lines)
+   - ComfyUIClient class
+   - Methods: run_workflow(), get_status(), download_output()
+   - Convenience methods: generate_thumbnail(), generate_broll(), generate_short_video()
+   - WebSocket real-time monitoring with polling fallback
+   - Parameter substitution in workflows
+
+4. posting/social_poster.py (480 lines)
+   - SocialPoster class
+   - Methods: post_youtube_video(), post_tiktok(), post_instagram_reel(), post_twitter()
+   - Multi-platform batch: post_all_short_form(), schedule_post()
+   - Ayrshare API integration with direct API fallbacks
+   - Rate limiting and JSON logging
+
+5. analytics/tracker.py (450 lines)
+   - AnalyticsTracker class
+   - Methods: log_post(), update_metrics(), get_report(), top_performing(), revenue_estimate()
+   - SQLite database with context manager support
+   - CSV export functionality
+   - Platform-specific CPM rates
+
+6. pipeline.py (650 lines)
+   - ContentPipeline class
+   - Methods: generate_single_video(), run_daily(), run_weekly_batch()
+   - CLI commands: single, daily, weekly, report
+   - Rich progress display
+   - Full orchestration of all modules
+
+CONFIGURATION & DOCUMENTATION
+==============================
+
+- config.example.json (2020 bytes)
+  Sample configuration with all options documented
+
+- requirements.txt (321 bytes)
+  Python dependencies for pip install
+
+- SETUP.md (10860 bytes)
+  Complete setup guide with troubleshooting
+
+- QUICKSTART.md (5510 bytes)
+  5-minute quick start guide
+
+- PROJECT_SUMMARY.md (11500 bytes)
+  Architecture and design documentation
+
+- FILES.txt (this file)
+  Directory listing and file descriptions
+
+MODULE INITIALIZATION
+=====================
+
+- __init__.py (root)
+- content_gen/__init__.py
+- voiceover/__init__.py
+- video_gen/__init__.py
+- posting/__init__.py
+- analytics/__init__.py
+
+STATISTICS
+==========
+
+Total Files: 17
+Total Python Code: ~2,980 lines
+Documentation: ~28,000 words
+Total Size: ~156 KB
+
+QUICK REFERENCE
+===============
+
+Start here: QUICKSTART.md
+Full docs: SETUP.md
+Architecture: PROJECT_SUMMARY.md
+
+Install: pip install -r requirements.txt
+Run: python pipeline.py single --topic "Topic" --niche "Niche"

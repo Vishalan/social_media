@@ -1,0 +1,154 @@
+{
+  "1": {
+    "inputs": {
+      "image": "image_input.png"
+    },
+    "class_type": "LoadImage",
+    "output_slots": [
+      "IMAGE",
+      "MASK"
+    ],
+    "_meta": {
+      "title": "Load Input Image"
+    }
+  },
+  "2": {
+    "inputs": {
+      "model_name": "cogvideox-5b"
+    },
+    "class_type": "CogVideoXLoader",
+    "output_slots": [
+      "MODEL",
+      "CLIP"
+    ],
+    "_meta": {
+      "title": "Load CogVideoX Model"
+    }
+  },
+  "3": {
+    "inputs": {
+      "text": "cinematic b-roll footage, smooth camera motion, {motion_style}, professional cinematography, high quality, 480p",
+      "clip": [
+        "2",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "output_slots": [
+      "CONDITIONING"
+    ],
+    "_meta": {
+      "title": "Motion Prompt"
+    }
+  },
+  "4": {
+    "inputs": {
+      "text": "static, frozen, low quality, distorted, unstable motion, watermark, text overlay",
+      "clip": [
+        "2",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "output_slots": [
+      "CONDITIONING"
+    ],
+    "_meta": {
+      "title": "Negative Prompt"
+    }
+  },
+  "5": {
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "height": 480,
+      "width": 640,
+      "length": 144,
+      "batch_size": 1
+    },
+    "class_type": "PrepareImageForVideoGeneration",
+    "output_slots": [
+      "LATENT"
+    ],
+    "_meta": {
+      "title": "Prepare Image for Video (144 frames @ 24fps = 6 seconds)"
+    }
+  },
+  "6": {
+    "inputs": {
+      "seed": 0,
+      "steps": 50,
+      "cfg": 9.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 0.7,
+      "model": [
+        "2",
+        0
+      ],
+      "positive": [
+        "3",
+        0
+      ],
+      "negative": [
+        "4",
+        0
+      ],
+      "latent_image": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "CogVideoXSampler",
+    "output_slots": [
+      "LATENT"
+    ],
+    "_meta": {
+      "title": "CogVideoX Sampler (50 steps, CFG 9.0)"
+    }
+  },
+  "7": {
+    "inputs": {
+      "samples": [
+        "6",
+        0
+      ],
+      "vae": [
+        "2",
+        2
+      ]
+    },
+    "class_type": "CogVideoXVAEDecode",
+    "output_slots": [
+      "VIDEO"
+    ],
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "8": {
+    "inputs": {
+      "filename_prefix": "broll",
+      "format": "video/mp4",
+      "codec": "h264",
+      "quality": 95,
+      "fps": 24,
+      "optimize": false,
+      "video": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "output_slots": [],
+    "_meta": {
+      "title": "Save Video"
+    }
+  },
+  "_notes": {
+    "class_type": "_notes",
+    "content": "CogVideoX B-Roll Generator Workflow\n\nThis workflow generates 6-second b-roll video clips from static images using CogVideoX-5B model.\n\nUsage:\n1. Place your input image (e.g., 'image_input.png') in the input folder\n2. Update node 1 'Load Input Image' with your image filename\n3. Replace {motion_style} with desired motion (e.g., 'camera panning left', 'zoom in slowly', 'dolly zoom effect')\n4. The image is converted to video with motion and effects applied\n\nWorkflow Details:\n- Resolution: 640x480 (480p)\n- Duration: 144 frames at 24fps = 6 seconds\n- Model: CogVideoX-5B (image-to-video specialist)\n- Steps: 50 (high quality for smooth motion)\n- CFG: 9.0 (strong prompt adherence)\n- Denoise: 0.7 (preserves original image structure while adding motion)\n\nMotion Style Examples:\n- 'smooth pan from left to right'\n- 'gentle dolly zoom effect'\n- 'camera slowly pulls back'\n- 'subtle rotation around the subject'\n- 'parallax scrolling effect'\n\nRecommended Adjustments:\n- Denoise 0.5-0.8: Lower = more image preservation, Higher = more creative transformation\n- CFG 8.0-10.0: Control motion intensity\n- Steps 40-60: Balance quality vs generation time\n- Increase length to 240 (10 seconds) or 288 (12 seconds) as needed\n\nOutput Format:\n- MP4 format with H.264 codec\n- High quality (95) for professional b-roll\n- 24fps for smooth cinematic motion\n\nNotes:\n- Input image should be decent quality for best results\n- Portrait or unusual aspect ratios may need preprocessing\n- Perfect for social media b-roll, transitions, and video backgrounds\n- Can process multiple images by changing node 1 filename"
+  }
+}

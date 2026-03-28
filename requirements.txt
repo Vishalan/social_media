@@ -1,0 +1,54 @@
+# ─── Core ────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+requests>=2.31.0
+httpx>=0.27.0
+
+# ─── AI / LLM ───────────────────────────────────────────────
+anthropic>=0.40.0
+openai>=1.50.0
+
+# ─── Voice / Audio ──────────────────────────────────────────
+elevenlabs>=1.10.0
+
+# ─── Video / Image ──────────────────────────────────────────
+Pillow>=10.0.0
+moviepy>=1.0.3
+opencv-python-headless>=4.9.0
+
+# ─── Social Media Posting ───────────────────────────────────
+# SocialPoster uses requests directly (Ayrshare REST API) — no extra package needed
+
+# ─── YouTube ────────────────────────────────────────────────
+google-api-python-client>=2.100.0
+google-auth-oauthlib>=1.2.0
+
+# ─── Data & Notebooks ───────────────────────────────────────
+pandas>=2.1.0
+numpy>=1.26.0
+matplotlib>=3.8.0
+seaborn>=0.13.0
+jupyter>=1.0.0
+ipykernel>=6.27.0
+
+# ─── Scheduling & Automation ────────────────────────────────
+schedule>=1.2.0
+APScheduler>=3.10.0
+
+# ─── GPU Cloud CLIs ─────────────────────────────────────────
+runpod>=1.7.0
+
+# ─── Web Scraping (for trend research) ──────────────────────
+beautifulsoup4>=4.12.0
+pytrends>=4.9.0
+
+# ─── Utilities ──────────────────────────────────────────────
+rich>=13.7.0
+click>=8.1.0
+pyyaml>=6.0.0
+tqdm>=4.66.0
+
+# ─── CommonCreed Pipeline ────────────────────────────────────
+feedparser>=6.0.10
+python-telegram-bot>=20.0
+faster-whisper>=1.0.0
+huggingface-hub>=0.21.0

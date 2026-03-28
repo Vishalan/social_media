@@ -1,0 +1,108 @@
+version: '3.8'
+
+# Docker Compose for Local ComfyUI Setup
+# Run ComfyUI with GPU support for local testing and development
+# Usage: docker-compose up
+
+services:
+  comfyui:
+    # Use official ComfyUI image with NVIDIA GPU support
+    image: comfyanonymous/comfyui:latest-nvidia
+
+    # Container name for easy reference
+    container_name: comfyui-gpu
+
+    # Map ports
+    ports:
+      # ComfyUI Web UI
+      - "8188:8188"
+
+    # GPU device access (requires nvidia-docker)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities:
+                - gpu
+
+    # Environment variables
+    environment:
+      # Use all available GPUs
+      CUDA_VISIBLE_DEVICES: 0
+      # Prevent out-of-memory issues
+      PYTORCH_CUDA_ALLOC_CONF: "max_split_size_mb=512"
+
+    # Volume mounts
+    volumes:
+      # Models directory (persists between restarts)
+      - ./models:/workspace/ComfyUI/models
+
+      # Custom nodes (extensions)
+      - ./custom_nodes:/workspace/ComfyUI/custom_nodes
+
+      # Output directory (generated videos/images)
+      - ./output:/workspace/ComfyUI/output
+
+      # Temporary/cache directory
+      - ./temp:/workspace/ComfyUI/temp
+
+    # Keep container running
+    stdin_open: true
+    tty: true
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8188/api/system_stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+    # Resource limits (adjust based on your system)
+    # Uncomment if needed
+    # mem_limit: 32g
+    # memswap_limit: 32g
+
+    # Run as specific user (optional)
+    # user: "1000:1000"
+
+  # Optional: Nginx reverse proxy for web UI
+  nginx:
+    image: nginx:latest
+    container_name: comfyui-nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - comfyui
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Define volumes for persistent storage
+volumes:
+  # You can optionally define named volumes here if needed
+  # models:
+  # output:
+
+# Network configuration
+networks:
+  default:
+    name: comfyui-network
+    driver: bridge

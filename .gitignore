@@ -1,0 +1,38 @@
+# Secrets — never commit
+.env
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# Generated output
+output/
+outputs/
+
+# Media files (large, gitignored except assets/logos/)
+*.mp3
+*.mp4
+*.wav
+*.avi
+*.mov
+assets/input_media/
+assets/spike/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Claude Code session data
+.claude/
+
+# Node
+node_modules/
+
+# Jupyter
+.ipynb_checkpoints/

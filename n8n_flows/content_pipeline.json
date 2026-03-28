@@ -1,0 +1,415 @@
+{
+  "meta": {
+    "instanceId": "a1b2c3d4e5f6g7h8"
+  },
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Daily Content Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [250, 100],
+      "parameters": {
+        "cronExpression": "0 8 * * *",
+        "timezone": "UTC"
+      }
+    },
+    {
+      "id": "2",
+      "name": "Fetch Trending Topics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [250, 250],
+      "parameters": {
+        "method": "GET",
+        "url": "https://trends.google.com/trends/api/trends/home?geo=US",
+        "options": {}
+      }
+    },
+    {
+      "id": "3",
+      "name": "Generate Video Script",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [250, 400],
+      "parameters": {
+        "model": "gpt-4",
+        "prompt": "Create an engaging 60-second video script based on this trending topic: {{$json.trends[0].title}}. Include hook, main content, and call-to-action.",
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 500
+        }
+      }
+    },
+    {
+      "id": "4",
+      "name": "Generate Voiceover",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [250, 550],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.elevenlabs.io/v1/text-to-speech",
+        "authentication": "generic",
+        "genericAuthType": "httpHeaderAuth",
+        "headers": {
+          "xi-api-key": "{{$env.ELEVENLABS_API_KEY}}"
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "={{$json.choices[0].text}}"
+            },
+            {
+              "name": "voice_id",
+              "value": "21m00Tcm4TlvDq8ikWAM"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "5",
+      "name": "Prepare Platform Content",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [250, 700],
+      "parameters": {
+        "options": {}
+      },
+      "fields": {
+        "newFields": [
+          {
+            "name": "youtube_title",
+            "type": "string",
+            "value": "={{$json.trends[0].title}} - Latest Trends"
+          },
+          {
+            "name": "youtube_description",
+            "type": "string",
+            "value": "={{$json.choices[0].text}}"
+          },
+          {
+            "name": "tiktok_caption",
+            "type": "string",
+            "value": "={{$json.trends[0].title}} #trending #viral #shorts"
+          },
+          {
+            "name": "instagram_caption",
+            "type": "string",
+            "value": "={{$json.trends[0].title}} #viral #trending"
+          },
+          {
+            "name": "twitter_text",
+            "type": "string",
+            "value": "={{$json.trends[0].title}} #trending"
+          },
+          {
+            "name": "linkedin_text",
+            "type": "string",
+            "value": "Industry insights on {{$json.trends[0].title}}"
+          },
+          {
+            "name": "voiceover_url",
+            "type": "string",
+            "value": "={{$json.audio_url}}"
+          }
+        ]
+      }
+    },
+    {
+      "id": "6",
+      "name": "Split by Platform",
+      "type": "n8n-nodes-base.itemLists",
+      "typeVersion": 2,
+      "position": [250, 850],
+      "parameters": {
+        "operation": "splitOut",
+        "splitField": "platform"
+      }
+    },
+    {
+      "id": "7",
+      "name": "Post to YouTube",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [50, 1000],
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/youtube/v3/videos?part=snippet,status",
+        "authentication": "oAuth2",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "snippet",
+              "value": "{\"title\":\"{{$json.youtube_title}}\",\"description\":\"{{$json.youtube_description}}\"}"
+            },
+            {
+              "name": "status",
+              "value": "{\"privacyStatus\":\"public\"}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "8",
+      "name": "Post to TikTok",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [200, 1000],
+      "parameters": {
+        "method": "POST",
+        "url": "https://open-api.tiktok.com/v1/video/upload/",
+        "authentication": "generic",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "description",
+              "value": "={{$json.tiktok_caption}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "9",
+      "name": "Post to Instagram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [350, 1000],
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.instagram.com/v18.0/me/media",
+        "authentication": "generic",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "media_type",
+              "value": "CAROUSEL"
+            },
+            {
+              "name": "caption",
+              "value": "={{$json.instagram_caption}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "10",
+      "name": "Post to Twitter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [500, 1000],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twitter.com/2/tweets",
+        "authentication": "generic",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "={{$json.twitter_text}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "11",
+      "name": "Post to LinkedIn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [650, 1000],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.linkedin.com/v2/ugcPosts",
+        "authentication": "generic",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "content",
+              "value": "={{$json.linkedin_text}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "12",
+      "name": "Log to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 2,
+      "position": [250, 1150],
+      "parameters": {
+        "operation": "append",
+        "sheetId": "{{$env.GOOGLE_SHEETS_ID}}",
+        "range": "A1:G1",
+        "columns": "date,trend_topic,script_generated,voiceover_url,youtube_posted,instagram_posted,twitter_posted"
+      }
+    }
+  ],
+  "connections": {
+    "1": {
+      "main": [
+        [
+          {
+            "node": "2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2": {
+      "main": [
+        [
+          {
+            "node": "3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3": {
+      "main": [
+        [
+          {
+            "node": "4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4": {
+      "main": [
+        [
+          {
+            "node": "5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5": {
+      "main": [
+        [
+          {
+            "node": "6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6": {
+      "main": [
+        [
+          {
+            "node": "7",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "8",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "9",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "10",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "11",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7": {
+      "main": [
+        [
+          {
+            "node": "12",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8": {
+      "main": [
+        [
+          {
+            "node": "12",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "9": {
+      "main": [
+        [
+          {
+            "node": "12",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10": {
+      "main": [
+        [
+          {
+            "node": "12",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "11": {
+      "main": [
+        [
+          {
+            "node": "12",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

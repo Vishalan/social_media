@@ -1,0 +1,93 @@
+{
+  "api": {
+    "provider": "anthropic",
+    "anthropic": {
+      "model": "claude-3-5-sonnet-20241022"
+    },
+    "openai": {
+      "model": "gpt-4o-mini"
+    }
+  },
+  "elevenlabs": {
+    "voice_id": "21m00Tcm4TlvDq8ikWAM",
+    "stability": 0.5,
+    "similarity_boost": 0.75
+  },
+  "comfyui": {
+    "server_url": "http://localhost:8188",
+    "timeout_seconds": 300,
+    "workflows": {
+      "thumbnail": "./workflows/thumbnail.json",
+      "short_video": "./workflows/short_video.json",
+      "broll": "./workflows/broll.json"
+    }
+  },
+  "youtube": {
+    "credentials_file": "./credentials/youtube_credentials.json",
+    "channel_id": "YOUR_CHANNEL_ID"
+  },
+  "tiktok": {
+    "api_token": "${TIKTOK_API_TOKEN}",
+    "client_key": "YOUR_CLIENT_KEY",
+    "client_secret": "YOUR_CLIENT_SECRET"
+  },
+  "instagram": {
+    "api_token": "${INSTAGRAM_API_TOKEN}",
+    "business_account_id": "YOUR_ACCOUNT_ID"
+  },
+  "twitter": {
+    "bearer_token": "${TWITTER_BEARER_TOKEN}",
+    "api_key": "YOUR_API_KEY",
+    "api_secret": "YOUR_API_SECRET"
+  },
+  "ayrshare": {
+    "api_key": "${AYRSHARE_API_KEY}"
+  },
+  "daily": {
+    "enabled": true,
+    "niches": [
+      "Technology",
+      "Digital Marketing",
+      "AI & Automation"
+    ],
+    "topics_per_niche": 1,
+    "post_platforms": [
+      "tiktok",
+      "twitter",
+      "instagram"
+    ],
+    "schedule_time": "09:00"
+  },
+  "weekly": {
+    "enabled": true,
+    "videos_per_day": 2,
+    "batch_mode": true
+  },
+  "content": {
+    "default_niche": "Technology",
+    "video_duration_short": 30,
+    "video_duration_long": 600,
+    "thumbnail_size": {
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "analytics": {
+    "database": "./analytics.db",
+    "report_period": "week",
+    "export_formats": [
+      "csv",
+      "json"
+    ]
+  },
+  "output": {
+    "base_directory": "./outputs",
+    "subdirectories": {
+      "scripts": "scripts",
+      "voiceovers": "voiceovers",
+      "videos": "videos",
+      "thumbnails": "thumbnails",
+      "logs": "logs"
+    }
+  }
+}
