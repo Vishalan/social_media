@@ -4,12 +4,15 @@ CommonCreed AI Avatar Content Pipeline.
 Daily orchestrator — three phases, pod only runs during GPU b-roll work:
 
   Phase 1 — CPU + cloud APIs (pod OFF):
-    For each topic: fetch script → voiceover → upload audio → avatar generation.
+    For each topic: fetch script → voiceover → upload audio → avatar generation
+    → CPU b-roll attempt (browser_visit / image_montage / code_walkthrough / stats_card).
     Avatar is generated via HeyGen or Kling cloud API — no GPU needed.
+    B-roll is generated via AI-selected CPU generator — no GPU needed when it succeeds.
 
-  Phase 2 — GPU (pod ON, ~10 min for 3 videos):
-    For each topic: b-roll generation via ComfyUI on RunPod.
-    Pod stops immediately after all b-roll is done.
+  Phase 2 — GPU (pod ON, only when needed):
+    For topics where all CPU b-roll types failed: ai_video generation via ComfyUI.
+    Pod is NOT started if all CPU b-roll succeeded (zero GPU cost day).
+    Pod stops immediately after all GPU b-roll is done.
 
   Phase 3 — CPU (pod OFF, free):
     For each topic: trim silence → assemble video → Telegram approval → post.
@@ -18,6 +21,7 @@ Daily orchestrator — three phases, pod only runs during GPU b-roll work:
     No GPU needed.
 
 Cost: ~$0.35/day fixed (3 topics × ~10 min b-roll GPU time × $0.69/hr).
+      $0.00 on days where all CPU b-roll generators succeed.
 
 Usage:
     python commoncreed_pipeline.py
@@ -36,6 +40,10 @@ Optional (RunPod tuning):
     RUNPOD_NETWORK_VOLUME_ID — network volume with cached model weights
     RUNPOD_COMFYUI_PORT      — defaults to 8188
 
+Optional (B-roll image sources — degrades gracefully without keys):
+    PEXELS_API_KEY           — Pexels API key for high-quality licensed images
+    BING_SEARCH_API_KEY      — Bing Image Search API key
+
 Set COMFYUI_URL to skip RunPod and point at a local/existing ComfyUI instance.
 
 Note: REFERENCE_VIDEO_PATH is no longer needed at runtime — it is only used once
@@ -51,8 +59,11 @@ from pathlib import Path
 from typing import Optional
 
 from analytics.tracker import AnalyticsTracker
+from anthropic import AsyncAnthropic
 from approval.telegram_bot import TelegramApprovalBot
 from avatar_gen import AvatarQualityError, make_avatar_client
+from broll_gen import BrollError, make_broll_generator
+from broll_gen.selector import BrollSelector
 from content_gen.script_generator import ScriptGenerator
 from gpu.pod_manager import PodManager, PodStartupError
 from news_sourcing.news_sourcer import InsufficientTopicsError, NewsSourcer
@@ -77,6 +88,8 @@ class VideoJob:
     caption_segments: list[dict] = field(default_factory=list)
     affiliate_links: list[str] = field(default_factory=list)
     broll_only: bool = False   # True if avatar generation failed completely
+    broll_type: str = ""       # winning generator type (e.g. "browser_visit"), for logging
+    needs_gpu_broll: bool = False  # True if all CPU generators failed → triggers Phase 2 pod
 
 
 class CommonCreedPipeline:
@@ -141,6 +154,9 @@ class CommonCreedPipeline:
         )
         # Avatar client — provider selected by config["avatar_provider"]
         self.avatar_client = make_avatar_client(config)
+        # B-roll selector — AI-driven type selection (uses haiku, cheap)
+        _anthropic = AsyncAnthropic(api_key=config["anthropic_api_key"])
+        self.broll_selector = BrollSelector(_anthropic)
         self.video_editor = VideoEditor()
         self.telegram = TelegramApprovalBot(
             bot_token=config["telegram_bot_token"],
@@ -244,29 +260,57 @@ class CommonCreedPipeline:
             )
             broll_only = True
 
-        return VideoJob(
+        job = VideoJob(
             topic=topic,
             script=script,
             trimmed_audio_path=audio_path,  # silence trim happens in Phase 3
             avatar_path=avatar_path,
             audio_url=audio_url,
-            broll_path="",          # filled in Phase 2
+            broll_path="",          # filled below (CPU) or in Phase 2 (GPU)
             caption_segments=[],    # filled in Phase 3
             affiliate_links=self._select_affiliates(),
             broll_only=broll_only,
         )
 
+        # CPU b-roll: estimate target duration from audio, then try CPU generators
+        try:
+            from mutagen.mp3 import MP3
+            _audio = MP3(audio_path)
+            audio_duration = _audio.info.length
+        except Exception:
+            # Rough estimate: ~2.5 words/sec for short-form scripts
+            word_count = len(script.get("script", "").split())
+            audio_duration = max(15.0, word_count / 2.5)
+        # Subtract hook (3s) + CTA (3s) = VideoEditor.HOOK_DURATION_S + CTA_DURATION_S
+        target_duration_s = max(6.0, audio_duration - 6.0)
+        await self._run_cpu_broll(job, target_duration_s)
+
+        return job
+
     # ─── Phase 2: GPU (b-roll only) ───────────────────────────────────────
 
     async def _phase2_broll(self, jobs: list[VideoJob]) -> None:
         """
-        Start pod, generate b-roll for all jobs, stop pod.
+        Start pod and generate GPU b-roll only for jobs that need it.
+        Skips pod entirely if all CPU b-roll succeeded in Phase 1.
         Mutates each job's broll_path in place.
         """
+        gpu_jobs = [j for j in jobs if j.needs_gpu_broll]
+        if not gpu_jobs:
+            logger.info(
+                "Phase 2 skipped — all %d jobs have CPU b-roll. GPU pod NOT started.",
+                len(jobs)
+            )
+            return
+
+        logger.info(
+            "Phase 2: %d/%d jobs need GPU b-roll. Starting pod.",
+            len(gpu_jobs), len(jobs)
+        )
         if self._pod_manager is not None:
-            await self._phase2_with_pod(jobs)
+            await self._phase2_with_pod(gpu_jobs)
         else:
-            await self._phase2_broll_jobs(jobs)
+            await self._phase2_broll_jobs(gpu_jobs)
 
     async def _phase2_with_pod(self, jobs: list[VideoJob]) -> None:
         try:
@@ -282,22 +326,84 @@ class CommonCreedPipeline:
             raise
 
     async def _phase2_broll_jobs(self, jobs: list[VideoJob]) -> None:
-        """Generate b-roll for all jobs sequentially. Skips failed topics."""
+        """Generate GPU b-roll (ai_video) for jobs that need it. Skips completed jobs (C4)."""
         for job in jobs:
+            if job.broll_path:  # C4: skip if already set by Phase 1
+                continue
             try:
-                job.broll_path = await self._generate_broll(job.script, job.topic)
+                from broll_gen.ai_video import AiVideoGenerator
+                gen = AiVideoGenerator(self.comfyui)
+                safe_title = re.sub(r"[^a-z0-9_]", "_", job.topic["title"].lower())[:40]
+                output_path = f"output/video/{safe_title}_broll.mp4"
+                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                job.broll_path = await gen.generate(job, 24.0, output_path)
+                job.broll_type = "ai_video"
             except Exception as exc:
                 logger.error(
                     "B-roll generation failed for topic '%s': %s",
-                    job.topic["title"],
-                    exc,
+                    job.topic["title"], exc,
                 )
                 await self.telegram.send_alert(
                     f"B-roll failed for '{job.topic['title']}': {exc} — video will be skipped."
                 )
-                # Mark as unrecoverable so Phase 3 skips this job
                 job.broll_path = ""
-                job.broll_only = True  # flag reviewed in _assemble()
+                job.broll_only = True
+
+    # ─── CPU b-roll helper (called from Phase 1) ──────────────────────────
+
+    async def _run_cpu_broll(self, job: VideoJob, target_duration_s: float) -> None:
+        """
+        Try CPU b-roll generators in selector order.
+        Sets job.broll_path + job.broll_type on success.
+        Sets job.needs_gpu_broll = True if all CPU types fail.
+        Mutates job in place — never raises.
+        """
+        safe_title = re.sub(r"[^a-z0-9_]", "_", job.topic["title"].lower())[:40]
+        output_path = f"output/video/{safe_title}_broll.mp4"
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+        # AI-driven type selection
+        script_text = job.script.get("script", job.script.get("body", ""))
+        types = await self.broll_selector.select(
+            topic_title=job.topic["title"],
+            topic_url=job.topic["url"],
+            script_text=script_text,
+        )
+
+        # kwargs for generators that need clients
+        gen_kwargs = {
+            "anthropic_client": AsyncAnthropic(api_key=self.config["anthropic_api_key"]),
+            "pexels_api_key": self.config.get("pexels_api_key", ""),
+            "bing_api_key": self.config.get("bing_api_key", ""),
+            "comfyui_client": self.comfyui,
+        }
+
+        # Try primary then fallback — CPU types only (ai_video handled in Phase 2)
+        cpu_types = [t for t in types if t != "ai_video"]
+        for type_name in cpu_types:
+            try:
+                gen = make_broll_generator(type_name, **gen_kwargs)
+                path = await gen.generate(job, target_duration_s, output_path)
+                job.broll_path = path
+                job.broll_type = type_name
+                job.needs_gpu_broll = False
+                logger.info(
+                    "[Phase 1] B-roll type '%s' succeeded for '%s'",
+                    type_name, job.topic["title"]
+                )
+                return
+            except BrollError as exc:
+                logger.warning(
+                    "[Phase 1] B-roll type '%s' failed for '%s': %s — trying next",
+                    type_name, job.topic["title"], exc
+                )
+
+        # All CPU types failed — flag for GPU b-roll in Phase 2
+        logger.warning(
+            "[Phase 1] All CPU b-roll types failed for '%s' — flagging for GPU (Phase 2)",
+            job.topic["title"]
+        )
+        job.needs_gpu_broll = True
 
     # ─── Phase 3: CPU ─────────────────────────────────────────────────────
 
@@ -415,17 +521,6 @@ class CommonCreedPipeline:
             return await self.avatar_client.generate(audio_url, retry_output_path)
             # If this second call also raises AvatarQualityError, it propagates
             # to _generate_script_voice_avatar(), which catches it and sets broll_only=True.
-
-    async def _generate_broll(self, script: dict, topic: dict) -> str:
-        """Generate b-roll via existing ComfyUI workflow."""
-        visual_prompt = script.get("visual_cues", script.get("title", "tech news"))
-        output_path = f"output/video/{_safe(topic['title'])}_broll.mp4"
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        return await self.comfyui.run_workflow(
-            workflow_json=None,
-            params={"prompt": visual_prompt, "output_path": output_path},
-            wait_for_completion=True,
-        )
 
     async def _generate_voice(self, text: str, topic: dict) -> str:
         """Generate voiceover audio via ElevenLabs. Runs in thread."""
@@ -548,6 +643,9 @@ if __name__ == "__main__":
         "heygen_avatar_id": os.environ.get("HEYGEN_AVATAR_ID", ""),
         "fal_api_key": os.environ.get("FAL_API_KEY", ""),
         "kling_avatar_image_url": os.environ.get("KLING_AVATAR_IMAGE_URL", ""),
+        # B-roll image sources (optional — degrades gracefully without keys)
+        "pexels_api_key": os.environ.get("PEXELS_API_KEY", ""),
+        "bing_api_key": os.environ.get("BING_SEARCH_API_KEY", ""),
     }
 
     asyncio.run(CommonCreedPipeline(config).run_daily())
