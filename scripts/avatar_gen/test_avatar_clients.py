@@ -8,6 +8,7 @@ Run with:
 """
 
 import asyncio
+import itertools
 import os
 import time
 import unittest
@@ -160,14 +161,17 @@ class TestHeyGenAvatarClientTimeout:
         mock_async_client.__aenter__ = AsyncMock(return_value=mock_client_instance)
         mock_async_client.__aexit__ = AsyncMock(return_value=False)
 
-        # Simulate deadline already expired on first poll check
+        # Patching time.monotonic globally (asyncio.sleep also calls it internally).
+        # First call sets the deadline; all subsequent calls return a past-deadline
+        # value so the while loop never enters and timeout is raised immediately.
         _base = time.monotonic()
-        monotonic_values = iter([_base, _base - 1])  # second call is past deadline
+        _past = _base + 20 * 60 + 1  # _TIMEOUT_S = 20 * 60 in heygen_client
+        monotonic_seq = itertools.chain([_base], itertools.repeat(_past))
 
         with patch("scripts.avatar_gen.heygen_client.httpx.AsyncClient",
                    return_value=mock_async_client), \
              patch("scripts.avatar_gen.heygen_client.time.monotonic",
-                   side_effect=lambda: next(monotonic_values)), \
+                   side_effect=lambda: next(monotonic_seq)), \
              pytest.raises(AvatarQualityError, match="timed out"):
             await client.generate("https://audio.url/clip.mp3", output_path)
 
@@ -315,7 +319,7 @@ class TestKlingAvatarClientFailed:
 
         with patch("scripts.avatar_gen.kling_client.httpx.AsyncClient",
                    return_value=mock_async_client), \
-             pytest.raises(AvatarQualityError, match="FAILED"):
+             pytest.raises(AvatarQualityError, match="generation failed"):
             await client.generate("https://audio.url/clip.mp3", output_path)
 
 

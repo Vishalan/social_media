@@ -48,6 +48,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
 from analytics.tracker import AnalyticsTracker
 from approval.telegram_bot import TelegramApprovalBot
@@ -116,7 +117,7 @@ class CommonCreedPipeline:
 
         # RunPod pod manager — auto-starts/stops the GPU instance around b-roll work.
         # If comfyui_url is set directly, RunPod is bypassed (local dev mode).
-        self._static_comfyui_url: str | None = config.get("comfyui_url") or None
+        self._static_comfyui_url: Optional[str] = config.get("comfyui_url") or None
         if self._static_comfyui_url:
             self._pod_manager = None
             logger.info("Using static ComfyUI URL: %s (RunPod disabled)", self._static_comfyui_url)

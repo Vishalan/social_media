@@ -152,7 +152,7 @@ class SocialPoster:
         video_path: str,
         thumbnail_path: Optional[str] = None,
         privacy_status: str = "unlisted",
-        affiliate_links: List[str] | None = None,
+        affiliate_links: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Post a video to YouTube.
@@ -228,7 +228,7 @@ class SocialPoster:
             return result
 
     def post_tiktok(
-        self, caption: str, video_path: str, affiliate_links: List[str] | None = None
+        self, caption: str, video_path: str, affiliate_links: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Post a video to TikTok.
@@ -294,7 +294,7 @@ class SocialPoster:
             return result
 
     def post_instagram_reel(
-        self, caption: str, video_path: str, affiliate_links: List[str] | None = None
+        self, caption: str, video_path: str, affiliate_links: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Post a reel to Instagram.
@@ -426,7 +426,7 @@ class SocialPoster:
         caption: str,
         video_path: str,
         hashtags: List[str],
-        affiliate_links: List[str] | None = None,
+        affiliate_links: Optional[List[str]] = None,
     ) -> Dict[str, Dict[str, Any]]:
         """
         Post the same video to all short-form platforms.
