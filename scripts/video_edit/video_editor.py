@@ -23,6 +23,7 @@ class VideoEditor:
         audio_path: str,
         caption_segments: list[dict],
         output_path: str,
+        crop_to_portrait: bool = False,
     ) -> str:
         """
         Assemble a 9:16 vertical short (1080x1920).
@@ -34,6 +35,9 @@ class VideoEditor:
           - [total - CTA_DURATION_S, total): full-screen avatar (CTA)
 
         caption_segments: list of {word, start, end} dicts from faster-whisper.
+        crop_to_portrait: set True when avatar is 16:9 landscape (HeyGen output) —
+            center-crops to 9:16 before compositing. Kling outputs native 9:16 so
+            this is False by default.
         Returns output_path.
         """
         from moviepy.editor import (
@@ -44,9 +48,14 @@ class VideoEditor:
             concatenate_videoclips,
         )
 
-        avatar = VideoFileClip(avatar_path).resize(
-            (self.OUTPUT_WIDTH, self.OUTPUT_HEIGHT)
-        )
+        raw_avatar = VideoFileClip(avatar_path)
+        if crop_to_portrait:
+            # HeyGen produces 1920x1080 (16:9). Crop a centered 9:16 strip then resize.
+            src_w, src_h = raw_avatar.w, raw_avatar.h
+            crop_w = int(src_h * 9 / 16)
+            x1 = (src_w - crop_w) // 2
+            raw_avatar = raw_avatar.crop(x1=x1, y1=0, x2=x1 + crop_w, y2=src_h)
+        avatar = raw_avatar.resize((self.OUTPUT_WIDTH, self.OUTPUT_HEIGHT))
         broll = VideoFileClip(broll_path).resize(
             (self.OUTPUT_WIDTH, self.OUTPUT_HEIGHT // 2)
         )

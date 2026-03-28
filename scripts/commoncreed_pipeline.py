@@ -364,13 +364,11 @@ class CommonCreedPipeline:
     def _assemble(self, job: VideoJob, avatar_path: str, filename: str) -> str:
         """Assemble final 9:16 video. Uses b-roll-only layout if avatar_path is empty.
 
-        Note: When avatar_provider == "heygen", HeyGen outputs 1920x1080 (landscape)
-        which needs cropping to 9:16 before compositing. When avatar_provider == "kling",
-        output is already 9:16 (no crop needed).
-        TODO: Pass crop_to_portrait=True to VideoEditor.assemble() when
-        avatar_provider == "heygen" once VideoEditor supports that parameter.
+        HeyGen outputs 1920x1080 (landscape) → crop_to_portrait=True.
+        Kling outputs native 9:16 → no crop needed.
         """
         output_path = f"output/video/{filename}"
+        crop = self.config.get("avatar_provider", "kling") == "heygen"
         if job.broll_only or not avatar_path:
             # B-roll only: full-screen b-roll with captions
             output_path = self.video_editor.assemble(
@@ -387,6 +385,7 @@ class CommonCreedPipeline:
                 audio_path=job.trimmed_audio_path,
                 caption_segments=job.caption_segments,
                 output_path=output_path,
+                crop_to_portrait=crop,
             )
         return output_path
 
