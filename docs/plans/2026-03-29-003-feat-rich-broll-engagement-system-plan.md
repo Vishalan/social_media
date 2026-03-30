@@ -1,7 +1,7 @@
 ---
 date: 2026-03-29
 type: feat
-status: active
+status: completed
 origin: docs/brainstorms/2026-03-29-rich-broll-engagement-requirements.md
 ---
 
