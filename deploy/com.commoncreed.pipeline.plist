@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.commoncreed.pipeline</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/vishalan/Documents/Projects/social_media/deploy/run_pipeline.sh</string>
+    </array>
+
+    <!-- Run daily at 08:00 local time -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- Keep a separate stdout/stderr log for launchd-level errors -->
+    <key>StandardOutPath</key>
+    <string>/Users/vishalan/Documents/Projects/social_media/logs/launchd_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/vishalan/Documents/Projects/social_media/logs/launchd_stderr.log</string>
+
+    <!-- Retry if the machine was asleep at the scheduled time -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Don't restart on crash — one run per day is enough -->
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>

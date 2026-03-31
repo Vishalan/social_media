@@ -1,9 +1,22 @@
 import logging
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Locate a bold font available on the current OS for FFmpeg drawtext.
+_FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",       # Debian/Ubuntu
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",                 # Fedora/RHEL
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",           # macOS
+    "/System/Library/Fonts/Helvetica.ttc",                         # macOS fallback
+    "C:/Windows/Fonts/arialbd.ttf",                                # Windows
+]
+_CAPTION_FONT = next(
+    (p for p in _FONT_CANDIDATES if Path(p).exists()), ""
+)
 
 
 class VideoEditor:
@@ -153,7 +166,7 @@ class VideoEditor:
                 f":x=(w-text_w)/2:y=h*0.75"
                 f":text='{word}'"
                 f":enable='between(t,{start:.3f},{end:.3f})'"
-                f":fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+                + (f":fontfile={_CAPTION_FONT}" if _CAPTION_FONT else "")
             )
         return ",".join(parts)
 
