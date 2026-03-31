@@ -83,7 +83,7 @@ Return a JSON object with key 'topics' containing an array of topic ideas with '
             self.client = anthropic.Anthropic(
                 api_key=api_key or os.getenv("ANTHROPIC_API_KEY")
             )
-            self.model = "claude-3-5-sonnet-20241022"
+            self.model = "claude-sonnet-4-5"
         elif self.api_provider == "openai":
             openai.api_key = api_key or os.getenv("OPENAI_API_KEY")
             self.client = openai.OpenAI(api_key=openai.api_key)
