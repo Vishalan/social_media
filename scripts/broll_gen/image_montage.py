@@ -80,16 +80,20 @@ class ImageMontageGenerator(BrollBase):
             BrollError: If fewer than 2 images can be found or downloaded,
                         or if FFmpeg encoding fails.
         """
-        query = job.topic
-        topic_url = getattr(job, "url", "")
+        query = job.topic["title"]
+        topic_url = job.topic.get("url", "")
 
         logger.info("ImageMontage: fetching images for query=%r", query)
         image_urls = await self._fetch_images(query, topic_url)
 
-        if len(image_urls) < 2:
+        if len(image_urls) == 0:
             raise BrollError(
-                f"no images found for query={query!r} (got {len(image_urls)} URL(s))"
+                f"no images found for query={query!r}"
             )
+        # Duplicate a single image so the Ken Burns + xfade pipeline always
+        # has at least 2 clips to work with (graceful degradation without API keys).
+        if len(image_urls) == 1:
+            image_urls = image_urls * 2
 
         tmp_dir = Path(tempfile.mkdtemp(prefix="image_montage_"))
         try:

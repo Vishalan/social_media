@@ -26,9 +26,10 @@ from broll_gen.image_montage import ImageMontageGenerator
 
 @dataclass
 class _VideoJob:
-    topic: str
-    url: str = ""
+    topic: dict
     script: str = ""
+    trimmed_audio_path: str = ""
+    avatar_path: str = ""
     broll_path: str = ""
     broll_type: str = ""
     needs_gpu_broll: bool = False
@@ -125,7 +126,7 @@ class TestPexelsHappyPath:
 
     def test_pexels_happy_path(self, tmp_path):
         output_path = str(tmp_path / "out.mp4")
-        job = _VideoJob(topic="artificial intelligence", url="https://example.com/article")
+        job = _VideoJob(topic={"title": "artificial intelligence", "url": "https://example.com/article"})
 
         pexels_resp = _MockResponse(json_data=_make_pexels_response(4))
         img_resp = _MockResponse(content=_fake_image_bytes())
@@ -175,8 +176,7 @@ class TestNoKeysFallsThroughToOgImage:
         mock_proc.returncode = 0
 
         job = _VideoJob(
-            topic="AI breakthrough",
-            url="https://example.com/ai-article",
+            topic={"title": "AI breakthrough", "url": "https://example.com/ai-article"},
         )
 
         with (
@@ -196,7 +196,7 @@ class TestAllSourcesFailRaises:
 
     def test_all_sources_fail_raises(self, tmp_path):
         output_path = str(tmp_path / "out.mp4")
-        job = _VideoJob(topic="quantum computing", url="https://example.com/article")
+        job = _VideoJob(topic={"title": "quantum computing", "url": "https://example.com/article"})
 
         async def _raising_get(*args, **kwargs):
             raise httpx.HTTPError("connection failed")
@@ -224,7 +224,7 @@ class TestMinimumTwoImagesRequired:
         # No article URL → OG fallback skipped; no Bing key; Pexels returns 2 photos
         # so the URL-count guard (< 2) is cleared.  The second download then fails,
         # leaving only 1 downloaded image → "too few images downloaded" error.
-        job = _VideoJob(topic="robotics", url="")
+        job = _VideoJob(topic={"title": "robotics", "url": ""})
 
         pexels_two = _MockResponse(
             json_data={

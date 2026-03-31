@@ -176,6 +176,21 @@ class VoiceGenerator:
                 response.raise_for_status()
                 return response
 
+            except requests.HTTPError as e:
+                # 4xx client errors are permanent — retrying won't help
+                if e.response is not None and 400 <= e.response.status_code < 500:
+                    logger.error(f"Request failed after {max_retries} attempts: {e}")
+                    raise
+                wait_time = 2 ** attempt
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Request failed (attempt {attempt + 1}/{max_retries}). "
+                        f"Retrying in {wait_time}s: {e}"
+                    )
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"Request failed after {max_retries} attempts: {e}")
+                    raise
             except requests.RequestException as e:
                 wait_time = 2 ** attempt
                 if attempt < max_retries - 1:
