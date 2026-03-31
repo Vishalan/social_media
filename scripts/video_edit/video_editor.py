@@ -40,13 +40,14 @@ class VideoEditor:
             this is False by default.
         Returns output_path.
         """
-        from moviepy.editor import (
+        from moviepy import (
             AudioFileClip,
             ColorClip,
             CompositeVideoClip,
             VideoFileClip,
             concatenate_videoclips,
         )
+        from moviepy.video.fx import Loop
 
         raw_avatar = VideoFileClip(avatar_path)
         if crop_to_portrait:
@@ -55,8 +56,8 @@ class VideoEditor:
             crop_w = int(src_h * 9 / 16)
             x1 = (src_w - crop_w) // 2
             raw_avatar = raw_avatar.crop(x1=x1, y1=0, x2=x1 + crop_w, y2=src_h)
-        avatar = raw_avatar.resize((self.OUTPUT_WIDTH, self.OUTPUT_HEIGHT))
-        broll = VideoFileClip(broll_path).resize(
+        avatar = raw_avatar.resized((self.OUTPUT_WIDTH, self.OUTPUT_HEIGHT))
+        broll = VideoFileClip(broll_path).resized(
             (self.OUTPUT_WIDTH, self.OUTPUT_HEIGHT // 2)
         )
         audio = AudioFileClip(audio_path)
@@ -66,21 +67,21 @@ class VideoEditor:
         cta_start = max(hook_end, total_duration - self.CTA_DURATION_S)
 
         # Hook segment: full-screen avatar
-        hook = avatar.subclip(0, min(hook_end, avatar.duration))
+        hook = avatar.subclipped(0, min(hook_end, avatar.duration))
 
         # Body segment: B-roll top, avatar bottom
         body_duration = cta_start - hook_end
         body_avatar = (
-            avatar.subclip(
+            avatar.subclipped(
                 min(hook_end, avatar.duration),
                 min(cta_start, avatar.duration),
-            ).set_position(("center", self.OUTPUT_HEIGHT // 2))
+            ).with_position(("center", self.OUTPUT_HEIGHT // 2))
         )
         broll_body_duration = min(body_duration, broll.duration)
         body_broll = (
-            broll.subclip(0, broll_body_duration)
-            .loop(duration=body_duration)
-            .set_position(("center", 0))
+            broll.subclipped(0, broll_body_duration)
+            .with_effects([Loop(duration=body_duration)])
+            .with_position(("center", 0))
         )
         body_bg = ColorClip(
             size=(self.OUTPUT_WIDTH, self.OUTPUT_HEIGHT),
@@ -93,14 +94,14 @@ class VideoEditor:
         cta_avatar_start = min(cta_start, avatar.duration)
         cta_avatar_end = min(total_duration, avatar.duration)
         if cta_avatar_end > cta_avatar_start:
-            cta = avatar.subclip(cta_avatar_start, cta_avatar_end)
+            cta = avatar.subclipped(cta_avatar_start, cta_avatar_end)
         else:
-            cta = avatar.subclip(
+            cta = avatar.subclipped(
                 max(0, avatar.duration - self.CTA_DURATION_S), avatar.duration
             )
 
         # Concatenate and attach audio
-        final = concatenate_videoclips([hook, body, cta]).set_audio(audio)
+        final = concatenate_videoclips([hook, body, cta]).with_audio(audio)
 
         # Write intermediate without captions
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
