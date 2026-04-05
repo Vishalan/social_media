@@ -61,7 +61,7 @@ from typing import Optional
 from analytics.tracker import AnalyticsTracker
 from anthropic import AsyncAnthropic
 from approval.telegram_bot import TelegramApprovalBot
-from avatar_gen import AvatarQualityError, make_avatar_client
+from avatar_gen import AvatarLayout, AvatarQualityError, make_avatar_client
 from broll_gen import BrollError, make_broll_generator
 from broll_gen.selector import BrollSelector
 from content_gen.script_generator import ScriptGenerator
@@ -87,9 +87,20 @@ class VideoJob:
     broll_path: str = ""
     caption_segments: list[dict] = field(default_factory=list)
     affiliate_links: list[str] = field(default_factory=list)
-    broll_only: bool = False   # True if avatar generation failed completely
+    avatar_layout: AvatarLayout = AvatarLayout.HALF_SCREEN
     broll_type: str = ""       # winning generator type (e.g. "browser_visit"), for logging
     needs_gpu_broll: bool = False  # True if all CPU generators failed → triggers Phase 2 pod
+
+    @property
+    def broll_only(self) -> bool:
+        """Backwards-compatible alias: True when avatar is skipped."""
+        return self.avatar_layout == AvatarLayout.SKIPPED
+
+    @broll_only.setter
+    def broll_only(self, value: bool) -> None:
+        """Allow legacy assignment: broll_only=True sets layout to SKIPPED."""
+        if value:
+            self.avatar_layout = AvatarLayout.SKIPPED
 
 
 class CommonCreedPipeline:
@@ -245,8 +256,8 @@ class CommonCreedPipeline:
         audio_url = await asyncio.to_thread(self.poster.upload_media, audio_path)
         logger.info("[Phase 1] Audio uploaded for '%s': %s", topic["title"], audio_url)
 
-        # Avatar generation (HeyGen or Kling cloud API — no GPU)
-        broll_only = False
+        # Avatar generation (cloud API — no GPU)
+        avatar_layout = AvatarLayout.HALF_SCREEN
         avatar_path = ""
         try:
             avatar_path = await self._generate_avatar(audio_url, topic)
@@ -258,7 +269,7 @@ class CommonCreedPipeline:
             await self.telegram.send_alert(
                 f"Avatar failed for '{topic['title']}' — video will be b-roll only."
             )
-            broll_only = True
+            avatar_layout = AvatarLayout.SKIPPED
 
         job = VideoJob(
             topic=topic,
@@ -269,7 +280,7 @@ class CommonCreedPipeline:
             broll_path="",          # filled below (CPU) or in Phase 2 (GPU)
             caption_segments=[],    # filled in Phase 3
             affiliate_links=self._select_affiliates(),
-            broll_only=broll_only,
+            avatar_layout=avatar_layout,
         )
 
         # CPU b-roll: estimate target duration from audio, then try CPU generators
@@ -469,32 +480,64 @@ class CommonCreedPipeline:
             logger.info("Skipped after rejection: %s", job.topic["title"])
 
     def _assemble(self, job: VideoJob, avatar_path: str, filename: str) -> str:
-        """Assemble final 9:16 video. Uses b-roll-only layout if avatar_path is empty.
+        """Assemble final 9:16 video, dispatching on job.avatar_layout.
 
-        HeyGen outputs 1920x1080 (landscape) → crop_to_portrait=True.
-        Kling outputs native 9:16 → no crop needed.
+        Layout modes:
+          SKIPPED     — b-roll fills the full frame (avatar failed or not needed).
+          HALF_SCREEN — avatar bottom half, b-roll top half (default).
+          FULL_SCREEN — avatar fills entire frame.
+          STITCHED    — stitched multi-clip avatar; assembled as HALF_SCREEN.
         """
         output_path = f"output/video/{filename}"
-        crop = self.config.get("avatar_provider", "kling") == "heygen"
-        if job.broll_only or not avatar_path:
+        layout = job.avatar_layout
+
+        if layout == AvatarLayout.SKIPPED or not avatar_path:
             # B-roll only: full-screen b-roll with captions
-            output_path = self.video_editor.assemble(
+            return self.video_editor.assemble(
                 avatar_path=job.broll_path,
                 broll_path=job.broll_path,
                 audio_path=job.trimmed_audio_path,
                 caption_segments=job.caption_segments,
                 output_path=output_path,
+                layout=AvatarLayout.SKIPPED,
             )
-        else:
-            output_path = self.video_editor.assemble(
+
+        # crop_to_portrait is now driven by the client, not a config string comparison
+        crop = self.avatar_client.needs_portrait_crop
+
+        if layout in (AvatarLayout.HALF_SCREEN, AvatarLayout.STITCHED):
+            return self.video_editor.assemble(
                 avatar_path=avatar_path,
                 broll_path=job.broll_path,
                 audio_path=job.trimmed_audio_path,
                 caption_segments=job.caption_segments,
                 output_path=output_path,
                 crop_to_portrait=crop,
+                layout=AvatarLayout.HALF_SCREEN,
             )
-        return output_path
+
+        if layout == AvatarLayout.FULL_SCREEN:
+            return self.video_editor.assemble(
+                avatar_path=avatar_path,
+                broll_path=job.broll_path,
+                audio_path=job.trimmed_audio_path,
+                caption_segments=job.caption_segments,
+                output_path=output_path,
+                crop_to_portrait=crop,
+                layout=AvatarLayout.FULL_SCREEN,
+            )
+
+        # Fallback — treat unknown layouts as HALF_SCREEN
+        logger.warning("Unknown avatar_layout %r — falling back to HALF_SCREEN", layout)
+        return self.video_editor.assemble(
+            avatar_path=avatar_path,
+            broll_path=job.broll_path,
+            audio_path=job.trimmed_audio_path,
+            caption_segments=job.caption_segments,
+            output_path=output_path,
+            crop_to_portrait=crop,
+            layout=AvatarLayout.HALF_SCREEN,
+        )
 
     # ─── Private: generation helpers ──────────────────────────────────────
 
@@ -610,11 +653,13 @@ if __name__ == "__main__":
         required_keys.append("COMFYUI_URL")
 
     # Avatar provider validation
-    avatar_provider = os.environ.get("AVATAR_PROVIDER", "kling").lower()
+    avatar_provider = os.environ.get("AVATAR_PROVIDER", "veed").lower()
     if avatar_provider == "heygen":
         required_keys += ["HEYGEN_API_KEY", "HEYGEN_AVATAR_ID"]
-    else:
+    elif avatar_provider == "kling":
         required_keys += ["FAL_API_KEY", "KLING_AVATAR_IMAGE_URL"]
+    else:  # veed (default) or other fal.ai providers
+        required_keys += ["FAL_API_KEY", "VEED_AVATAR_IMAGE_URL"]
 
     missing = [k for k in required_keys if not os.environ.get(k)]
     if missing:
@@ -638,11 +683,13 @@ if __name__ == "__main__":
         "runpod_network_volume_id": os.environ.get("RUNPOD_NETWORK_VOLUME_ID", ""),
         "runpod_comfyui_port": os.environ.get("RUNPOD_COMFYUI_PORT", "8188"),
         # Avatar provider config
-        "avatar_provider": os.environ.get("AVATAR_PROVIDER", "kling"),
+        "avatar_provider": os.environ.get("AVATAR_PROVIDER", "veed"),
         "heygen_api_key": os.environ.get("HEYGEN_API_KEY", ""),
         "heygen_avatar_id": os.environ.get("HEYGEN_AVATAR_ID", ""),
         "fal_api_key": os.environ.get("FAL_API_KEY", ""),
         "kling_avatar_image_url": os.environ.get("KLING_AVATAR_IMAGE_URL", ""),
+        "veed_avatar_image_url": os.environ.get("VEED_AVATAR_IMAGE_URL", ""),
+        "veed_resolution": os.environ.get("VEED_RESOLUTION", "480p"),
         # B-roll image sources (optional — degrades gracefully without keys)
         "pexels_api_key": os.environ.get("PEXELS_API_KEY", ""),
         "bing_api_key": os.environ.get("BING_SEARCH_API_KEY", ""),

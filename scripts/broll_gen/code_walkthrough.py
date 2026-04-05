@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 from anthropic import AsyncAnthropic
 
 from broll_gen.base import BrollBase, BrollError
+from video_edit.video_editor import FFMPEG
 
 if TYPE_CHECKING:
     from pipeline import VideoJob
@@ -157,11 +158,11 @@ class CodeWalkthroughGenerator(BrollBase):
                     f.write(f"file '{state_pngs[-1]}'\nduration 0.001\n")
 
                 cmd = [
-                    "ffmpeg", "-y",
+                    FFMPEG, "-y",
                     "-f", "concat", "-safe", "0", "-i", str(concat_file),
                     "-vf",
-                    "scale=1080:540:force_original_aspect_ratio=decrease,"
-                    "pad=1080:540:(ow-iw)/2:(oh-ih)/2:black",
+                    "scale=1080:960:force_original_aspect_ratio=decrease,"
+                    "pad=1080:960:(ow-iw)/2:(oh-ih)/2:black",
                     "-c:v", "libx264",
                     "-pix_fmt", "yuv420p",
                     "-t", str(target_duration_s),

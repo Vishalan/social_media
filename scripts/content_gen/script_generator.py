@@ -39,6 +39,8 @@ Create scripts that:
 - Have clear visual cues for video creation
 - End with engagement or share-worthy moments
 
+Write only spoken words — no stage directions, no action notes, no pause cues. Pauses are controlled by punctuation (commas, periods, ellipses) only.
+
 Format your response as a JSON object with keys: title, hook, script, description, tags, visual_cues"""
 
     SYSTEM_TWITTER = """You are an expert Twitter/X content strategist specializing in engaging threads.
@@ -194,7 +196,7 @@ The script should:
 - Be fast-paced and engaging
 - Include specific visual cues for editing
 - Use trending formats or patterns when appropriate
-- Include natural pause points for scene transitions
+- Use commas and sentence breaks for natural rhythm — do NOT write the word 'Pause' or any stage directions
 
 Topic: {topic}
 Niche: {niche}"""

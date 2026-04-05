@@ -16,20 +16,27 @@ from anthropic import AsyncAnthropic
 logger = logging.getLogger(__name__)
 
 _VALID_TYPES = frozenset(
-    ["browser_visit", "image_montage", "code_walkthrough", "stats_card", "ai_video"]
+    ["browser_visit", "image_montage", "code_walkthrough", "stats_card",
+     "headline_burst", "ai_video", "stock_video"]
 )
 
 _SYSTEM_PROMPT = """\
 You select the most engaging subordinate footage type for an AI & Technology short-form video.
 Types and when to use them:
-- browser_visit: when topic has a real article URL worth visiting (not YouTube/Twitter)
-- code_walkthrough: when topic involves API, model, framework, SDK, "how to use X", code release
-- stats_card: when the script contains measurable comparisons: numbers, benchmarks, speeds, costs
-- image_montage: for general tech news, product releases, company announcements
-- ai_video: only for abstract/speculative topics with no concrete visuals
+- browser_visit: topic has a real article URL worth visiting (not YouTube/Twitter/social)
+- code_walkthrough: topic involves API, model, framework, SDK, "how to use X", or a code release
+- stats_card: script has 2+ NUMERIC stats/benchmarks (e.g. "15x faster", "60% cheaper", "82 tokens/s")
+- headline_burst: topic is a major announcement, dramatic claim, or "breaking news" — great for viral impact
+- image_montage: general tech news, product reveal, company story; good fallback when Pexels key is available
+- stock_video: cinematic real-world footage for emotional or context-setting beats; use for topics involving data centers, smartphones, keyboards, server rooms, or any scene where cinematic real-world footage reinforces the mood
+- ai_video: only for abstract/speculative topics with zero concrete visuals
 
-Primary: pick the highest-engagement type.
-Fallback: pick a different type to try if primary fails.\
+Priority rule: stats_card beats headline_burst only when there are clear numeric comparisons.
+headline_burst beats image_montage for high-impact announcements.
+stock_video beats image_montage for topics with strong cinematic real-world visual potential.
+
+Primary: pick the highest-engagement type for this specific topic.
+Fallback: pick a different type if primary fails (never pick the same type twice).\
 """
 
 _RESPONSE_SCHEMA = {
@@ -42,6 +49,8 @@ _RESPONSE_SCHEMA = {
                 "image_montage",
                 "code_walkthrough",
                 "stats_card",
+                "headline_burst",
+                "stock_video",
                 "ai_video",
             ],
         },
@@ -52,6 +61,8 @@ _RESPONSE_SCHEMA = {
                 "image_montage",
                 "code_walkthrough",
                 "stats_card",
+                "headline_burst",
+                "stock_video",
                 "ai_video",
             ],
         },
@@ -88,6 +99,14 @@ class BrollSelector:
             ``stats_card``, ``ai_video``.
             Falls back to ``["image_montage", "ai_video"]`` on any Claude error.
         """
+        # Always prefer browser_visit when a real article URL is available —
+        # website screenshots are the highest-engagement b-roll type.
+        if topic_url and not any(
+            d in topic_url for d in ("youtube.com", "twitter.com", "x.com", "reddit.com")
+        ):
+            logger.info("BrollSelector: forcing browser_visit (real article URL available)")
+            return ["browser_visit", "headline_burst"]
+
         user_prompt = (
             f"Topic: {topic_title}\n"
             f"URL: {topic_url}\n"

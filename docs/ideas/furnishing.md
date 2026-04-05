@@ -1,0 +1,1 @@
+build a code, which caches the generations if they were successful and only triggers if its necessary. Feel free to build a persistence storage in sqlite if needed, to track approved and uploaded video

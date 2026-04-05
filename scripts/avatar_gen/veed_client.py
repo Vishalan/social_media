@@ -1,18 +1,20 @@
 """
-Kling AI Avatar v2 Pro backend via fal.ai queue API.
+VEED Fabric 1.0 avatar backend via fal.ai queue API.
 
 Sends a portrait photo + audio URL to the fal.ai async queue and
 downloads the resulting 9:16 MP4.
 
 Required config keys:
     fal_api_key           — fal.ai API key (Authorization: Key header)
-    kling_avatar_image_url — Public URL of the owner's portrait photo
+    veed_avatar_image_url — Public URL of the avatar portrait photo
     output_dir            — (optional) local directory for downloads; default "output/avatar"
+    veed_resolution       — (optional) "480p" or "720p"; default "480p"
 
 Notes:
     - Uses fal.ai async queue: POST returns request_id + status_url;
       poll status_url every 10 s; 15-minute timeout.
     - Native 9:16 output — no FFmpeg crop needed in VideoEditor.
+    - Pricing: $0.08/s at 480p, $0.15/s at 720p (vs Kling $0.115/s).
 """
 
 import asyncio
@@ -23,25 +25,28 @@ from typing import Optional
 
 import httpx
 
-from .base import AvatarClient, AvatarQualityError  # noqa: F401 (re-exported)
+from .base import AvatarClient, AvatarQualityError
 
 logger = logging.getLogger(__name__)
 
-_FAL_SUBMIT_URL = "https://queue.fal.run/fal-ai/kling-video/v2/pro/ai-avatar"
+_FAL_SUBMIT_URL = "https://queue.fal.run/veed/fabric-1.0"
 
 _POLL_INTERVAL_S = 10
 _TIMEOUT_S = 15 * 60  # 15 minutes
 
 
-class KlingAvatarClient(AvatarClient):
+class VeedFabricClient(AvatarClient):
     """
-    Avatar generation backend using Kling AI Avatar v2 Pro via fal.ai.
+    Avatar generation backend using VEED Fabric 1.0 via fal.ai.
+
+    ~30% cheaper than Kling v2 Pro at 480p ($0.08/s vs $0.115/s).
+    Same fal.ai async queue pattern as KlingAvatarClient.
 
     Example::
 
-        client = KlingAvatarClient(
+        client = VeedFabricClient(
             fal_api_key=os.environ["FAL_API_KEY"],
-            avatar_image_url=os.environ["KLING_AVATAR_IMAGE_URL"],
+            avatar_image_url=os.environ["VEED_AVATAR_IMAGE_URL"],
         )
         path = await client.generate(audio_url, "output/avatar/clip.mp4")
     """
@@ -50,10 +55,12 @@ class KlingAvatarClient(AvatarClient):
         self,
         fal_api_key: str,
         avatar_image_url: str,
+        resolution: str = "480p",
         output_dir: str = "output/avatar",
     ) -> None:
         self._fal_api_key = fal_api_key
         self._avatar_image_url = avatar_image_url
+        self._resolution = resolution
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
 
@@ -61,12 +68,12 @@ class KlingAvatarClient(AvatarClient):
 
     @property
     def needs_portrait_crop(self) -> bool:
-        """Kling outputs native 9:16 — no crop needed."""
+        """VEED Fabric outputs 9:16 natively — no crop needed."""
         return False
 
     @property
     def max_duration_s(self) -> Optional[float]:
-        """Kling has no hard per-call duration cap."""
+        """VEED Fabric has no hard per-call duration cap."""
         return None
 
     # ─── Public interface ──────────────────────────────────────────────────
@@ -85,14 +92,14 @@ class KlingAvatarClient(AvatarClient):
         Raises:
             AvatarQualityError: On fal.ai error, timeout, or empty output file.
         """
-        logger.info("Kling: submitting avatar generation request")
+        logger.info("VEED Fabric: submitting avatar generation request")
         request_id, status_url = await self._submit(audio_url)
-        logger.info("Kling: request_id=%s — polling for completion", request_id)
+        logger.info("VEED Fabric: request_id=%s — polling for completion", request_id)
         video_url = await self._poll_until_complete(request_id, status_url)
-        logger.info("Kling: video ready at %s — downloading", video_url)
+        logger.info("VEED Fabric: video ready at %s — downloading", video_url)
         await self._download(video_url, output_path)
         self._validate(output_path)
-        logger.info("Kling: avatar saved to %s", output_path)
+        logger.info("VEED Fabric: avatar saved to %s", output_path)
         return output_path
 
     # ─── Private ──────────────────────────────────────────────────────────
@@ -108,7 +115,7 @@ class KlingAvatarClient(AvatarClient):
         body = {
             "image_url": self._avatar_image_url,
             "audio_url": audio_url,
-            "aspect_ratio": "9:16",
+            "resolution": self._resolution,
         }
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
@@ -118,7 +125,7 @@ class KlingAvatarClient(AvatarClient):
             )
             if resp.status_code not in (200, 201):
                 raise AvatarQualityError(
-                    f"Kling/fal.ai submission failed: HTTP {resp.status_code} — {resp.text}"
+                    f"VEED/fal.ai submission failed: HTTP {resp.status_code} — {resp.text}"
                 )
 
             data = resp.json()
@@ -127,12 +134,11 @@ class KlingAvatarClient(AvatarClient):
 
             if not request_id:
                 raise AvatarQualityError(
-                    f"Kling/fal.ai response missing request_id: {data}"
+                    f"VEED/fal.ai response missing request_id: {data}"
                 )
             if not status_url:
-                # Construct canonical fal.ai status URL if not returned
                 status_url = (
-                    f"https://queue.fal.run/fal-ai/kling-video/v2/pro/ai-avatar"
+                    f"https://queue.fal.run/veed/fabric-1.0"
                     f"/requests/{request_id}/status"
                 )
 
@@ -144,40 +150,64 @@ class KlingAvatarClient(AvatarClient):
         async with httpx.AsyncClient(timeout=15) as client:
             while time.monotonic() < deadline:
                 resp = await client.get(status_url, headers=self._headers())
-                if resp.status_code != 200:
+                # 200 = terminal (COMPLETED/FAILED), 202 = IN_PROGRESS (still running)
+                if resp.status_code not in (200, 202):
                     raise AvatarQualityError(
-                        f"Kling/fal.ai status check failed: HTTP {resp.status_code} — {resp.text}"
+                        f"VEED/fal.ai status check failed: HTTP {resp.status_code} — {resp.text}"
                     )
 
                 data = resp.json()
                 status: str = data.get("status", "")
-                logger.debug("Kling: request_id=%s status=%s", request_id, status)
+                logger.debug("VEED Fabric: request_id=%s status=%s", request_id, status)
 
                 if status == "COMPLETED":
-                    # fal.ai result shape: {"video": {"url": "..."}}
-                    video_url: Optional[str] = (
-                        (data.get("output") or data.get("result") or data)
-                        .get("video", {})
-                        .get("url")
-                    )
+                    # Status endpoint only has queue metadata; the actual output
+                    # (video URL) lives at response_url — fetch it explicitly.
+                    video_url = self._extract_video_url(data)
+                    if not video_url:
+                        response_url = data.get("response_url")
+                        if response_url:
+                            result_resp = await client.get(response_url, headers=self._headers())
+                            video_url = self._extract_video_url(result_resp.json())
                     if not video_url:
                         raise AvatarQualityError(
-                            f"Kling/fal.ai completed but video.url missing: {data}"
+                            f"VEED/fal.ai completed but video URL missing: {data}"
                         )
                     return video_url
 
                 if status == "FAILED":
                     error_msg = data.get("error") or data.get("detail", "unknown error")
                     raise AvatarQualityError(
-                        f"Kling/fal.ai generation failed (request_id={request_id}): {error_msg}"
+                        f"VEED/fal.ai generation failed (request_id={request_id}): {error_msg}"
                     )
 
                 await asyncio.sleep(_POLL_INTERVAL_S)
 
         raise AvatarQualityError(
-            f"Kling/fal.ai generation timed out after {_TIMEOUT_S // 60} minutes "
+            f"VEED/fal.ai generation timed out after {_TIMEOUT_S // 60} minutes "
             f"(request_id={request_id})."
         )
+
+    @staticmethod
+    def _extract_video_url(data: dict) -> Optional[str]:
+        """
+        Extract the video URL from a fal.ai COMPLETED response.
+
+        Tries common fal.ai result shapes:
+          {"video": {"url": "..."}}
+          {"output": {"video": {"url": "..."}}}
+          {"result": {"video": {"url": "..."}}}
+          {"url": "..."}  (flat shape some endpoints use)
+        """
+        # Try nested output/result wrappers first, then flat
+        payload = data.get("output") or data.get("result") or data
+        video = payload.get("video")
+        if isinstance(video, dict):
+            return video.get("url")
+        if isinstance(video, str):
+            return video
+        # Some endpoints return a top-level "url" key
+        return payload.get("url")
 
     async def _download(self, video_url: str, output_path: str) -> None:
         """Stream download of the completed video to output_path."""
@@ -193,5 +223,5 @@ class KlingAvatarClient(AvatarClient):
         """Raise AvatarQualityError if the downloaded file is empty."""
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
             raise AvatarQualityError(
-                f"Kling: downloaded file is empty or missing: {output_path}"
+                f"VEED Fabric: downloaded file is empty or missing: {output_path}"
             )

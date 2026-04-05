@@ -356,15 +356,16 @@ class TestMakeAvatarClient:
         with pytest.raises(ValueError, match="Unknown avatar_provider"):
             make_avatar_client(config)
 
-    def test_default_provider_is_kling(self, tmp_path):
-        """When avatar_provider is omitted, defaults to Kling."""
+    def test_default_provider_is_veed(self, tmp_path):
+        """When avatar_provider is omitted, defaults to VEED Fabric."""
+        from .veed_client import VeedFabricClient
         config = {
             "fal_api_key": "fal-key",
-            "kling_avatar_image_url": "https://example.com/avatar.jpg",
+            "veed_avatar_image_url": "https://example.com/avatar.jpg",
             "output_dir": str(tmp_path / "avatar"),
         }
         client = make_avatar_client(config)
-        assert isinstance(client, KlingAvatarClient)
+        assert isinstance(client, VeedFabricClient)
 
 
 if __name__ == "__main__":

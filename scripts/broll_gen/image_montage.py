@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from .base import BrollBase, BrollError
+from video_edit.video_editor import FFMPEG
 
 if TYPE_CHECKING:
     from pipeline import VideoJob
@@ -274,7 +275,8 @@ class ImageMontageGenerator(BrollBase):
                 "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,"
                 f"zoompan=z='zoom+0.001':d={zoompan_d}:s=1920x1080,"
                 "setpts=PTS-STARTPTS,"
-                "scale=1080:540"
+                "scale=1080:960:force_original_aspect_ratio=decrease,"
+                "pad=1080:960:(ow-iw)/2:(oh-ih)/2:black"
                 f"[v{idx}]"
             )
             filter_parts.append(filt)
@@ -309,7 +311,7 @@ class ImageMontageGenerator(BrollBase):
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
         cmd = (
-            ["ffmpeg", "-y"]
+            [FFMPEG, "-y"]
             + inputs
             + [
                 "-filter_complex", filtergraph,

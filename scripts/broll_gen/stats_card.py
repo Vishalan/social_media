@@ -1,9 +1,12 @@
 """
-B-roll type: stats_card
+B-roll type: stats_card (animated counter)
 
-Claude extracts 3-5 measurable stats from the script.
-PIL renders animated text cards showing each stat sequentially.
-FFmpeg assembles the frames into a video.
+Claude extracts 2-4 numeric stats from the script.
+Each stat is shown full-card with a number counting up from 0 (ease-out, 2s)
+then holding for 1s, so the viewer feels the scale of the number.
+A circular progress arc fills in sync with the count.
+
+FFmpeg encodes at 30 fps.
 """
 
 from __future__ import annotations
@@ -11,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import shutil
 import subprocess
 import tempfile
@@ -21,25 +25,55 @@ from anthropic import AsyncAnthropic
 from PIL import Image, ImageDraw, ImageFont
 
 from .base import BrollBase, BrollError
+from video_edit.video_editor import FFMPEG
 
 if TYPE_CHECKING:
     from pipeline import VideoJob
 
 logger = logging.getLogger(__name__)
 
-# Card dimensions
-_CARD_WIDTH = 1080
-_CARD_HEIGHT = 540
+# Card dimensions — match the half-screen slot in VideoEditor (OUTPUT_HEIGHT // 2)
+_W = 1080
+_H = 960
+_FPS = 30
 
-# Brand colours (dark navy theme)
-_BG_COLOR = (18, 18, 25)
-_ACCENT_COLOR = (99, 102, 241)  # Indigo
+# Colours
+_BG_TOP = (10, 10, 22)
+_BG_BOT = (5, 5, 14)
+_ACCENT = (99, 102, 241)       # indigo
+_RING_BG = (30, 32, 60)        # dim ring track
 _VALUE_COLOR = (255, 255, 255)
-_LABEL_COLOR = (160, 160, 180)
+_UNIT_COLOR = (180, 185, 240)
+_LABEL_COLOR = (130, 135, 175)
+_DOT_ACTIVE = (99, 102, 241)
+_DOT_INACTIVE = (40, 42, 70)
 
-# Typography
-_VALUE_FONT_SIZE = 72
-_LABEL_FONT_SIZE = 28
+# Timing
+_COUNT_FRAMES = 50   # 1.67s counting
+_HOLD_FRAMES = 25    # 0.83s hold  → 2.5s total per stat
+_FRAMES_PER_STAT = _COUNT_FRAMES + _HOLD_FRAMES
+
+# Ring geometry
+_RING_CX = _W // 2
+_RING_CY = _H // 2 - 60
+_RING_R = 290
+_RING_THICK = 18
+
+# Font candidates (bold for value, regular for label)
+_BOLD_CANDIDATES = [
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+    "C:/Windows/Fonts/arialbd.ttf",
+]
+_REG_CANDIDATES = [
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    "C:/Windows/Fonts/arial.ttf",
+]
 
 _STATS_SCHEMA = {
     "type": "object",
@@ -49,13 +83,25 @@ _STATS_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "value": {"type": "string"},
-                    "label": {"type": "string"},
+                    "numeric": {
+                        "type": "number",
+                        "description": "The bare number to animate (e.g. 15, 60, 0.08)",
+                    },
+                    "unit": {
+                        "type": "string",
+                        "description": (
+                            "Text shown right after the number (e.g. 'x faster', '%', '/M tokens'). "
+                            "Keep ≤ 12 chars."
+                        ),
+                    },
+                    "label": {
+                        "type": "string",
+                        "description": "Short description shown below the value. Keep ≤ 30 chars.",
+                    },
                 },
-                "required": ["value", "label"],
+                "required": ["numeric", "unit", "label"],
+                "additionalProperties": False,
             },
-            "minItems": 2,
-            "maxItems": 5,
         }
     },
     "required": ["stats"],
@@ -63,78 +109,207 @@ _STATS_SCHEMA = {
 }
 
 
-def _load_fonts() -> tuple[ImageFont.ImageFont, ImageFont.ImageFont]:
-    """Try to load DejaVuSans fonts; fall back to PIL default."""
-    try:
-        value_font: ImageFont.ImageFont = ImageFont.truetype(
-            "DejaVuSans-Bold.ttf", _VALUE_FONT_SIZE
-        )
-        label_font: ImageFont.ImageFont = ImageFont.truetype(
-            "DejaVuSans.ttf", _LABEL_FONT_SIZE
-        )
-        return value_font, label_font
-    except OSError:
-        default = ImageFont.load_default()
-        return default, default
+def _try_font(candidates: list[str], size: int) -> ImageFont.ImageFont:
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size)
+        except (OSError, AttributeError):
+            continue
+    return ImageFont.load_default()
 
 
-def _render_frame(
-    stats_to_show: list[dict],
+def _ease_out_cubic(t: float) -> float:
+    return 1.0 - (1.0 - t) ** 3
+
+
+def _draw_gradient(img: Image.Image) -> None:
+    draw = ImageDraw.Draw(img)
+    r0, g0, b0 = _BG_TOP
+    r1, g1, b1 = _BG_BOT
+    for y in range(_H):
+        t = y / (_H - 1)
+        draw.line(
+            [(0, y), (_W, y)],
+            fill=(
+                int(r0 + (r1 - r0) * t),
+                int(g0 + (g1 - g0) * t),
+                int(b0 + (b1 - b0) * t),
+            ),
+        )
+
+
+def _draw_ring(draw: ImageDraw.ImageDraw, progress: float) -> None:
+    """Draw the background track ring and the filled progress arc."""
+    bbox = [
+        _RING_CX - _RING_R,
+        _RING_CY - _RING_R,
+        _RING_CX + _RING_R,
+        _RING_CY + _RING_R,
+    ]
+    # Track (full ring, dim)
+    draw.arc(bbox, start=0, end=360, fill=_RING_BG, width=_RING_THICK)
+
+    # Progress arc — clockwise from 12 o'clock (-90°)
+    if progress > 0.005:
+        end_angle = -90 + 360 * min(progress, 1.0)
+        draw.arc(bbox, start=-90, end=end_angle, fill=_ACCENT, width=_RING_THICK)
+
+        # Bright dot at the arc tip
+        tip_rad = math.radians(end_angle)
+        tx = int(_RING_CX + _RING_R * math.cos(tip_rad))
+        ty = int(_RING_CY + _RING_R * math.sin(tip_rad))
+        r = _RING_THICK // 2 + 2
+        draw.ellipse([tx - r, ty - r, tx + r, ty + r], fill=_ACCENT)
+
+
+def _format_value(numeric: float, progress: float) -> str:
+    """Return the animated numeric string at the given progress (0‑1)."""
+    current = numeric * progress
+    if numeric == int(numeric) and numeric < 1000:
+        return str(int(round(current)))
+    if numeric < 10:
+        return f"{current:.1f}"
+    return str(int(round(current)))
+
+
+def _render_stat_frame(
+    stat: dict,
+    frame_idx: int,          # 0 … _FRAMES_PER_STAT-1
+    stat_idx: int,
     total_stats: int,
 ) -> Image.Image:
-    """Render a single card frame showing the given stats.
-
-    Args:
-        stats_to_show: Subset of stats revealed so far.
-        total_stats: Total number of stats in the sequence (used for layout).
-
-    Returns:
-        A PIL Image of size (CARD_WIDTH × CARD_HEIGHT).
-    """
-    img = Image.new("RGB", (_CARD_WIDTH, _CARD_HEIGHT), color=_BG_COLOR)
+    """Render one animation frame for one stat."""
+    img = Image.new("RGB", (_W, _H))
+    _draw_gradient(img)
     draw = ImageDraw.Draw(img)
 
-    # Top accent line
-    draw.rectangle([0, 0, _CARD_WIDTH, 4], fill=_ACCENT_COLOR)
+    # Progress (0→1 during count phase, stays 1 during hold)
+    if frame_idx < _COUNT_FRAMES:
+        t = frame_idx / _COUNT_FRAMES
+        progress = _ease_out_cubic(t)
+    else:
+        progress = 1.0
 
-    value_font, label_font = _load_fonts()
+    _draw_ring(draw, progress)
 
-    slot_height = 500 // total_stats
-    for i, stat in enumerate(stats_to_show):
-        y_center = 30 + i * slot_height + slot_height // 2
-        # Value (large, white)
-        draw.text(
-            (_CARD_WIDTH // 2, y_center - 20),
-            stat["value"],
-            fill=_VALUE_COLOR,
-            font=value_font,
-            anchor="mm",
-        )
-        # Label (smaller, muted)
-        draw.text(
-            (_CARD_WIDTH // 2, y_center + 40),
-            stat["label"],
-            fill=_LABEL_COLOR,
-            font=label_font,
-            anchor="mm",
-        )
+    numeric: float = float(stat["numeric"])
+    unit: str = stat["unit"]
+    label: str = stat["label"]
+
+    # Value string (number)
+    val_str = _format_value(numeric, progress)
+
+    # Font sizes
+    val_font = _try_font(_BOLD_CANDIDATES, 160)
+    unit_font = _try_font(_BOLD_CANDIDATES, 72)
+    label_font = _try_font(_REG_CANDIDATES, 44)
+    dot_font = _try_font(_REG_CANDIDATES, 24)
+
+    # Measure combined value + unit width to centre them together
+    dummy = Image.new("RGB", (1, 1))
+    dd = ImageDraw.Draw(dummy)
+    val_bbox = dd.textbbox((0, 0), val_str, font=val_font)
+    unit_bbox = dd.textbbox((0, 0), unit, font=unit_font)
+
+    val_w = val_bbox[2] - val_bbox[0]
+    unit_w = unit_bbox[2] - unit_bbox[0]
+    gap = 12
+    total_w = val_w + gap + unit_w
+
+    # Draw value + unit centred inside the ring
+    left_x = _RING_CX - total_w // 2
+    val_y = _RING_CY - (val_bbox[3] - val_bbox[1]) // 2
+
+    # Subtle glow behind number (slightly larger text in a dim colour)
+    draw.text(
+        (left_x - 1, val_y + 2),
+        val_str,
+        fill=(60, 62, 120),
+        font=val_font,
+    )
+    draw.text((left_x, val_y), val_str, fill=_VALUE_COLOR, font=val_font)
+
+    unit_x = left_x + val_w + gap
+    unit_y = val_y + (val_bbox[3] - val_bbox[1]) - (unit_bbox[3] - unit_bbox[1]) - 8
+    draw.text((unit_x, unit_y), unit, fill=_UNIT_COLOR, font=unit_font)
+
+    # Label below the ring
+    label_y = _RING_CY + _RING_R + 40
+    draw.text((_W // 2, label_y), label.upper(), fill=_LABEL_COLOR,
+              font=label_font, anchor="mt")
+
+    # Dot indicators at the bottom
+    dot_spacing = 24
+    total_dots_w = total_stats * dot_spacing
+    dot_x0 = (_W - total_dots_w) // 2 + dot_spacing // 2
+    dot_y = _H - 50
+    for d in range(total_stats):
+        cx = dot_x0 + d * dot_spacing
+        r = 7 if d == stat_idx else 5
+        fill = _DOT_ACTIVE if d == stat_idx else _DOT_INACTIVE
+        draw.ellipse([cx - r, dot_y - r, cx + r, dot_y + r], fill=fill)
+
+    # Thin top accent line
+    draw.rectangle([0, 0, _W, 4], fill=_ACCENT)
 
     return img
 
 
+async def render_single_stat_clip(
+    stat: dict,
+    duration_s: float,
+    output_path: str,
+    tmp_dir: Path,
+) -> None:
+    """
+    Render a single stat animation to output_path, padded/trimmed to duration_s.
+    Called by the mixed timeline assembler — bypasses Claude extraction.
+    """
+    frame_paths: list[Path] = []
+    for f_idx in range(_FRAMES_PER_STAT):
+        img = _render_stat_frame(stat, f_idx, 0, 1)
+        p = tmp_dir / f"stat_{f_idx:03d}.png"
+        img.save(p, optimize=False)
+        frame_paths.append(p)
+
+    # Hold the final completed frame to reach duration_s
+    natural_s = _FRAMES_PER_STAT / _FPS
+    if duration_s > natural_s:
+        hold_frames = int((duration_s - natural_s) * _FPS)
+        last = frame_paths[-1]
+        for i in range(hold_frames):
+            p = tmp_dir / f"stat_hold_{i:04d}.png"
+            import shutil as _sh
+            _sh.copy2(last, p)
+            frame_paths.append(p)
+
+    concat_file = tmp_dir / "stat_concat.txt"
+    frame_dur = 1.0 / _FPS
+    with open(concat_file, "w") as f:
+        for p in frame_paths:
+            f.write(f"file '{p}'\nduration {frame_dur:.6f}\n")
+        f.write(f"file '{frame_paths[-1]}'\nduration 0.001\n")
+
+    cmd = [
+        FFMPEG, "-y",
+        "-f", "concat", "-safe", "0", "-i", str(concat_file),
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-r", str(_FPS), "-t", str(duration_s),
+        str(output_path),
+    ]
+    await asyncio.to_thread(subprocess.run, cmd, check=True, capture_output=True)
+
+
 class StatsCardGenerator(BrollBase):
     """
-    B-roll generator that extracts measurable stats from the script via
-    Claude and renders an animated sequential-reveal text card using PIL
-    and FFmpeg.
+    Animated counter b-roll: each stat counts up from 0 with a circular
+    progress ring. Much more engaging than static text cards.
 
-    Each stat is revealed one-by-one over the target duration.  The card
-    uses a dark navy background with an indigo accent stripe, consistent
-    with the @commoncreed brand palette.
+    Claude extracts numeric stats (value + unit + label). Each stat plays
+    as a 2.5-second animation: ~1.7s counting + ~0.8s hold.
 
     Raises:
-        BrollError: If Claude returns fewer than 2 stats, or if FFmpeg
-                    fails to encode the output clip.
+        BrollError: If Claude returns fewer than 2 stats, or if FFmpeg fails.
     """
 
     def __init__(self, anthropic_client: AsyncAnthropic) -> None:
@@ -146,37 +321,23 @@ class StatsCardGenerator(BrollBase):
         target_duration_s: float,
         output_path: str,
     ) -> str:
-        """
-        Generate a stats-card b-roll clip.
-
-        Args:
-            job: VideoJob containing the generated script.
-            target_duration_s: Desired clip length in seconds.
-            output_path: Local file path where the MP4 will be saved.
-
-        Returns:
-            output_path on success.
-
-        Raises:
-            BrollError: On insufficient stats or FFmpeg encoding failure.
-        """
-        # --- Step 1: Extract stats via Claude ---------------------------------
         script_text: str = job.script.get("script", job.script.get("body", ""))
 
-        logger.debug("StatsCardGenerator: calling Claude to extract stats")
+        logger.debug("StatsCardGenerator: calling Claude to extract numeric stats")
         response = await self._client.messages.create(
             model="claude-haiku-4-5",
-            max_tokens=400,
+            max_tokens=500,
             system=(
-                "You are a data extractor. Extract the most compelling measurable "
-                "stats or comparisons from the text."
+                "You are a data extractor for short-form video. Extract the most "
+                "compelling numeric stats or comparisons from the text. Each stat "
+                "needs a bare number (numeric), a short unit string, and a brief label."
             ),
             messages=[
                 {
                     "role": "user",
                     "content": (
-                        "Extract 3-5 key stats from this script for an AI & Technology video:\n\n"
-                        f"{script_text[:800]}"
+                        "Extract 2-4 numeric stats from this AI & Technology script.\n\n"
+                        f"{script_text[:1000]}"
                     ),
                 }
             ],
@@ -193,63 +354,57 @@ class StatsCardGenerator(BrollBase):
 
         if len(stats) < 2:
             raise BrollError(
-                f"insufficient stats in script: Claude returned {len(stats)}, need ≥ 2"
+                f"insufficient stats: Claude returned {len(stats)}, need ≥ 2"
             )
 
-        logger.info(
-            "StatsCardGenerator: extracted %d stats from script", len(stats)
-        )
+        # Cap to 4 stats so the clip doesn't run too long
+        stats = stats[:4]
+        logger.info("StatsCardGenerator: %d stats extracted", len(stats))
 
-        # --- Step 2: Render frames with PIL -----------------------------------
-        frames: list[Image.Image] = []
-        for i in range(1, len(stats) + 1):
-            img = _render_frame(stats[:i], len(stats))
-            frames.append(img)
-
-        # --- Step 3: Assemble with FFmpeg -------------------------------------
+        # Render all animation frames
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        tmp_dir = Path(tempfile.mkdtemp())
+        tmp_dir = Path(tempfile.mkdtemp(prefix="stats_"))
         try:
             frame_paths: list[Path] = []
-            for i, img in enumerate(frames):
-                p = tmp_dir / f"frame_{i:02d}.png"
-                img.save(p)
-                frame_paths.append(p)
+            for s_idx, stat in enumerate(stats):
+                for f_idx in range(_FRAMES_PER_STAT):
+                    img = _render_stat_frame(stat, f_idx, s_idx, len(stats))
+                    p = tmp_dir / f"f_{s_idx:02d}_{f_idx:03d}.png"
+                    img.save(p, optimize=False)
+                    frame_paths.append(p)
 
-            frame_duration = target_duration_s / len(frames)
+            # Write concat manifest (1 frame = 1/30 s)
             concat_file = tmp_dir / "concat.txt"
+            frame_duration = 1.0 / _FPS
             with open(concat_file, "w") as f:
                 for p in frame_paths:
-                    f.write(f"file '{p}'\nduration {frame_duration:.3f}\n")
-                # FFmpeg concat demuxer requires a final entry with a tiny
-                # non-zero duration to flush the last frame correctly.
+                    f.write(f"file '{p}'\nduration {frame_duration:.6f}\n")
                 f.write(f"file '{frame_paths[-1]}'\nduration 0.001\n")
 
+            actual_duration = len(frame_paths) / _FPS
             cmd = [
-                "ffmpeg", "-y",
+                FFMPEG, "-y",
                 "-f", "concat", "-safe", "0", "-i", str(concat_file),
                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                "-t", str(target_duration_s),
+                "-r", str(_FPS),
+                "-t", str(actual_duration),
                 output_path,
             ]
-            logger.debug("StatsCardGenerator: ffmpeg cmd: %s", " ".join(cmd))
-
+            logger.debug("StatsCardGenerator ffmpeg: %s", " ".join(cmd))
             try:
                 await asyncio.to_thread(
                     subprocess.run, cmd, check=True, capture_output=True
                 )
             except subprocess.CalledProcessError as e:
                 raise BrollError(
-                    f"ffmpeg failed: {e.stderr.decode(errors='replace')}"
+                    f"ffmpeg failed: {e.stderr.decode(errors='replace')[:500]}"
                 ) from e
+
         finally:
-            # Best-effort cleanup of temp directory
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
         logger.info(
-            "StatsCardGenerator: clip saved to %s (stats=%d, duration=%.1fs)",
-            output_path,
-            len(stats),
-            target_duration_s,
+            "StatsCardGenerator: saved %s (stats=%d, %.1fs)",
+            output_path, len(stats), actual_duration,
         )
         return output_path

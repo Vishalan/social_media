@@ -19,10 +19,11 @@ import logging
 from .base import AvatarClient
 from .heygen_client import HeyGenAvatarClient
 from .kling_client import KlingAvatarClient
+from .veed_client import VeedFabricClient
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PROVIDER = "kling"
+_DEFAULT_PROVIDER = "veed"
 
 
 def make_avatar_client(config: dict) -> AvatarClient:
@@ -31,11 +32,12 @@ def make_avatar_client(config: dict) -> AvatarClient:
 
     Args:
         config: Dictionary of configuration values.  Reads
-                ``config["avatar_provider"]`` (defaults to ``"kling"``).
+                ``config["avatar_provider"]`` (defaults to ``"veed"``).
 
-                For ``"heygen"``:
-                    - ``heygen_api_key``
-                    - ``heygen_avatar_id``
+                For ``"veed"`` (default):
+                    - ``fal_api_key``
+                    - ``veed_avatar_image_url``
+                    - ``veed_resolution`` (optional, "480p" or "720p", default "480p")
                     - ``output_dir`` (optional, default ``"output/avatar"``)
 
                 For ``"kling"``:
@@ -43,20 +45,32 @@ def make_avatar_client(config: dict) -> AvatarClient:
                     - ``kling_avatar_image_url``
                     - ``output_dir`` (optional, default ``"output/avatar"``)
 
+                For ``"heygen"``:
+                    - ``heygen_api_key``
+                    - ``heygen_avatar_id``
+                    - ``output_dir`` (optional, default ``"output/avatar"``)
+
+                For ``"ltx"`` (not yet implemented — raises NotImplementedError):
+                    - ``fal_api_key``
+                    - ``ltx_avatar_image_url``
+                    - ``output_dir`` (optional)
+
     Returns:
         AvatarClient instance ready for use.
 
     Raises:
-        ValueError: If ``avatar_provider`` is not ``"heygen"`` or ``"kling"``.
+        ValueError: If ``avatar_provider`` is unrecognised.
+        NotImplementedError: If ``avatar_provider`` is ``"ltx"`` (planned, not built yet).
     """
     provider: str = config.get("avatar_provider", _DEFAULT_PROVIDER).lower()
     output_dir: str = config.get("output_dir", "output/avatar")
 
-    if provider == "heygen":
-        logger.info("Avatar provider: HeyGen Avatar IV")
-        return HeyGenAvatarClient(
-            api_key=config["heygen_api_key"],
-            avatar_id=config["heygen_avatar_id"],
+    if provider == "veed":
+        logger.info("Avatar provider: VEED Fabric 1.0 (fal.ai, 480p)")
+        return VeedFabricClient(
+            fal_api_key=config["fal_api_key"],
+            avatar_image_url=config["veed_avatar_image_url"],
+            resolution=config.get("veed_resolution", "480p"),
             output_dir=output_dir,
         )
 
@@ -68,7 +82,21 @@ def make_avatar_client(config: dict) -> AvatarClient:
             output_dir=output_dir,
         )
 
+    if provider == "heygen":
+        logger.info("Avatar provider: HeyGen Avatar IV")
+        return HeyGenAvatarClient(
+            api_key=config["heygen_api_key"],
+            avatar_id=config["heygen_avatar_id"],
+            output_dir=output_dir,
+        )
+
+    if provider == "ltx":
+        raise NotImplementedError(
+            "LTX-2.3 avatar provider is planned but not yet implemented. "
+            "Use 'veed' or 'kling' instead."
+        )
+
     raise ValueError(
         f"Unknown avatar_provider {provider!r}. "
-        f"Supported values: 'heygen', 'kling'."
+        f"Supported values: 'veed', 'kling', 'heygen'."
     )

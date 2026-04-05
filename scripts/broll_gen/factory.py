@@ -10,6 +10,7 @@ Usage::
     gen = make_broll_generator("image_montage", pexels_api_key="...", bing_api_key="...")
     gen = make_broll_generator("code_walkthrough", anthropic_client=client)
     gen = make_broll_generator("stats_card", anthropic_client=client)
+    gen = make_broll_generator("stock_video", pexels_api_key="...")
 
     # GPU-backed generator (Phase 2 fallback — requires running ComfyUI pod)
     gen = make_broll_generator("ai_video", comfyui_client=comfyui_client)
@@ -21,8 +22,10 @@ from broll_gen.ai_video import AiVideoGenerator
 from broll_gen.base import BrollBase
 from broll_gen.browser_visit import BrowserVisitGenerator
 from broll_gen.code_walkthrough import CodeWalkthroughGenerator
+from broll_gen.headline_burst import HeadlineBurstGenerator
 from broll_gen.image_montage import ImageMontageGenerator
 from broll_gen.stats_card import StatsCardGenerator
+from broll_gen.stock_video import StockVideoGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +36,8 @@ def make_broll_generator(type_name: str, **kwargs) -> BrollBase:
 
     Args:
         type_name: One of ``"browser_visit"``, ``"image_montage"``,
-                   ``"code_walkthrough"``, ``"stats_card"``, ``"ai_video"``.
+                   ``"code_walkthrough"``, ``"stats_card"``, ``"ai_video"``,
+                   ``"stock_video"``.
         **kwargs:  Type-specific keyword arguments:
 
                    ``"image_montage"``:
@@ -49,6 +53,9 @@ def make_broll_generator(type_name: str, **kwargs) -> BrollBase:
                    ``"ai_video"``:
                        - ``comfyui_client`` (required)
 
+                   ``"stock_video"``:
+                       - ``pexels_api_key`` (str, optional)
+
     Returns:
         A concrete BrollBase instance ready for use.
 
@@ -58,7 +65,9 @@ def make_broll_generator(type_name: str, **kwargs) -> BrollBase:
     """
     if type_name == "browser_visit":
         logger.info("B-roll generator: BrowserVisitGenerator")
-        return BrowserVisitGenerator()
+        return BrowserVisitGenerator(
+            anthropic_client=kwargs.get("anthropic_client"),
+        )
 
     if type_name == "image_montage":
         logger.info("B-roll generator: ImageMontageGenerator")
@@ -79,13 +88,24 @@ def make_broll_generator(type_name: str, **kwargs) -> BrollBase:
             anthropic_client=kwargs["anthropic_client"],
         )
 
+    if type_name == "headline_burst":
+        logger.info("B-roll generator: HeadlineBurstGenerator")
+        return HeadlineBurstGenerator(
+            anthropic_client=kwargs["anthropic_client"],
+        )
+
     if type_name == "ai_video":
         logger.info("B-roll generator: AiVideoGenerator (ComfyUI / Wan2.1)")
         return AiVideoGenerator(
             comfyui_client=kwargs["comfyui_client"],
         )
 
+    if type_name == "stock_video":
+        logger.info("B-roll generator: StockVideoGenerator (Pexels video)")
+        return StockVideoGenerator(pexels_api_key=kwargs.get("pexels_api_key", ""))
+
     raise ValueError(
         f"Unknown b-roll type {type_name!r}. "
-        f"Supported: browser_visit, image_montage, code_walkthrough, stats_card, ai_video"
+        f"Supported: browser_visit, image_montage, code_walkthrough, stats_card, "
+        f"headline_burst, ai_video, stock_video"
     )

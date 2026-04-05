@@ -239,6 +239,15 @@ class VoiceGenerator:
                 raise ValueError(f"Voice not found: {voice_name}")
             voice_id = voice["voice_id"]
 
+        # Preprocess text: strip stage directions before sending to ElevenLabs
+        import re as _re
+        # Strip stage directions: "[Pause]", "Pause.", standalone "Pause"
+        text = _re.sub(r'\[Pause\]', '', text, flags=_re.IGNORECASE)
+        text = _re.sub(r'\bPause\.', '', text, flags=_re.IGNORECASE)
+        text = _re.sub(r'\bPause\b', '', text, flags=_re.IGNORECASE)
+        text = _re.sub(r'\[.*?\]', '', text)  # strip any [stage direction]
+        text = ' '.join(text.split())  # normalize whitespace
+
         # Create output directory if needed
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 

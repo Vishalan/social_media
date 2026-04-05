@@ -61,6 +61,18 @@ class HeyGenAvatarClient(AvatarClient):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
 
+    # ─── Provider properties ───────────────────────────────────────────────
+
+    @property
+    def needs_portrait_crop(self) -> bool:
+        """HeyGen generates 1920×1080 landscape — VideoEditor must crop to 9:16."""
+        return True
+
+    @property
+    def max_duration_s(self):
+        """HeyGen has no hard per-call duration cap."""
+        return None
+
     # ─── Public interface ──────────────────────────────────────────────────
 
     async def generate(self, audio_url: str, output_path: str) -> str:
