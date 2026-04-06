@@ -55,6 +55,27 @@ def _find_ffmpeg() -> str:
 
 FFMPEG = _find_ffmpeg()
 
+# Duration (seconds) of the held thumbnail frame prepended to the final video.
+# This hold is applied ONLY when constructing the final make_frame and audio
+# in _assemble_broll_body — the avatar lip-sync timeline (computed by
+# smoke_e2e._compute_avatar_windows) MUST remain on the speech-only timeline.
+_THUMBNAIL_HOLD_S = 0.5
+
+
+def _wrap_with_thumbnail_hold(make_frame_fn, thumbnail_array, hold_s: float):
+    """Wrap a video make_frame function so that for ``t < hold_s`` it returns
+    ``thumbnail_array``, and for ``t >= hold_s`` it delegates to
+    ``make_frame_fn(t - hold_s)``.
+
+    This keeps the underlying timeline (used for avatar lip-sync) untouched —
+    the inner make_frame still operates on the speech-only clock.
+    """
+    def wrapped(t):
+        if t < hold_s:
+            return thumbnail_array
+        return make_frame_fn(t - hold_s)
+    return wrapped
+
 # Locate a bold font available on the current OS for FFmpeg drawtext.
 _FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",       # Debian/Ubuntu
@@ -115,6 +136,7 @@ class VideoEditor:
         output_path: str,
         crop_to_portrait: bool = False,
         layout=None,  # AvatarLayout | None — import kept lazy to avoid circular deps
+        thumbnail_path: "Path | str | None" = None,
     ) -> str:
         """
         Assemble a 9:16 vertical short (1080x1920).
@@ -149,7 +171,8 @@ class VideoEditor:
             )
         if layout == AvatarLayout.BROLL_BODY:
             return self._assemble_broll_body(
-                avatar_path, broll_path, audio_path, caption_segments, output_path, crop_to_portrait
+                avatar_path, broll_path, audio_path, caption_segments, output_path, crop_to_portrait,
+                thumbnail_path=thumbnail_path,
             )
         # HALF_SCREEN (default)
         return self._assemble_half_screen(
@@ -249,6 +272,7 @@ class VideoEditor:
         caption_segments: list[dict],
         output_path: str,
         crop_to_portrait: bool = False,
+        thumbnail_path: "Path | str | None" = None,
     ) -> str:
         """BROLL_BODY layout: mixed body with full-screen b-roll, half-and-half,
         and one full-avatar moment mid-body for visual variety.
@@ -465,6 +489,58 @@ class VideoEditor:
                 if f.shape != (H, W, 3):
                     f = np.array(PILImage.fromarray(f).resize((W, H), PILImage.LANCZOS))
                 return f
+
+        # ── Optional held thumbnail frame prepended to the final video ──
+        # This is applied ONLY at the final composition layer. The avatar
+        # lip-sync timeline above (hook_end, cta_start, body t1..t4, PiP
+        # frame indices) is NEVER shifted — it still operates on the
+        # speech-only clock. We just wrap the final make_frame and prepend
+        # silence to the audio. See _wrap_with_thumbnail_hold and
+        # docs/solutions/integration-issues/avatar-lip-sync-desync-across-segments-2026-04-05.md
+        thumb_path_obj = Path(thumbnail_path) if thumbnail_path else None
+        if thumb_path_obj is not None and thumb_path_obj.exists():
+            from PIL import Image as _PILImg
+            from moviepy import AudioClip as _AudioClip, concatenate_audioclips
+
+            _img = _PILImg.open(str(thumb_path_obj)).convert("RGB")
+            if _img.size != (W, H):
+                logger.warning(
+                    "Thumbnail %s has size %s, expected (%d, %d); resizing.",
+                    thumb_path_obj, _img.size, W, H,
+                )
+                _img = _img.resize((W, H), _PILImg.LANCZOS)
+            _thumb_arr = np.array(_img, dtype=np.uint8)
+
+            wrapped_make_frame = _wrap_with_thumbnail_hold(
+                final_make_frame, _thumb_arr, _THUMBNAIL_HOLD_S,
+            )
+            final_total_duration = total_duration + _THUMBNAIL_HOLD_S
+
+            # Build silent prefix; preserve the existing audio's channel layout.
+            n_channels = getattr(audio, "nchannels", 2) or 2
+            if n_channels == 1:
+                _silent_make = lambda t: 0.0  # noqa: E731
+            else:
+                import numpy as _np
+                _silent_make = lambda t: _np.zeros((len(t), n_channels)) if hasattr(t, "__len__") else _np.zeros(n_channels)  # noqa: E731
+            silent = _AudioClip(_silent_make, duration=_THUMBNAIL_HOLD_S, fps=getattr(audio, "fps", 44100))
+            full_audio = concatenate_audioclips([silent, audio])
+
+            # Shift caption timestamps so they remain aligned with speech.
+            shifted_captions = [
+                {**seg, "start": seg["start"] + _THUMBNAIL_HOLD_S,
+                 "end": seg["end"] + _THUMBNAIL_HOLD_S}
+                for seg in caption_segments
+            ]
+            # Shift split windows used by the caption renderer too.
+            self._split_windows = [
+                (s + _THUMBNAIL_HOLD_S, e + _THUMBNAIL_HOLD_S)
+                for (s, e) in getattr(self, "_split_windows", [])
+            ]
+
+            final_clip = VideoClip(wrapped_make_frame, duration=final_total_duration).with_fps(24)
+            final = final_clip.with_audio(full_audio)
+            return self._write_with_captions(final, shifted_captions, output_path)
 
         final_clip = VideoClip(final_make_frame, duration=total_duration).with_fps(24)
         final = final_clip.with_audio(audio)

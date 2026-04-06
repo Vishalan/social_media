@@ -540,6 +540,45 @@ class SocialPoster:
         return result
 
 
+def make_poster(config: Optional[Dict[str, Any]] = None):
+    """
+    Factory: return a posting backend selected by the POSTING_BACKEND env var.
+
+    Backends:
+        - "postiz" (default): self-hosted Postiz API. Requires
+          POSTIZ_BASE_URL and POSTIZ_API_KEY env vars.
+        - "ayrshare": legacy Ayrshare-backed SocialPoster. Reads
+          AYRSHARE_API_KEY from env (same as SocialPoster's default).
+
+    Args:
+        config: Reserved for future use; currently unused.
+
+    Returns:
+        An instantiated poster (PostizPoster or SocialPoster).
+
+    Raises:
+        ValueError: If required env vars are missing or backend is unknown.
+    """
+    backend = os.getenv("POSTING_BACKEND", "postiz").strip().lower()
+
+    if backend == "postiz":
+        # Lazy import to avoid any circular-import surprises.
+        from .postiz_poster import PostizPoster  # noqa: WPS433
+
+        base_url = os.getenv("POSTIZ_BASE_URL")
+        api_key = os.getenv("POSTIZ_API_KEY")
+        if not base_url:
+            raise ValueError("POSTIZ_BASE_URL env var is required for postiz backend")
+        if not api_key:
+            raise ValueError("POSTIZ_API_KEY env var is required for postiz backend")
+        return PostizPoster(base_url=base_url, api_key=api_key)
+
+    if backend == "ayrshare":
+        return SocialPoster()
+
+    raise ValueError(f"Unknown POSTING_BACKEND: {backend!r}")
+
+
 def main():
     """Example usage of SocialPoster."""
     poster = SocialPoster(ayrshare_api_key="your_key_here")

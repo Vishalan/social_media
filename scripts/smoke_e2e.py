@@ -617,6 +617,7 @@ def step_assemble(
             output_path=output_path,
             crop_to_portrait=False,
             layout=AvatarLayout.BROLL_BODY,
+            thumbnail_path=topic.get("thumbnail_path"),
         )
     except subprocess.CalledProcessError as e:
         print(f"  {_FAIL}  FFmpeg failed (exit {e.returncode}):")
@@ -741,11 +742,42 @@ async def main() -> None:
             total_dur = sum(_video_duration(p) for p in avatar_paths)
         _tracker.veed_res = os.environ.get("VEED_RESOLUTION", "480p")
         _tracker.record_veed(total_dur)
-        print(f"  ↷  Reusing avatar + audio (steps 1-4 skipped); regenerating b-roll")
+        print(f"  ↷  Reusing avatar + audio (steps 1-4 skipped); regenerating b-roll + thumbnail")
         stub_script = {"script": topic["title"], "title": topic["title"]}
+        # Thumbnail step also runs in reuse mode — fully isolated, never raises.
+        try:
+            try:
+                from thumbnail_gen.step import step_thumbnail
+            except ImportError:
+                from scripts.thumbnail_gen.step import step_thumbnail
+            _thumb_run_dir = Path("output/thumbnails") / safe
+            thumbnail_path = step_thumbnail(
+                script_text=topic["title"],
+                run_dir=_thumb_run_dir,
+            )
+            topic["thumbnail_path"] = str(thumbnail_path)
+            print(f"  {_PASS}  thumbnail: {thumbnail_path}")
+        except Exception as _e:
+            print(f"  {_FAIL}  thumbnail step crashed (should be impossible): {_e}")
         broll_path, broll_type = await step_broll(topic, stub_script, audio_duration)
     else:
         script     = step_script(topic)
+        # Thumbnail generation — fully isolated; never raises.
+        try:
+            try:
+                from thumbnail_gen.step import step_thumbnail
+            except ImportError:
+                from scripts.thumbnail_gen.step import step_thumbnail
+            safe = re.sub(r"[^a-z0-9_]", "_", topic["title"].lower())[:40]
+            _thumb_run_dir = Path("output/thumbnails") / safe
+            thumbnail_path = step_thumbnail(
+                script_text=script.get("script", ""),
+                run_dir=_thumb_run_dir,
+            )
+            topic["thumbnail_path"] = str(thumbnail_path)
+            print(f"  {_PASS}  thumbnail: {thumbnail_path}")
+        except Exception as _e:
+            print(f"  {_FAIL}  thumbnail step crashed (should be impossible): {_e}")
         audio_path = step_voice(topic, script.get("script", ""))
         from moviepy import AudioFileClip as _AFC
         audio_duration = _AFC(audio_path).duration
