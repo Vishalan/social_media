@@ -203,6 +203,20 @@ async def send_approval_preview(app, pipeline_run_id: int) -> int:
     finally:
         conn.close()
 
+    # Unit 7 — schedule the auto-approve cutoff (slot - 30min). Failure here
+    # MUST NOT block preview send: log + continue.
+    try:
+        from sidecar.jobs.publish import schedule_auto_approve, compute_next_slot
+
+        slot = compute_next_slot()
+        res = schedule_auto_approve(pipeline_run_id, slot)
+        if asyncio.iscoroutine(res):
+            await res
+    except ImportError:
+        logger.warning("auto-approve job not yet wired — Unit 7")
+    except Exception as exc:
+        logger.warning("schedule_auto_approve failed: %s", exc)
+
     return message_id
 
 
@@ -258,11 +272,15 @@ async def handle_approve(update, context) -> None:
         except Exception:
             pass
 
-        # Lazily import the Unit 7 publish job — gracefully degrade if absent.
+        # Unit 7 — trigger the publish job. We still keep an ImportError
+        # fallback so unit tests that patch the import can exercise the
+        # graceful-degradation path.
         try:
             from sidecar.jobs.publish import schedule_publish  # type: ignore
 
-            schedule_publish(run_id)
+            res = schedule_publish(run_id)
+            if asyncio.iscoroutine(res):
+                await res
         except ImportError:
             logger.warning("publish job not yet wired — Unit 7")
         except Exception as exc:

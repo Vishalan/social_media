@@ -93,6 +93,10 @@ _PIPELINE_RUNS_COLUMN_MIGRATIONS: list[tuple[str, str]] = [
     ("error_log", "TEXT"),
     ("started_at", "TEXT"),
     ("finished_at", "TEXT"),
+    # Unit 7 — publish results
+    ("post_ids_json", "TEXT"),
+    ("publish_attempted_at", "TEXT"),
+    ("publish_error", "TEXT"),
 ]
 
 
@@ -309,6 +313,57 @@ def update_pipeline_run_generation_result(
                 error_log,
                 started_at,
                 finished_at,
+                run_id,
+            ),
+        )
+
+
+def get_pipeline_run_with_captions(
+    conn: sqlite3.Connection, run_id: int
+) -> Optional[dict]:
+    """Fetch a pipeline_run row and deserialize its captions_json field.
+
+    Returns the row dict with an extra ``captions`` key (parsed dict, possibly
+    empty) or None if the row doesn't exist.
+    """
+    row = get_pipeline_run(conn, run_id)
+    if row is None:
+        return None
+    raw = row.get("captions_json") or "{}"
+    try:
+        row["captions"] = json.loads(raw)
+    except (TypeError, ValueError):
+        row["captions"] = {}
+    return row
+
+
+def update_pipeline_run_publish_result(
+    conn: sqlite3.Connection,
+    run_id: int,
+    status: str,
+    post_ids: Optional[dict],
+    error: Optional[str] = None,
+) -> None:
+    """Persist Unit 7 publish-result columns on a pipeline_runs row."""
+    _apply_column_migrations(conn)
+    from datetime import datetime as _dt
+
+    payload = json.dumps(post_ids) if post_ids is not None else None
+    with conn:
+        conn.execute(
+            """
+            UPDATE pipeline_runs SET
+                status               = ?,
+                post_ids_json        = ?,
+                publish_attempted_at = ?,
+                publish_error        = ?
+             WHERE id = ?
+            """,
+            (
+                status,
+                payload,
+                _dt.utcnow().isoformat(timespec="seconds"),
+                error,
                 run_id,
             ),
         )

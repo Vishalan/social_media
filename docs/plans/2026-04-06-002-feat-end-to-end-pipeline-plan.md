@@ -413,7 +413,7 @@ Daily flow:
 
 ---
 
-- [ ] **Unit 7: Postiz posting + auto-approve scheduler + IG Collab fallback**
+- [x] **Unit 7: Postiz posting + auto-approve scheduler + IG Collab fallback**
 
 **Goal:** On Approve (or auto-approve timeout), publish the video + caption + thumbnail to IG + YT via Postiz. Fall back to direct IG Graph API if Postiz does not support the Collab field. Handle the T-30min cutoff via scheduler.
 
@@ -458,7 +458,7 @@ Daily flow:
 
 ---
 
-- [ ] **Unit 8: Dashboard UI + settings management**
+- [x] **Unit 8: Dashboard UI + settings management**
 
 **Goal:** Ship the sidecar-rendered HTML dashboard covering run history, approval queue, Gmail trigger logs, and the Settings page that edits secrets + triggers container restarts.
 
