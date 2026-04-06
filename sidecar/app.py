@@ -18,6 +18,10 @@ from . import __version__
 from . import db as db_module
 from .config import settings_manager
 from .routes import health as health_routes
+from .routes import dashboard as dashboard_routes
+from .routes import settings_api as settings_api_routes
+from .routes import approvals_api as approvals_api_routes
+from . import auth as auth_module
 
 
 logger = logging.getLogger("sidecar")
@@ -55,7 +59,28 @@ async def lifespan(app: FastAPI):
         logger.error("sidecar scheduler failed to start: %s", exc)
         app.state.scheduler = None
 
-    # TODO: Unit 6 — launch the Telegram bot polling task.
+    # --- Telegram bot (Unit 6) -------------------------------------------
+    app.state.telegram_bot = None
+    app.state.telegram_task = None
+    try:
+        s = settings_manager.settings
+        if s is None or not getattr(s, "TELEGRAM_BOT_TOKEN", ""):
+            logger.info("sidecar telegram bot: no token configured, skipping")
+        else:
+            from .telegram_bot import build_application as _build_tg
+
+            tg_app = _build_tg(s)
+            await tg_app.initialize()
+            await tg_app.start()
+            await tg_app.updater.start_polling()
+            app.state.telegram_bot = tg_app
+            logger.info("sidecar telegram bot: polling started")
+    except ImportError as exc:
+        logger.warning("sidecar telegram bot: SDK not installed (%s)", exc)
+        app.state.telegram_bot = None
+    except Exception as exc:
+        logger.error("sidecar telegram bot: failed to start: %s", exc)
+        app.state.telegram_bot = None
 
     yield
 
@@ -65,6 +90,23 @@ async def lifespan(app: FastAPI):
             app.state.scheduler.shutdown(wait=False)
     except Exception as exc:
         logger.warning("sidecar scheduler shutdown error: %s", exc)
+    try:
+        tg_app = getattr(app.state, "telegram_bot", None)
+        if tg_app is not None:
+            try:
+                await tg_app.updater.stop()
+            except Exception:
+                pass
+            try:
+                await tg_app.stop()
+            except Exception:
+                pass
+            try:
+                await tg_app.shutdown()
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.warning("sidecar telegram bot shutdown error: %s", exc)
     logger.info("sidecar shutting down")
 
 
@@ -137,3 +179,8 @@ app = FastAPI(
 )
 
 app.include_router(health_routes.router)
+app.include_router(auth_module.router)
+app.include_router(dashboard_routes.router)
+app.include_router(settings_api_routes.router)
+app.include_router(approvals_api_routes.router)
+auth_module.install_redirect_handler(app)

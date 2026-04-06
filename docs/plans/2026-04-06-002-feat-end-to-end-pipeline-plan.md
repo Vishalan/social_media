@@ -372,7 +372,7 @@ Daily flow:
 
 ---
 
-- [ ] **Unit 6: Telegram approval bot**
+- [x] **Unit 6: Telegram approval bot**
 
 **Goal:** Implement the owner-facing approval loop. Send preview, handle inline actions (Approve, Reject, Reschedule), handle force-reply caption edits, update DB, and trigger the posting flow on approve.
 

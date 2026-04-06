@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Summary - CommonCreed{% endblock %}
+{% block content %}
+<h1>Summary</h1>
+<div class="cards">
+  <div class="card">
+    <div class="label">Runs this week</div>
+    <div class="value">{{ runs_this_week }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Approval queue</div>
+    <div class="value">{{ approval_queue_count }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Last Gmail success</div>
+    <div class="value" style="font-size: 16px">{{ last_gmail_success }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Cost this month</div>
+    <div class="value">${{ cost_this_month }}</div>
+  </div>
+</div>
+<h2>Mock data notice</h2>
+<p style="color: var(--muted);">
+  This summary view currently renders mock values for Gmail-trigger and cost
+  fields. Real wire-up lands after Unit 7.
+</p>
+{% endblock %}

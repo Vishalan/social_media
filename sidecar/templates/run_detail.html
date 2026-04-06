@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Run #{{ run.id }} - CommonCreed{% endblock %}
+{% block content %}
+<h1>Run #{{ run.id }} - {{ run.topic_title or "(no topic)" }}</h1>
+<p><a href="/runs">&larr; back to runs</a></p>
+
+<h2>Status</h2>
+<p><span class="badge">{{ run.status }}</span> &middot; created {{ run.created_at }}</p>
+
+<h2>Video</h2>
+{% if run.video_path %}
+  <p><code>{{ run.video_path }}</code></p>
+  <video controls width="640" src="{{ run.video_path }}"></video>
+{% else %}
+  <div class="empty">Video file not yet generated.</div>
+{% endif %}
+
+<h2>Thumbnail</h2>
+{% if run.thumbnail_path %}
+  <p><code>{{ run.thumbnail_path }}</code></p>
+{% else %}
+  <div class="empty">No thumbnail.</div>
+{% endif %}
+
+<h2>Captions</h2>
+<pre>{{ captions_pretty }}</pre>
+
+<h2>Cost breakdown</h2>
+<table>
+  <tr><th>Sonnet</th><td>${{ "%.4f"|format(run.cost_sonnet or 0) }}</td></tr>
+  <tr><th>Haiku</th><td>${{ "%.4f"|format(run.cost_haiku or 0) }}</td></tr>
+  <tr><th>ElevenLabs</th><td>${{ "%.4f"|format(run.cost_elevenlabs or 0) }}</td></tr>
+  <tr><th>VEED</th><td>${{ "%.4f"|format(run.cost_veed or 0) }}</td></tr>
+</table>
+
+<h2>Logs</h2>
+<pre>{{ run.error_log or "(no errors logged)" }}</pre>
+
+<h2>Actions</h2>
+<form method="post" action="/runs/{{ run.id }}/retry_publish" style="display: inline;">
+  <button type="submit" class="secondary">Retry publish (stub)</button>
+</form>
+<a class="btn secondary" href="#" target="_blank">View in Postiz</a>
+{% endblock %}

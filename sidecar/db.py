@@ -96,6 +96,14 @@ _PIPELINE_RUNS_COLUMN_MIGRATIONS: list[tuple[str, str]] = [
 ]
 
 
+# Unit 6 — additive migrations for the approvals table.
+_APPROVALS_COLUMN_MIGRATIONS: list[tuple[str, str]] = [
+    ("owner_action_at", "TEXT"),
+    ("proposed_time", "TEXT"),
+    ("telegram_message_id", "INTEGER"),
+]
+
+
 def _apply_column_migrations(conn: sqlite3.Connection) -> None:
     for name, ddl in _PIPELINE_RUNS_COLUMN_MIGRATIONS:
         try:
@@ -104,6 +112,72 @@ def _apply_column_migrations(conn: sqlite3.Connection) -> None:
             if "duplicate column name" in str(e).lower():
                 continue
             raise
+    for name, ddl in _APPROVALS_COLUMN_MIGRATIONS:
+        try:
+            conn.execute(f"ALTER TABLE approvals ADD COLUMN {name} {ddl}")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e).lower():
+                continue
+            raise
+
+
+def create_approval(
+    conn: sqlite3.Connection,
+    pipeline_run_id: int,
+    telegram_message_id: int,
+) -> int:
+    """Insert a pending approvals row, returning its id."""
+    _apply_column_migrations(conn)
+    cur = conn.execute(
+        """
+        INSERT INTO approvals (pipeline_run_id, status, telegram_message_id)
+        VALUES (?, 'pending', ?)
+        """,
+        (pipeline_run_id, telegram_message_id),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def get_approval_by_run_id(
+    conn: sqlite3.Connection, pipeline_run_id: int
+) -> Optional[dict]:
+    _apply_column_migrations(conn)
+    row = conn.execute(
+        "SELECT * FROM approvals WHERE pipeline_run_id = ? "
+        "ORDER BY id DESC LIMIT 1",
+        (pipeline_run_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def update_approval_status(
+    conn: sqlite3.Connection,
+    approval_id: int,
+    status: str,
+    owner_action_at: str,
+    proposed_time: Optional[str] = None,
+) -> None:
+    _apply_column_migrations(conn)
+    with conn:
+        if proposed_time is not None:
+            conn.execute(
+                """
+                UPDATE approvals
+                   SET status = ?, owner_action_at = ?, proposed_time = ?
+                 WHERE id = ?
+                """,
+                (status, owner_action_at, proposed_time, approval_id),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE approvals
+                   SET status = ?, owner_action_at = ?
+                 WHERE id = ?
+                """,
+                (status, owner_action_at, approval_id),
+            )
 
 
 def init_db(db_path: str) -> None:
@@ -238,6 +312,52 @@ def update_pipeline_run_generation_result(
                 run_id,
             ),
         )
+
+
+def get_recent_pipeline_runs(
+    conn: sqlite3.Connection, limit: int = 50
+) -> list[dict]:
+    """Return the most recent pipeline_runs rows (newest first)."""
+    _apply_column_migrations(conn)
+    rows = conn.execute(
+        "SELECT * FROM pipeline_runs ORDER BY created_at DESC, id DESC LIMIT ?",
+        (int(limit),),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def count_approvals_by_status(conn: sqlite3.Connection, status: str) -> int:
+    """Return how many approval rows currently match the given status."""
+    _apply_column_migrations(conn)
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM approvals WHERE status = ?", (status,)
+    ).fetchone()
+    return int(row["n"]) if row is not None else 0
+
+
+def get_pending_approvals(conn: sqlite3.Connection) -> list[dict]:
+    """Return all approvals with status='pending', joined with their run topic."""
+    _apply_column_migrations(conn)
+    rows = conn.execute(
+        """
+        SELECT a.*, r.topic_title AS topic_title, r.topic_url AS topic_url,
+               r.thumbnail_path AS thumbnail_path
+          FROM approvals a
+          LEFT JOIN pipeline_runs r ON r.id = a.pipeline_run_id
+         WHERE a.status = 'pending'
+         ORDER BY a.created_at ASC, a.id ASC
+        """
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_settings_audit(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
+    """Return the most recent rows from the settings audit table."""
+    rows = conn.execute(
+        "SELECT * FROM settings ORDER BY updated_at DESC LIMIT ?",
+        (int(limit),),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def list_tables(db_path: str) -> list[str]:

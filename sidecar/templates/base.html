@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}CommonCreed{% endblock %}</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    :root {
+      --bg: #0e1116;
+      --panel: #161b22;
+      --panel-2: #1c2230;
+      --border: #2a3140;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --good: #3fb950;
+      --warn: #d29922;
+      --bad:  #f85149;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+                   "Helvetica Neue", Arial, sans-serif;
+      font-size: 14px; line-height: 1.5;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .layout { display: flex; min-height: 100vh; }
+    .sidebar {
+      width: 220px; background: var(--panel);
+      border-right: 1px solid var(--border);
+      padding: 20px 0;
+    }
+    .brand {
+      padding: 0 20px 16px;
+      font-size: 18px; font-weight: 600;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 12px;
+    }
+    .nav a {
+      display: block; padding: 10px 20px;
+      color: var(--text);
+    }
+    .nav a:hover { background: var(--panel-2); text-decoration: none; }
+    .main { flex: 1; padding: 28px 36px; max-width: 1200px; }
+    h1 { margin-top: 0; font-size: 22px; }
+    h2 { font-size: 16px; color: var(--muted); margin-top: 28px; }
+    .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 8px; padding: 18px;
+    }
+    .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .card .value { font-size: 24px; font-weight: 600; margin-top: 6px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td {
+      text-align: left; padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; }
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 11px; background: var(--panel-2);
+    }
+    .badge.good { color: var(--good); }
+    .badge.warn { color: var(--warn); }
+    .badge.bad  { color: var(--bad); }
+    .empty {
+      padding: 40px; text-align: center; color: var(--muted);
+      border: 1px dashed var(--border); border-radius: 8px;
+    }
+    button, .btn {
+      background: var(--accent); color: #0b1220;
+      border: none; padding: 8px 14px; border-radius: 6px;
+      font-weight: 600; cursor: pointer;
+    }
+    button.secondary, .btn.secondary {
+      background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    }
+    input[type=text], input[type=password], select {
+      background: var(--panel-2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 8px 10px; width: 100%;
+    }
+    .form-row { margin-bottom: 14px; }
+    .form-row label { display: block; color: var(--muted); margin-bottom: 4px; font-size: 12px; }
+    .hint { color: var(--muted); font-size: 11px; margin-top: 3px; }
+    pre { background: var(--panel-2); padding: 12px; border-radius: 6px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">CommonCreed</div>
+      <nav class="nav">
+        <a href="/">Summary</a>
+        <a href="/runs">Runs</a>
+        <a href="/approvals">Approvals</a>
+        <a href="/settings">Settings</a>
+        <a href="/logout">Logout</a>
+      </nav>
+    </aside>
+    <main class="main">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

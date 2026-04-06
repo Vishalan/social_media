@@ -1,0 +1,28 @@
+{% if runs and runs|length > 0 %}
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Created</th>
+      <th>Status</th>
+      <th>Topic</th>
+      <th>Cost</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in runs %}
+    <tr>
+      <td>{{ r.id }}</td>
+      <td>{{ r.created_at }}</td>
+      <td><span class="badge">{{ r.status }}</span></td>
+      <td>{{ r.topic_title or "-" }}</td>
+      <td>${{ "%.3f"|format((r.cost_sonnet or 0) + (r.cost_haiku or 0) + (r.cost_elevenlabs or 0) + (r.cost_veed or 0)) }}</td>
+      <td><a href="/runs/{{ r.id }}">view</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No runs yet. The daily Gmail trigger will populate this table once Unit 3 fires.</div>
+{% endif %}

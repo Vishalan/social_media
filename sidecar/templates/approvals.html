@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Approvals - CommonCreed{% endblock %}
+{% block content %}
+<h1>Pending approvals</h1>
+{% if approvals and approvals|length > 0 %}
+  {% for a in approvals %}
+  <div class="card" style="margin-bottom: 14px;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <div>
+        <div class="label">Approval #{{ a.id }} &middot; run #{{ a.pipeline_run_id }}</div>
+        <div style="font-size: 16px; margin-top: 4px;">{{ a.topic_title or "(no topic)" }}</div>
+        <div class="hint">{{ a.created_at }}</div>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <form method="post" action="/approvals/{{ a.id }}/approve" style="display:inline;">
+          <button type="submit">Approve</button>
+        </form>
+        <form method="post" action="/approvals/{{ a.id }}/reject" style="display:inline;">
+          <button type="submit" class="secondary">Reject</button>
+        </form>
+        <form method="post" action="/approvals/{{ a.id }}/reschedule" style="display:inline;">
+          <input type="hidden" name="proposed_time" value="">
+          <button type="submit" class="secondary">Reschedule</button>
+        </form>
+        <form method="post" action="/approvals/{{ a.id }}/edit_caption" style="display:inline;">
+          <input type="hidden" name="caption" value="">
+          <button type="submit" class="secondary">Edit caption</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+<div class="empty">Nothing pending right now.</div>
+{% endif %}
+{% endblock %}
