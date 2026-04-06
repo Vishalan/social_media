@@ -250,7 +250,7 @@ Daily flow:
 
 ---
 
-- [ ] **Unit 3: Gmail trigger + LLM topic selection**
+- [x] **Unit 3: Gmail trigger + LLM topic selection**
 
 **Goal:** At 05:00 daily, fetch the most recent TLDR AI newsletter from Gmail, extract items, score them with Claude Sonnet, and persist the top 2 topics to `pipeline_runs`.
 
@@ -335,7 +335,7 @@ Daily flow:
 
 ---
 
-- [ ] **Unit 5: Caption + hashtag engine**
+- [x] **Unit 5: Caption + hashtag engine**
 
 **Goal:** Generate platform-aware captions and hashtags for each completed video, persist them, and make them editable by the owner before posting.
 

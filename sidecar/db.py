@@ -7,6 +7,7 @@ Units 3-7 will extend these tables with ALTER TABLE patterns.
 """
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from contextlib import contextmanager
@@ -68,6 +69,32 @@ def connect(db_path: str) -> sqlite3.Connection:
     return conn
 
 
+# Additive column migrations for pipeline_runs. Each entry is a
+# (column_name, column_ddl) pair. Applied with a try/except so running twice
+# (or running alongside a parallel ALTER from another unit adding different
+# columns) is safe — SQLite raises OperationalError with "duplicate column
+# name" if the column already exists, which we swallow.
+_PIPELINE_RUNS_COLUMN_MIGRATIONS: list[tuple[str, str]] = [
+    # Unit 5 — generated caption payload
+    ("captions_json", "TEXT"),
+    # Unit 3 — topic selection metadata from the daily newsletter trigger
+    ("topic_title", "TEXT"),
+    ("topic_url", "TEXT"),
+    ("topic_score", "REAL"),
+    ("selection_rationale", "TEXT"),
+]
+
+
+def _apply_column_migrations(conn: sqlite3.Connection) -> None:
+    for name, ddl in _PIPELINE_RUNS_COLUMN_MIGRATIONS:
+        try:
+            conn.execute(f"ALTER TABLE pipeline_runs ADD COLUMN {name} {ddl}")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e).lower():
+                continue
+            raise
+
+
 def init_db(db_path: str) -> None:
     """Create tables if they don't exist. Idempotent."""
     conn = connect(db_path)
@@ -75,8 +102,61 @@ def init_db(db_path: str) -> None:
         with conn:
             for stmt in SCHEMA_STATEMENTS:
                 conn.execute(stmt)
+            _apply_column_migrations(conn)
     finally:
         conn.close()
+
+
+def insert_pipeline_run(
+    conn: sqlite3.Connection,
+    topic_title: str,
+    topic_url: str,
+    topic_score: float,
+    selection_rationale: str,
+    source_newsletter_date: str,
+    status: str = "pending_generation",
+) -> int:
+    """Insert a pipeline_runs row for a newly selected topic and return its id.
+
+    Runs the additive column migration first so callers who open their own
+    connection (e.g. tests with an in-memory DB that only called the raw
+    CREATE TABLE) don't have to remember to call ``init_db`` separately.
+    """
+    _apply_column_migrations(conn)
+    cur = conn.execute(
+        """
+        INSERT INTO pipeline_runs (
+            status,
+            topic_title,
+            topic_url,
+            topic_score,
+            selection_rationale,
+            source_newsletter_date
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            status,
+            topic_title,
+            topic_url,
+            topic_score,
+            selection_rationale,
+            source_newsletter_date,
+        ),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def set_captions(
+    conn: sqlite3.Connection, pipeline_run_id: int, captions: dict
+) -> None:
+    """Serialize ``captions`` as JSON and store it on the given pipeline run."""
+    payload = json.dumps(captions)
+    with conn:
+        conn.execute(
+            "UPDATE pipeline_runs SET captions_json = ? WHERE id = ?",
+            (payload, pipeline_run_id),
+        )
 
 
 def list_tables(db_path: str) -> list[str]:
