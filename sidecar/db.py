@@ -82,6 +82,17 @@ _PIPELINE_RUNS_COLUMN_MIGRATIONS: list[tuple[str, str]] = [
     ("topic_url", "TEXT"),
     ("topic_score", "REAL"),
     ("selection_rationale", "TEXT"),
+    # Unit 4 — pipeline subprocess result artifacts
+    ("video_path", "TEXT"),
+    ("thumbnail_path", "TEXT"),
+    ("audio_path", "TEXT"),
+    ("cost_sonnet", "REAL DEFAULT 0"),
+    ("cost_haiku", "REAL DEFAULT 0"),
+    ("cost_elevenlabs", "REAL DEFAULT 0"),
+    ("cost_veed", "REAL DEFAULT 0"),
+    ("error_log", "TEXT"),
+    ("started_at", "TEXT"),
+    ("finished_at", "TEXT"),
 ]
 
 
@@ -156,6 +167,76 @@ def set_captions(
         conn.execute(
             "UPDATE pipeline_runs SET captions_json = ? WHERE id = ?",
             (payload, pipeline_run_id),
+        )
+
+
+def get_pending_pipeline_runs(conn: sqlite3.Connection) -> list[dict]:
+    """Return all rows with status=='pending_generation' ordered by created_at."""
+    _apply_column_migrations(conn)
+    rows = conn.execute(
+        "SELECT * FROM pipeline_runs WHERE status = 'pending_generation' "
+        "ORDER BY created_at ASC, id ASC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_pipeline_run(conn: sqlite3.Connection, run_id: int) -> Optional[dict]:
+    """Fetch a single pipeline_runs row as a dict, or None if not found."""
+    _apply_column_migrations(conn)
+    row = conn.execute(
+        "SELECT * FROM pipeline_runs WHERE id = ?", (run_id,)
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def update_pipeline_run_generation_result(
+    conn: sqlite3.Connection,
+    run_id: int,
+    status: str,
+    video_path: Optional[str],
+    thumbnail_path: Optional[str],
+    audio_path: Optional[str],
+    cost_sonnet: float,
+    cost_haiku: float,
+    cost_elevenlabs: float,
+    cost_veed: float,
+    error_log: Optional[str],
+    started_at: Optional[str],
+    finished_at: Optional[str],
+) -> None:
+    """Single-statement UPDATE of all Unit 4 generation-result columns."""
+    _apply_column_migrations(conn)
+    with conn:
+        conn.execute(
+            """
+            UPDATE pipeline_runs SET
+                status          = ?,
+                video_path      = ?,
+                thumbnail_path  = ?,
+                audio_path      = ?,
+                cost_sonnet     = ?,
+                cost_haiku      = ?,
+                cost_elevenlabs = ?,
+                cost_veed       = ?,
+                error_log       = ?,
+                started_at      = ?,
+                finished_at     = ?
+            WHERE id = ?
+            """,
+            (
+                status,
+                video_path,
+                thumbnail_path,
+                audio_path,
+                cost_sonnet,
+                cost_haiku,
+                cost_elevenlabs,
+                cost_veed,
+                error_log,
+                started_at,
+                finished_at,
+                run_id,
+            ),
         )
 
 

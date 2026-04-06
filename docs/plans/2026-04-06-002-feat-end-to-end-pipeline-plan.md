@@ -294,7 +294,7 @@ Daily flow:
 
 ---
 
-- [ ] **Unit 4: Pipeline runner integration**
+- [x] **Unit 4: Pipeline runner integration**
 
 **Goal:** Sequentially execute the existing video pipeline for each selected topic via subprocess, persist results to `pipeline_runs`, and enforce per-video failure isolation.
 
