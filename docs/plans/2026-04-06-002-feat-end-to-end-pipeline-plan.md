@@ -212,7 +212,7 @@ Daily flow:
 
 ---
 
-- [ ] **Unit 2: CommonCreed sidecar service skeleton**
+- [x] **Unit 2: CommonCreed sidecar service skeleton**
 
 **Goal:** Build the sidecar Docker image, wire it into the stack, expose a health endpoint, and confirm it can read the mounted pipeline code and `.env` file.
 
