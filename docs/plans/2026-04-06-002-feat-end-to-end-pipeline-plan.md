@@ -179,7 +179,7 @@ Daily flow:
 
 ## Implementation Units
 
-- [ ] **Unit 1: Portainer stack skeleton + Postiz bootstrap**
+- [x] **Unit 1: Portainer stack skeleton + Postiz bootstrap**
 
 **Goal:** Get Postiz + Postgres + Redis running cleanly on the DS1520+ with persistent volumes, reachable from LAN, with all four social accounts connected via OAuth.
 

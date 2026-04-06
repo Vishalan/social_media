@@ -1,0 +1,215 @@
+# =============================================================================
+# CommonCreed posting stack — Postiz + Postgres + Redis
+# =============================================================================
+#
+# Target host: Synology DS1520+ (8 GB RAM) running Portainer CE.
+# Portable: this same file runs on any Docker host (Mac, Linux, VPS) by
+# changing only the bind-mount paths in the volumes block at the bottom and
+# the .env file location.
+#
+# Image versions are pinned (no `latest`) so deploys are reproducible. To
+# bump a version, edit the tag here and redeploy the stack from Portainer.
+#
+# Resource budget on the DS1520+:
+#   Postiz       ~1.0  GB
+#   Postgres     ~512  MB
+#   Redis        ~256  MB
+#   ----------------------
+#   subtotal     ~1.75 GB
+#   leaves       ~6.25 GB for the DSM host + the Unit 2 sidecar (~2 GB) +
+#                pipeline subprocess peaks (~2 GB) with margin.
+#
+# All secrets come from the .env file next to this compose file. NEVER
+# hardcode credentials here. See .env.example for the full list.
+# =============================================================================
+
+version: "3.8"
+
+# -----------------------------------------------------------------------------
+# Networks — single internal network. Postiz is the only service that needs
+# to be reachable from the LAN; everything else is internal.
+# -----------------------------------------------------------------------------
+networks:
+  commoncreed:
+    driver: bridge
+
+# -----------------------------------------------------------------------------
+# Volumes — named volumes managed by Docker. On Synology, Portainer creates
+# these under /volume1/@docker/volumes/ by default. If you prefer explicit
+# bind mounts under /volume1/docker/commoncreed/, see the README's "NAS
+# folder setup" section and replace each entry below with a bind mount.
+# -----------------------------------------------------------------------------
+volumes:
+  postgres_data:
+    name: commoncreed_postgres_data
+  postiz_uploads:
+    name: commoncreed_postiz_uploads
+  postiz_config:
+    name: commoncreed_postiz_config
+  # Reserved for Unit 2 sidecar — declared here so the volume exists when
+  # the sidecar service is added without needing a stack recreate.
+  commoncreed_output:
+    name: commoncreed_output
+  sidecar_db:
+    name: commoncreed_sidecar_db
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Postgres — backing store for Postiz. Pinned to 16-alpine for the smallest
+  # footprint that still receives security updates. Postiz officially
+  # supports Postgres 14+; 16 is the current LTS sweet spot.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16.4-alpine
+    container_name: commoncreed_postgres
+    restart: unless-stopped
+    networks:
+      - commoncreed
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+  # ---------------------------------------------------------------------------
+  # Redis — used by Postiz for the BullMQ job queue. Pinned to 7.4-alpine.
+  # No persistence configured (queue jobs are recoverable from Postgres state)
+  # which keeps the memory profile predictable.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7.4-alpine
+    container_name: commoncreed_redis
+    restart: unless-stopped
+    networks:
+      - commoncreed
+    command: ["redis-server", "--appendonly", "no", "--maxmemory", "200mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+
+  # ---------------------------------------------------------------------------
+  # Postiz — self-hosted OSS build (AGPL-3.0) from gitroomhq/postiz-app.
+  #
+  # The "ghcr.io/gitroomhq/postiz-app" image bundles the frontend, backend,
+  # workers, and cron in a single container — Postiz publishes this as their
+  # recommended single-container deployment for self-hosters. Pinned to a
+  # specific tagged release for reproducibility.
+  #
+  # Postiz exposes its UI + REST API on port 5000 inside the container. Only
+  # this service publishes a port to the host, and only on the LAN-facing
+  # interface (via the reverse proxy in front of it — see README).
+  # ---------------------------------------------------------------------------
+  postiz:
+    image: ghcr.io/gitroomhq/postiz-app:v1.34.4
+    container_name: commoncreed_postiz
+    restart: unless-stopped
+    networks:
+      - commoncreed
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # --- Core URLs ---------------------------------------------------------
+      # Both URLs typically point at the same hostname when fronted by a
+      # reverse proxy. See README "Reverse proxy notes".
+      MAIN_URL: ${POSTIZ_MAIN_URL}
+      FRONTEND_URL: ${POSTIZ_FRONTEND_URL}
+      NEXT_PUBLIC_BACKEND_URL: ${POSTIZ_FRONTEND_URL}/api
+
+      # --- Auth --------------------------------------------------------------
+      JWT_SECRET: ${POSTIZ_JWT_SECRET}
+
+      # --- Datastore ---------------------------------------------------------
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+
+      # --- Storage -----------------------------------------------------------
+      # "local" stores uploads on the mounted volume below. Switch to "cloudflare"
+      # or "s3" later if you outgrow local storage; the volume mount is the
+      # only thing that needs to change.
+      STORAGE_PROVIDER: ${POSTIZ_STORAGE_PROVIDER:-local}
+      UPLOAD_DIRECTORY: /uploads
+      NEXT_PUBLIC_UPLOAD_DIRECTORY: /uploads
+
+      # --- Misc --------------------------------------------------------------
+      DISABLE_REGISTRATION: ${POSTIZ_DISABLE_REGISTRATION:-true}
+      NX_ADD_PLUGINS: "false"
+    volumes:
+      - postiz_uploads:/uploads
+      - postiz_config:/config
+    ports:
+      # Exposed on the host so the Synology reverse proxy (or Caddy) can
+      # forward LAN traffic. If you front this with a proxy on the same host,
+      # you can drop the host-side bind to 127.0.0.1:5000:5000 instead.
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/ >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # ---------------------------------------------------------------------------
+  # Unit 2: CommonCreed sidecar service will be added here.
+  #
+  # Planned shape (do NOT enable in Unit 1):
+  #   commoncreed_sidecar:
+  #     build: ../../sidecar
+  #     container_name: commoncreed_sidecar
+  #     restart: unless-stopped
+  #     networks: [commoncreed]
+  #     depends_on:
+  #       postiz:
+  #         condition: service_healthy
+  #     environment:
+  #       POSTIZ_BASE_URL: http://postiz:5000
+  #       POSTIZ_API_KEY: ${POSTIZ_API_KEY}
+  #       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+  #       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+  #       TELEGRAM_CHAT_ID:   ${TELEGRAM_CHAT_ID}
+  #       GMAIL_OAUTH_JSON:   /secrets/gmail_oauth.json
+  #       SIDECAR_ADMIN_PASSWORD: ${SIDECAR_ADMIN_PASSWORD}
+  #     volumes:
+  #       - ../../scripts:/app/scripts:ro
+  #       - commoncreed_output:/app/output
+  #       - sidecar_db:/app/sidecar_db
+  #       - ./.env:/app/.env
+  #       - /var/run/docker.sock:/var/run/docker.sock
+  #     ports:
+  #       - "5050:5050"
+  #     deploy:
+  #       resources:
+  #         limits:
+  #           memory: 2G
+  # ---------------------------------------------------------------------------
