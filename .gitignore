@@ -28,8 +28,16 @@ assets/spike/
 .DS_Store
 **/.DS_Store
 
-# Claude Code session data
-.claude/
+# Claude Code — only local session/state dirs are ignored.
+# Project-scoped skills (.claude/skills/) ARE committed; they're repo tooling.
+.claude/projects/
+.claude/cache/
+.claude/sessions/
+.claude/todos/
+.claude/ide/
+.claude/statsig/
+.claude/settings.local.json
+.claude/shell-snapshots/
 
 # Node
 node_modules/
