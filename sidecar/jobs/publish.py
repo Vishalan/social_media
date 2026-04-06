@@ -279,31 +279,32 @@ async def publish_action(pipeline_run_id: int) -> dict:
             )
             return {"ok": False, "error": "not approved"}
 
-        # 2) duplicate guard (Unit 9 — lazy import)
-        try:
-            from sidecar.duplicate_guard import check as duplicate_check  # type: ignore
-        except ImportError:
-            duplicate_check = None
-            logger.info("publish_action: duplicate_guard not yet wired (Unit 9)")
-        except Exception as exc:
-            duplicate_check = None
-            logger.warning("publish_action: duplicate_guard import error: %s", exc)
+        # 2) duplicate guard (Unit 9 — hard import, enforced)
+        from sidecar.duplicate_guard import check as duplicate_check
 
-        if duplicate_check is not None:
+        try:
+            topic_url = run.get("topic_url") or ""
+            topic_title = run.get("topic_title") or ""
+            dup_conn = _open_conn()
             try:
-                topic_url = run.get("topic_url") or ""
-                if duplicate_check(topic_url):
-                    await _mark_failed(
-                        pipeline_run_id,
-                        "publish_failed_duplicate",
-                        f"duplicate detected for {topic_url}",
-                    )
-                    await _send_telegram(
-                        f"⚠ Duplicate detected — run {pipeline_run_id} not published."
-                    )
-                    return {"ok": False, "duplicate": True}
-            except Exception as exc:
-                logger.warning("duplicate_guard.check raised: %s", exc)
+                dup_result = duplicate_check(dup_conn, topic_url, topic_title)
+            finally:
+                dup_conn.close()
+        except Exception as exc:
+            logger.warning("duplicate_guard.check raised: %s", exc)
+            dup_result = {"is_duplicate": False, "match_run_id": None, "match_reason": f"check error: {exc}"}
+
+        if dup_result.get("is_duplicate"):
+            await _mark_failed(
+                pipeline_run_id,
+                "publish_failed_duplicate",
+                f"duplicate detected: {dup_result.get('match_reason', '')}",
+            )
+            await _send_telegram(
+                f"⚠ Duplicate detected — run {pipeline_run_id} not published "
+                f"({dup_result.get('match_reason', '')})"
+            )
+            return {"ok": False, "duplicate": True, "match": dup_result}
 
         # 3) build the Postiz call
         captions = run.get("captions") or {}

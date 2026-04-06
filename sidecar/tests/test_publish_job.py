@@ -237,7 +237,11 @@ def test_publish_duplicate_detected(seeded_run, db_path, patched_settings, monke
     _patch_telegram(monkeypatch)
 
     fake_dup = types.ModuleType("sidecar.duplicate_guard")
-    fake_dup.check = lambda url: True  # type: ignore
+    fake_dup.check = lambda conn, url, title, **kw: {  # type: ignore
+        "is_duplicate": True,
+        "match_run_id": 1,
+        "match_reason": "test",
+    }
     monkeypatch.setitem(sys.modules, "sidecar.duplicate_guard", fake_dup)
 
     out = _run(pub.publish_action(seeded_run))
@@ -251,13 +255,14 @@ def test_publish_duplicate_detected(seeded_run, db_path, patched_settings, monke
     assert row["status"] == "publish_failed_duplicate"
 
 
-def test_publish_duplicate_guard_not_yet_imported(seeded_run, db_path, patched_settings, monkeypatch):
-    """ImportError on duplicate_guard should log and proceed."""
+def test_publish_duplicate_guard_allows_non_duplicate(seeded_run, db_path, patched_settings, monkeypatch):
+    """Unit 9 — duplicate_guard is now a hard import; non-duplicate proceeds."""
     _set_approval_status(db_path, seeded_run, "approved")
     _patch_postiz(monkeypatch)
     _patch_ig(monkeypatch, verify_results=[True])
     _patch_telegram(monkeypatch)
-    monkeypatch.setitem(sys.modules, "sidecar.duplicate_guard", None)
+    # Real duplicate_guard is imported; on an empty DB (other than this run)
+    # the current run's own URL won't match a terminal-status row.
 
     out = _run(pub.publish_action(seeded_run))
     assert out["ok"] is True

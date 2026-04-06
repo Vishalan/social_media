@@ -97,6 +97,8 @@ _PIPELINE_RUNS_COLUMN_MIGRATIONS: list[tuple[str, str]] = [
     ("post_ids_json", "TEXT"),
     ("publish_attempted_at", "TEXT"),
     ("publish_error", "TEXT"),
+    # Unit 9 — retention job stamp
+    ("retention_pruned_at", "TEXT"),
 ]
 
 
@@ -447,6 +449,80 @@ def db_writable(db_path: str) -> bool:
             conn.close()
         except Exception:
             pass
+
+
+def mark_retention_pruned(conn: sqlite3.Connection, run_id: int) -> None:
+    """Stamp retention_pruned_at and NULL the artifact path columns."""
+    _apply_column_migrations(conn)
+    from datetime import datetime as _dt
+
+    with conn:
+        conn.execute(
+            """
+            UPDATE pipeline_runs
+               SET retention_pruned_at = ?,
+                   video_path          = NULL,
+                   thumbnail_path      = NULL,
+                   audio_path          = NULL
+             WHERE id = ?
+            """,
+            (_dt.utcnow().isoformat(timespec="seconds"), run_id),
+        )
+
+
+def get_settings_value(
+    conn: sqlite3.Connection, key: str, default: str = ""
+) -> str:
+    """Read a value from the settings key/value table."""
+    try:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        ).fetchone()
+    except sqlite3.Error:
+        return default
+    if row is None:
+        return default
+    v = row["value"] if "value" in row.keys() else None
+    return v if v is not None else default
+
+
+def set_settings_value(
+    conn: sqlite3.Connection, key: str, value: str
+) -> None:
+    """Upsert a key/value row in the settings table."""
+    from datetime import datetime as _dt
+
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value      = excluded.value,
+                updated_at = excluded.updated_at
+            """,
+            (key, value, _dt.utcnow().isoformat(timespec="seconds")),
+        )
+
+
+def get_runs_for_cost_report(
+    conn: sqlite3.Connection, start_date: str, end_date: str
+) -> list[dict]:
+    """Return pipeline_runs rows created between start_date and end_date (inclusive).
+
+    Dates are ISO ``YYYY-MM-DD`` strings.
+    """
+    _apply_column_migrations(conn)
+    rows = conn.execute(
+        """
+        SELECT * FROM pipeline_runs
+         WHERE date(created_at) >= date(?)
+           AND date(created_at) <= date(?)
+         ORDER BY created_at ASC, id ASC
+        """,
+        (start_date, end_date),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 @contextmanager

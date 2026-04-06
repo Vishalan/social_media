@@ -1,7 +1,7 @@
 ---
 title: "feat: Self-hosted end-to-end CommonCreed pipeline on Synology + Portainer"
 type: feat
-status: active
+status: completed
 date: 2026-04-06
 origin: docs/brainstorms/2026-04-06-end-to-end-pipeline-requirements.md
 ---
@@ -511,7 +511,7 @@ Daily flow:
 
 ---
 
-- [ ] **Unit 9: Failure isolation hardening + retention + operational polish**
+- [x] **Unit 9: Failure isolation hardening + retention + operational polish**
 
 **Goal:** Ensure per-video failure isolation is bulletproof, add a disk retention policy, and add the operational glue (backups, cost tracking, Telegram health pings) that makes the system actually survive 30 days unattended.
 

@@ -129,8 +129,12 @@ def _start_scheduler():
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
     from apscheduler.triggers.interval import IntervalTrigger
+    from apscheduler.triggers.cron import CronTrigger
 
     from .jobs.run_pipeline import process_pending_runs
+    from .jobs.retention import run_retention_job
+    from .jobs.health_ping import run_health_pings
+    from .jobs.cost_report import send_weekly_cost_report
 
     jobstore_path: str = ""
     try:
@@ -167,6 +171,43 @@ def _start_scheduler():
         max_instances=1,
         coalesce=True,
     )
+    # Unit 9 — operational jobs
+    try:
+        sched.add_job(
+            run_retention_job,
+            trigger=CronTrigger(hour=3, minute=0),
+            id="retention_job",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+    except Exception as exc:
+        logger.warning("sidecar scheduler: retention job wire-up failed: %s", exc)
+
+    try:
+        sched.add_job(
+            run_health_pings,
+            trigger=IntervalTrigger(hours=1),
+            id="health_ping",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+    except Exception as exc:
+        logger.warning("sidecar scheduler: health ping wire-up failed: %s", exc)
+
+    try:
+        sched.add_job(
+            send_weekly_cost_report,
+            trigger=CronTrigger(day_of_week="mon", hour=9, minute=0),
+            id="weekly_cost_report",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+    except Exception as exc:
+        logger.warning("sidecar scheduler: cost report wire-up failed: %s", exc)
+
     sched.start()
     logger.info("sidecar scheduler started (jobstore=%s)", jobstore_path or "memory")
     return sched
