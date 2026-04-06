@@ -12,7 +12,7 @@ Run the full CommonCreed stack (Postiz + Postgres + Redis + sidecar) on your Mac
 - **8 GB RAM minimum** allocated to Docker (Docker Desktop → Settings → Resources)
 - **Python 3.9+** on the host (for running unit tests outside the container)
 - **`git`** with this repo checked out
-- **Ports 5000 and 5050 free** on the host (Postiz on 5000, sidecar on 5050)
+- **Ports 5100 and 5050 free** on the host (Postiz on 5100, sidecar on 5050). On macOS, port 5000 is claimed by AirPlay Receiver — the compose file remaps Postiz to 5100 by default via `POSTIZ_HOST_PORT`. Override in `.env` if you need a different host port.
 - **Outbound HTTPS** — the containers need to reach Anthropic, Google, fal.ai, Pexels, ElevenLabs, and Telegram APIs
 
 Verify:
@@ -89,7 +89,7 @@ docker compose ps          # all three should be "healthy"
 docker compose logs postgres    # for DB issues
 ```
 
-Open http://localhost:5000 in a browser. You should see the Postiz login screen.
+Open http://localhost:5100 in a browser. You should see the Postiz login screen.
 
 ---
 
@@ -392,6 +392,22 @@ docker compose down -v   # -v removes volumes. You lose Postiz accounts, sidecar
 
 ## 12. Troubleshooting
 
+### macOS: port 5000 returns `Server: AirTunes/...`
+
+macOS ships with AirPlay Receiver enabled by default, listening on port 5000. Any `docker run -p 5000:...` appears to work but the host-side port is hijacked by AirTunes, so `curl http://localhost:5000` returns Apple headers instead of your container. **This compose file remaps Postiz to host port 5100 by default** to dodge the conflict. If you really need 5000, disable AirPlay Receiver in System Settings → General → AirDrop & Handoff, then override with `POSTIZ_HOST_PORT=5000` in `.env`.
+
+### Postiz image tag `v1.x.y` not found
+
+Postiz does NOT publish semver tags. The GHCR registry only has per-arch timestamp tags (`amd64-<ts>` / `arm64-<ts>`) plus a multi-arch `latest`. The compose file defaults to `${POSTIZ_IMAGE_TAG:-latest}` — for local dev, leave it. For production, pin to a specific timestamp tag once you've verified that version works end-to-end with your sidecar code.
+
+### Postiz is "unhealthy" but the UI loads fine
+
+The Postiz image has neither `curl` nor `wget` built in — our healthcheck uses the bundled `node` runtime to do an HTTP check instead. If you ever see this regress, confirm the `healthcheck.test` line in `docker-compose.yml` starts with `node -e` and not `wget` or `curl`.
+
+### Colima is slow on first pull
+
+First-time Postiz pull on arm64 Colima can take 3-5 minutes depending on your connection. Subsequent starts use the cached image. If you want to pre-pull: `docker compose --env-file ../../.env pull`.
+
 ### Sidecar container keeps restarting
 
 Check `docker compose logs commoncreed_sidecar`. Common causes:
@@ -402,7 +418,7 @@ Check `docker compose logs commoncreed_sidecar`. Common causes:
 ### Postiz login page shows blank screen
 
 - Check browser console for CORS errors
-- Verify `POSTIZ_MAIN_URL` in `.env` matches the URL you're visiting (`http://localhost:5000` for local dev)
+- Verify `POSTIZ_MAIN_URL` in `.env` matches the URL you're visiting (`http://localhost:5100` for local dev; 5100 avoids the macOS AirPlay conflict on 5000)
 
 ### Telegram bot silent
 

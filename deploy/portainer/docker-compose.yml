@@ -123,7 +123,11 @@ services:
   # interface (via the reverse proxy in front of it — see README).
   # ---------------------------------------------------------------------------
   postiz:
-    image: ghcr.io/gitroomhq/postiz-app:v1.34.4
+    # Postiz publishes per-arch tags (amd64-<ts> / arm64-<ts>) and a multi-arch
+    # `latest`. There is no semver tag stream. For local dev we track `latest`;
+    # for Synology production, pin to a specific `amd64-<timestamp>` tag once
+    # verified. Override via POSTIZ_IMAGE_TAG env var if pinning.
+    image: ghcr.io/gitroomhq/postiz-app:${POSTIZ_IMAGE_TAG:-latest}
     container_name: commoncreed_postiz
     restart: unless-stopped
     networks:
@@ -166,9 +170,14 @@ services:
       # Exposed on the host so the Synology reverse proxy (or Caddy) can
       # forward LAN traffic. If you front this with a proxy on the same host,
       # you can drop the host-side bind to 127.0.0.1:5000:5000 instead.
-      - "5000:5000"
+      # Host port 5100 (5000 is taken by macOS AirPlay Receiver on dev Macs;
+      # override via POSTIZ_HOST_PORT if you've disabled AirPlay or are on Linux)
+      - "${POSTIZ_HOST_PORT:-5100}:5000"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/ >/dev/null 2>&1 || exit 1"]
+      # Postiz image has neither curl nor wget. Use the bundled node runtime
+      # to do an HTTP check. Accept any 2xx/3xx as healthy (Postiz root
+      # returns 307 → /auth when unauthenticated, which is a fine signal).
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:5000/', r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 5
