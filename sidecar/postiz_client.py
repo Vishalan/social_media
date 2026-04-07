@@ -20,7 +20,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -309,16 +309,42 @@ class PostizClient:
             )
 
         # 4. fire CreatePostDto -----------------------------------------
-        date_iso = (scheduled_slot or datetime.utcnow()).isoformat()
-        if not date_iso.endswith("Z") and "+" not in date_iso[-6:]:
-            date_iso = date_iso + "Z"
+        # Decide between "schedule" and "now":
+        # - If the requested slot is in the future, ask Postiz to queue
+        #   the post for that exact time. Postiz fires it at the slot.
+        # - If the slot is missing or already in the past (e.g. user
+        #   approved AFTER the peak hour), fall back to "now" so the post
+        #   still goes out immediately.
+        target = scheduled_slot or datetime.utcnow()
+        if target.tzinfo is None:
+            # Treat naive datetimes as UTC for the wire format. Sidecar
+            # internal slot picker uses local time, but Postiz expects ISO
+            # 8601 with explicit Z; the host runs in the owner's TZ so this
+            # round-trip is safe as long as we're consistent.
+            target_utc = target
+        else:
+            target_utc = target.astimezone(tz=None).replace(tzinfo=None)
+        now_utc = datetime.utcnow()
+        if target_utc > now_utc + timedelta(seconds=30):
+            post_type = "schedule"
+            date_iso = target_utc.isoformat() + "Z"
+        else:
+            post_type = "now"
+            # Postiz still requires `date` even when type="now"; use the
+            # current UTC instant.
+            date_iso = now_utc.isoformat() + "Z"
         body = {
-            "type": "now",
+            "type": post_type,
             "shortLink": False,
             "date": date_iso,
             "tags": [],
             "posts": posts,
         }
+        logger.info(
+            "Postiz publish_post: type=%s date=%s",
+            post_type,
+            date_iso,
+        )
         logger.info(
             "Postiz publish_post: creating %d post(s) ig_id=%s yt_id=%s",
             len(posts),

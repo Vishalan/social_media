@@ -341,7 +341,13 @@ async def publish_action(pipeline_run_id: int) -> dict:
         yt_title = yt.get("title") or run.get("topic_title") or ""
         yt_description = yt.get("description") or ""
 
-        scheduled_slot = _now()
+        # Resolve the scheduled slot. Priority:
+        #   1. The user's explicit reschedule (approval.proposed_time)
+        #   2. The next peak posting slot (09:00 / 19:00 local) from
+        #      compute_next_slot — so even an "Approve immediately" tap
+        #      lands on a peak hour rather than firing right away.
+        #   3. Fallback to "now" only if slot computation breaks.
+        scheduled_slot = compute_next_slot()
         if approval.get("proposed_time"):
             try:
                 scheduled_slot = datetime.fromisoformat(approval["proposed_time"])
