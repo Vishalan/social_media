@@ -30,6 +30,9 @@ if not logger.handlers:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s :: %(message)s",
     )
+# Silence libraries that log full request URLs (Telegram bot token is part of the URL).
+for _noisy in ("httpx", "httpcore", "telegram.ext.Application", "telegram.request"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 
 @asynccontextmanager
@@ -74,6 +77,9 @@ async def lifespan(app: FastAPI):
             await tg_app.start()
             await tg_app.updater.start_polling()
             app.state.telegram_bot = tg_app
+            # Expose to scheduler job handlers that cannot reach app.state.
+            from . import runtime as _rt
+            _rt.telegram_app = tg_app
             logger.info("sidecar telegram bot: polling started")
     except ImportError as exc:
         logger.warning("sidecar telegram bot: SDK not installed (%s)", exc)
@@ -209,6 +215,10 @@ def _start_scheduler():
         logger.warning("sidecar scheduler: cost report wire-up failed: %s", exc)
 
     sched.start()
+    # Expose to job handlers (publish auto-approve, etc.) that cannot reach
+    # app.state because they run under the scheduler's own context.
+    from . import runtime as _rt
+    _rt.scheduler = sched
     logger.info("sidecar scheduler started (jobstore=%s)", jobstore_path or "memory")
     return sched
 
