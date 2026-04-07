@@ -1,43 +1,54 @@
 # =============================================================================
-# CommonCreed posting stack — Postiz + Postgres + Redis
+# CommonCreed posting stack — Postiz + Temporal + sidecar
 # =============================================================================
 #
-# Target host: Synology DS1520+ (8 GB RAM) running Portainer CE.
-# Portable: this same file runs on any Docker host (Mac, Linux, VPS) by
-# changing only the bind-mount paths in the volumes block at the bottom and
-# the .env file location.
+# This stack mirrors the official Postiz docker-compose pattern (which the
+# maintainers actually run) plus our CommonCreed sidecar service.
 #
-# Image versions are pinned (no `latest`) so deploys are reproducible. To
-# bump a version, edit the tag here and redeploy the stack from Portainer.
+# Stack layout:
+#   postgres            — Postiz application data
+#   redis               — Postiz BullMQ job queue
+#   temporal-postgres   — DEDICATED Postgres for Temporal (do not share with
+#                         Postiz; Temporal needs its own DB so visibility
+#                         schema migrations don't fight Postiz's)
+#   temporal-elasticsearch — visibility store for Temporal (sidesteps the
+#                         "max 3 Text custom search attributes" limit that
+#                         Postgres-only visibility hits with newer Postiz)
+#   temporal            — workflow runtime that Postiz hard-requires since
+#                         early 2025
+#   postiz              — the social posting layer
+#   commoncreed_sidecar — our FastAPI control plane (Plan 002)
 #
-# Resource budget on the DS1520+:
-#   Postiz       ~1.0  GB
-#   Postgres     ~512  MB
-#   Redis        ~256  MB
+# Resource budget on a 8 GB host (matches the maintainers' shape, +sidecar):
+#   postgres            ~250 MB
+#   redis               ~64  MB
+#   temporal-postgres   ~250 MB
+#   temporal-elasticsearch ~600 MB (256m heap + buffers)
+#   temporal            ~700 MB
+#   postiz              ~1.0 GB
+#   sidecar             ~256 MB idle
 #   ----------------------
-#   subtotal     ~1.75 GB
-#   leaves       ~6.25 GB for the DSM host + the Unit 2 sidecar (~2 GB) +
-#                pipeline subprocess peaks (~2 GB) with margin.
+#   subtotal            ~3.1 GB
+#   leaves              ~4.9 GB on a 8 GB host for OS + pipeline subprocess
+#                       peaks (~2 GB during a run).
 #
-# All secrets come from the .env file next to this compose file. NEVER
-# hardcode credentials here. See .env.example for the full list.
+# All secrets come from the .env file at the repo root. NEVER hardcode
+# credentials here. See .env.example for the full list.
 # =============================================================================
-
-version: "3.8"
 
 # -----------------------------------------------------------------------------
-# Networks — single internal network. Postiz is the only service that needs
-# to be reachable from the LAN; everything else is internal.
+# Networks — split into two for clean isolation between Postiz application
+# layer and Temporal infrastructure layer (matches official Postiz compose).
 # -----------------------------------------------------------------------------
 networks:
   commoncreed:
     driver: bridge
+  temporal-network:
+    driver: bridge
 
 # -----------------------------------------------------------------------------
 # Volumes — named volumes managed by Docker. On Synology, Portainer creates
-# these under /volume1/@docker/volumes/ by default. If you prefer explicit
-# bind mounts under /volume1/docker/commoncreed/, see the README's "NAS
-# folder setup" section and replace each entry below with a bind mount.
+# these under /volume1/@docker/volumes/ by default.
 # -----------------------------------------------------------------------------
 volumes:
   postgres_data:
@@ -46,8 +57,10 @@ volumes:
     name: commoncreed_postiz_uploads
   postiz_config:
     name: commoncreed_postiz_config
-  # Reserved for Unit 2 sidecar — declared here so the volume exists when
-  # the sidecar service is added without needing a stack recreate.
+  temporal_postgres_data:
+    name: commoncreed_temporal_postgres_data
+  temporal_elasticsearch_data:
+    name: commoncreed_temporal_elasticsearch_data
   commoncreed_output:
     name: commoncreed_output
   sidecar_db:
@@ -55,11 +68,10 @@ volumes:
 
 services:
 
-  # ---------------------------------------------------------------------------
-  # Postgres — backing store for Postiz. Pinned to 16-alpine for the smallest
-  # footprint that still receives security updates. Postiz officially
-  # supports Postgres 14+; 16 is the current LTS sweet spot.
-  # ---------------------------------------------------------------------------
+  # ===========================================================================
+  # Postiz application infrastructure
+  # ===========================================================================
+
   postgres:
     image: postgres:16.4-alpine
     container_name: commoncreed_postgres
@@ -85,18 +97,13 @@ services:
         reservations:
           memory: 128M
 
-  # ---------------------------------------------------------------------------
-  # Redis — used by Postiz for the BullMQ job queue. Pinned to 7.4-alpine.
-  # No persistence configured (queue jobs are recoverable from Postgres state)
-  # which keeps the memory profile predictable.
-  # ---------------------------------------------------------------------------
   redis:
     image: redis:7.4-alpine
     container_name: commoncreed_redis
     restart: unless-stopped
     networks:
       - commoncreed
-    command: ["redis-server", "--appendonly", "no", "--maxmemory", "200mb", "--maxmemory-policy", "allkeys-lru"]
+    command: ["redis-server", "--maxmemory", "200mb", "--maxmemory-policy", "allkeys-lru"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -110,92 +117,195 @@ services:
         reservations:
           memory: 64M
 
-  # ---------------------------------------------------------------------------
-  # Postiz — self-hosted OSS build (AGPL-3.0) from gitroomhq/postiz-app.
-  #
-  # The "ghcr.io/gitroomhq/postiz-app" image bundles the frontend, backend,
-  # workers, and cron in a single container — Postiz publishes this as their
-  # recommended single-container deployment for self-hosters. Pinned to a
-  # specific tagged release for reproducibility.
-  #
-  # Postiz exposes its UI + REST API on port 5000 inside the container. Only
-  # this service publishes a port to the host, and only on the LAN-facing
-  # interface (via the reverse proxy in front of it — see README).
-  # ---------------------------------------------------------------------------
+  # ===========================================================================
+  # Temporal stack — required by Postiz since early 2025.
+  # Mirrors the official Postiz docker-compose layout exactly. Do not try to
+  # share Postiz's Postgres or skip Elasticsearch — both shortcuts have been
+  # tried and break in distinct ways. See LOCAL_DEV.md troubleshooting.
+  # ===========================================================================
+
+  temporal-postgres:
+    image: postgres:16-alpine
+    container_name: commoncreed_temporal_postgres
+    restart: unless-stopped
+    networks:
+      - temporal-network
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+    volumes:
+      - temporal_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+        reservations:
+          memory: 128M
+
+  temporal-elasticsearch:
+    image: elasticsearch:7.17.27
+    container_name: commoncreed_temporal_elasticsearch
+    restart: unless-stopped
+    networks:
+      - temporal-network
+    environment:
+      - cluster.routing.allocation.disk.threshold_enabled=true
+      - cluster.routing.allocation.disk.watermark.low=512mb
+      - cluster.routing.allocation.disk.watermark.high=256mb
+      - cluster.routing.allocation.disk.watermark.flood_stage=128mb
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms256m -Xmx256m
+      - xpack.security.enabled=false
+    volumes:
+      - temporal_elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -qE 'green|yellow' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 384M
+
+  temporal:
+    image: temporalio/auto-setup:1.28.1
+    container_name: commoncreed_temporal
+    restart: unless-stopped
+    networks:
+      - temporal-network
+      - commoncreed
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+      temporal-elasticsearch:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: temporal
+      POSTGRES_SEEDS: temporal-postgres
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+      ENABLE_ES: "true"
+      ES_SEEDS: temporal-elasticsearch
+      ES_VERSION: v7
+      TEMPORAL_NAMESPACE: default
+      LOG_LEVEL: warn
+    volumes:
+      # Mount the dynamicconfig file from Postiz's official repo into the
+      # path Temporal expects to find it.
+      - ./temporal-dynamicconfig:/etc/temporal/config/dynamicconfig
+    healthcheck:
+      test: ["CMD-SHELL", "tctl --address temporal:7233 cluster health 2>&1 | grep -q SERVING || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          memory: 900M
+        reservations:
+          memory: 400M
+
+  # ===========================================================================
+  # Postiz — self-hosted OSS posting layer (gitroomhq/postiz-app, AGPL-3.0).
+  # Image: latest multi-arch tag. Maintainers do not publish semver tags.
+  # Pin to a specific arch+timestamp tag for production after verification.
+  # ===========================================================================
   postiz:
-    # Postiz publishes per-arch tags (amd64-<ts> / arm64-<ts>) and a multi-arch
-    # `latest`. There is no semver tag stream. For local dev we track `latest`;
-    # for Synology production, pin to a specific `amd64-<timestamp>` tag once
-    # verified. Override via POSTIZ_IMAGE_TAG env var if pinning.
     image: ghcr.io/gitroomhq/postiz-app:${POSTIZ_IMAGE_TAG:-latest}
     container_name: commoncreed_postiz
     restart: unless-stopped
     networks:
       - commoncreed
+      - temporal-network
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      temporal:
+        condition: service_healthy
     environment:
-      # --- Core URLs ---------------------------------------------------------
-      # Both URLs typically point at the same hostname when fronted by a
-      # reverse proxy. See README "Reverse proxy notes".
+      # --- Required core settings (per official Postiz compose) -------------
       MAIN_URL: ${POSTIZ_MAIN_URL}
       FRONTEND_URL: ${POSTIZ_FRONTEND_URL}
       NEXT_PUBLIC_BACKEND_URL: ${POSTIZ_FRONTEND_URL}/api
-
-      # --- Auth --------------------------------------------------------------
       JWT_SECRET: ${POSTIZ_JWT_SECRET}
-
-      # --- Datastore ---------------------------------------------------------
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
+      # CRITICAL: without BACKEND_INTERNAL_URL the frontend cannot reach the
+      # backend even though both run in the same container. The official
+      # compose ships this as 'http://localhost:3000'.
+      BACKEND_INTERNAL_URL: http://localhost:3000
+      TEMPORAL_ADDRESS: temporal:7233
+      IS_GENERAL: "true"
+      DISABLE_REGISTRATION: ${POSTIZ_DISABLE_REGISTRATION:-false}
 
-      # --- Storage -----------------------------------------------------------
-      # "local" stores uploads on the mounted volume below. Switch to "cloudflare"
-      # or "s3" later if you outgrow local storage; the volume mount is the
-      # only thing that needs to change.
+      # --- Storage settings -------------------------------------------------
       STORAGE_PROVIDER: ${POSTIZ_STORAGE_PROVIDER:-local}
       UPLOAD_DIRECTORY: /uploads
       NEXT_PUBLIC_UPLOAD_DIRECTORY: /uploads
 
-      # --- Misc --------------------------------------------------------------
-      DISABLE_REGISTRATION: ${POSTIZ_DISABLE_REGISTRATION:-true}
+      # --- Social platform OAuth credentials --------------------------------
+      # Each platform requires its own OAuth app registration (Postiz cannot
+      # ship shared credentials — Google/Meta tie OAuth to a developer account
+      # and Postiz can't act on behalf of every self-hoster).
+      # Create the apps manually and paste IDs/secrets into .env. See
+      # LOCAL_DEV.md "OAuth setup" for the per-platform walkthrough.
+      YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID:-}
+      YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET:-}
+      FACEBOOK_APP_ID: ${FACEBOOK_APP_ID:-}
+      FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-}
+      X_API_KEY: ${X_API_KEY:-}
+      X_API_SECRET: ${X_API_SECRET:-}
+      LINKEDIN_CLIENT_ID: ${LINKEDIN_CLIENT_ID:-}
+      LINKEDIN_CLIENT_SECRET: ${LINKEDIN_CLIENT_SECRET:-}
+      TIKTOK_CLIENT_ID: ${TIKTOK_CLIENT_ID:-}
+      TIKTOK_CLIENT_SECRET: ${TIKTOK_CLIENT_SECRET:-}
+
+      # --- Misc -------------------------------------------------------------
       NX_ADD_PLUGINS: "false"
     volumes:
       - postiz_uploads:/uploads
       - postiz_config:/config
     ports:
-      # Exposed on the host so the Synology reverse proxy (or Caddy) can
-      # forward LAN traffic. If you front this with a proxy on the same host,
-      # you can drop the host-side bind to 127.0.0.1:5000:5000 instead.
       # Host port 5100 (5000 is taken by macOS AirPlay Receiver on dev Macs;
       # override via POSTIZ_HOST_PORT if you've disabled AirPlay or are on Linux)
       - "${POSTIZ_HOST_PORT:-5100}:5000"
     healthcheck:
       # Postiz image has neither curl nor wget. Use the bundled node runtime
       # to do an HTTP check. Accept any 2xx/3xx as healthy (Postiz root
-      # returns 307 → /auth when unauthenticated, which is a fine signal).
+      # returns 307 → /auth when unauthenticated).
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:5000/', r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 90s
+      start_period: 120s
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 1200M
         reservations:
           memory: 512M
 
-  # ---------------------------------------------------------------------------
-  # Unit 2: CommonCreed sidecar — FastAPI control plane for the pipeline.
-  #
-  # Reads the pipeline code read-only from the host checkout, owns a private
-  # SQLite DB on a named volume, and has the Docker socket mounted so Unit 8
-  # can trigger restarts. Memory ceiling 2G matches the plan budget.
-  # ---------------------------------------------------------------------------
+  # ===========================================================================
+  # CommonCreed sidecar — FastAPI control plane (Plan 002 Unit 2 + downstream).
+  # Reads the pipeline code read-only from the host checkout, owns its own
+  # SQLite DB on a named volume, mounts the Docker socket for Unit 8 settings
+  # restarts (with allowlist that excludes the sidecar itself).
+  # ===========================================================================
   commoncreed_sidecar:
     build:
       context: ../../sidecar
@@ -214,8 +324,6 @@ services:
         condition: service_healthy
     environment:
       SIDECAR_ENV_PATH: /env/.env
-      # The sidecar reads the rest from the mounted .env file directly.
-      # Listed here so operators can see which vars the service consumes.
       POSTIZ_BASE_URL: http://postiz:5000
       POSTIZ_API_KEY: ${POSTIZ_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
@@ -248,4 +356,3 @@ services:
           memory: 2G
         reservations:
           memory: 256M
-  # ---------------------------------------------------------------------------
