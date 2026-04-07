@@ -65,6 +65,7 @@ def regen_prod_compose() -> str:
         .replace("../../assets", "/volume1/docker/commoncreed/assets")
         .replace("../../sidecar", "/volume1/docker/commoncreed/sidecar")
         .replace("../../.env", "/volume1/docker/commoncreed/.env")
+        .replace("./postiz-nginx.conf", "/volume1/docker/commoncreed/deploy/portainer/postiz-nginx.conf")
         .replace("./temporal-dynamicconfig", "/volume1/docker/commoncreed/deploy/portainer/temporal-dynamicconfig")
     )
     out = re.sub(

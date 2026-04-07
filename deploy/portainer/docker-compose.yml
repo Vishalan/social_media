@@ -288,6 +288,11 @@ services:
     volumes:
       - postiz_uploads:/uploads
       - postiz_config:/config
+      # Override the upstream Postiz nginx.conf with our patched version
+      # that serves a permissive /robots.txt — required for IG Reels publishing
+      # because Meta's Graph API blocks media downloads when robots.txt is
+      # absent or returns HTML. See deploy/portainer/postiz-nginx.conf header.
+      - ./postiz-nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
       # Host port 5100 (5000 is taken by macOS AirPlay Receiver on dev Macs;
       # override via POSTIZ_HOST_PORT if you've disabled AirPlay or are on Linux)

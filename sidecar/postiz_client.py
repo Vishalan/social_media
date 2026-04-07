@@ -31,6 +31,11 @@ logger = logging.getLogger(__name__)
 
 POSTIZ_POSTS_PATH = "/api/public/v1/posts"
 POSTIZ_ACCOUNTS_PATH = "/api/public/v1/integrations"
+POSTIZ_UPLOAD_PATH = "/api/public/v1/upload"
+
+# Postiz integration identifier strings as returned by GET /integrations.
+PROVIDER_INSTAGRAM = "instagram"
+PROVIDER_YOUTUBE = "youtube"
 
 
 class PostizClient:
@@ -47,7 +52,128 @@ class PostizClient:
         self.timeout = timeout
 
     # ------------------------------------------------------------------
-    # publish_post
+    # _request_json — small helper for the JSON endpoints
+    # ------------------------------------------------------------------
+    def _request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: Optional[dict] = None,
+        files: Optional[dict] = None,
+        data: Optional[dict] = None,
+    ) -> Any:
+        url = f"{self.base_url}{path}"
+        headers = {"Authorization": self.api_key}
+        if json_body is not None and files is None:
+            headers["Content-Type"] = "application/json"
+            body = json.dumps(json_body).encode()
+        else:
+            body = None
+
+        max_attempts = 3
+        backoff = [1, 2]
+        for attempt in range(max_attempts):
+            try:
+                if files is not None:
+                    resp = requests.request(
+                        method,
+                        url,
+                        headers=headers,
+                        files=files,
+                        data=data,
+                        timeout=self.timeout,
+                    )
+                else:
+                    resp = requests.request(
+                        method,
+                        url,
+                        headers=headers,
+                        data=body,
+                        timeout=self.timeout,
+                    )
+            except requests.RequestException as exc:
+                logger.warning("Postiz %s %s network error (attempt %d): %s",
+                               method, path, attempt + 1, exc)
+                if attempt < max_attempts - 1:
+                    time.sleep(backoff[attempt])
+                    continue
+                raise
+
+            if 200 <= resp.status_code < 300:
+                try:
+                    return resp.json()
+                except ValueError:
+                    return {"raw": resp.text}
+            if 400 <= resp.status_code < 500:
+                raise requests.HTTPError(
+                    f"Postiz 4xx {resp.status_code}: {resp.text}",
+                    response=resp,
+                )
+            logger.warning("Postiz %s %s 5xx %d (attempt %d)",
+                           method, path, resp.status_code, attempt + 1)
+            if attempt < max_attempts - 1:
+                time.sleep(backoff[attempt])
+                continue
+            raise requests.HTTPError(
+                f"Postiz 5xx {resp.status_code} after {max_attempts} attempts: {resp.text}",
+                response=resp,
+            )
+        raise RuntimeError("Postiz request exited retry loop unexpectedly")
+
+    # ------------------------------------------------------------------
+    # _list_integrations + caching
+    # ------------------------------------------------------------------
+    def list_integrations(self) -> list[dict]:
+        """GET /api/public/v1/integrations — connected accounts list."""
+        result = self._request_json("GET", POSTIZ_ACCOUNTS_PATH)
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict) and isinstance(result.get("items"), list):
+            return result["items"]
+        return []
+
+    def integration_id_for(self, identifier: str, profile: Optional[str] = None) -> Optional[str]:
+        """Find a connected integration's id by identifier (e.g. ``instagram``).
+
+        If ``profile`` is given (e.g. ``commoncreed``), prefer the integration
+        whose profile field matches — needed when more than one IG account is
+        connected.
+        """
+        items = self.list_integrations()
+        # Prefer profile match
+        if profile:
+            for it in items:
+                if it.get("identifier") == identifier and it.get("profile") == profile:
+                    return it.get("id")
+        for it in items:
+            if it.get("identifier") == identifier:
+                return it.get("id")
+        return None
+
+    # ------------------------------------------------------------------
+    # _upload_file — POST /api/public/v1/upload (multipart, "file" field)
+    # ------------------------------------------------------------------
+    def upload_file(self, local_path: str, mime: str = "application/octet-stream") -> dict:
+        """Upload a file to Postiz storage; returns the saved Media row.
+
+        The Postiz response has the shape ``{id, organizationId, name, path, ...}``.
+        Both ``id`` and ``path`` are required when referencing the file from
+        a post body.
+        """
+        with open(local_path, "rb") as fh:
+            files = {"file": (Path(local_path).name, fh, mime)}
+            result = self._request_json(
+                "POST", POSTIZ_UPLOAD_PATH, files=files, data={}
+            )
+        if not isinstance(result, dict) or "id" not in result or "path" not in result:
+            raise RuntimeError(
+                f"Postiz upload returned unexpected shape: {result!r}"
+            )
+        return result
+
+    # ------------------------------------------------------------------
+    # publish_post — two-step: upload media, then create post
     # ------------------------------------------------------------------
     def publish_post(
         self,
@@ -58,95 +184,148 @@ class PostizClient:
         yt_description: str,
         ig_collab_usernames: list[str],
         scheduled_slot: datetime,
+        ig_profile: Optional[str] = None,
+        yt_profile: Optional[str] = None,
     ) -> dict:
         """Publish a video to Instagram + YouTube via Postiz.
 
-        Returns the parsed JSON response from Postiz on success. Raises
-        ``requests.HTTPError`` on persistent failure (5xx after retries) or
-        immediately on 4xx.
+        Two-step contract enforced by Postiz public API:
+
+        1. POST /api/public/v1/upload (multipart "file") for the video AND
+           the thumbnail — each call returns ``{id, path, ...}``.
+        2. POST /api/public/v1/posts with shape::
+
+               {
+                 "type": "now",
+                 "shortLink": false,
+                 "date": "<ISO 8601>",
+                 "tags": [],
+                 "posts": [
+                   {
+                     "integration": {"id": "<integrationId>"},
+                     "value": [{"content": "...", "image": [{"id, path}]}],
+                     "settings": {}   # server fills __type from provider
+                   },
+                   ...
+                 ]
+               }
+
+        Returns the parsed JSON response from /posts (the created post group).
+        Raises ``requests.HTTPError`` on persistent failure.
         """
-        url = f"{self.base_url}{POSTIZ_POSTS_PATH}"
-        headers = {"Authorization": self.api_key}
+        # 1. resolve integration ids ----------------------------------
+        ig_id = self.integration_id_for(PROVIDER_INSTAGRAM, profile=ig_profile)
+        yt_id = self.integration_id_for(PROVIDER_YOUTUBE, profile=yt_profile)
+        if not ig_id and not yt_id:
+            raise RuntimeError(
+                "Postiz publish_post: no instagram or youtube integration "
+                "found — check Postiz Settings → Channels"
+            )
 
-        platforms_payload: list[dict[str, Any]] = [
-            {
-                "platform": "instagram",
-                "caption": ig_caption,
-                "collaborators": list(ig_collab_usernames or []),
-                "coverUrl": Path(thumbnail_path).name,
-            },
-            {
-                "platform": "youtube",
+        # 2. upload video + thumbnail ---------------------------------
+        logger.info(
+            "Postiz publish_post: uploading video=%s thumbnail=%s",
+            Path(video_path).name,
+            Path(thumbnail_path).name,
+        )
+        video_media = self.upload_file(video_path, mime="video/mp4")
+        thumb_media = self.upload_file(thumbnail_path, mime="image/jpeg")
+        logger.info(
+            "Postiz upload result: video.id=%s video.path=%s thumb.id=%s thumb.path=%s",
+            video_media.get("id"),
+            video_media.get("path"),
+            thumb_media.get("id"),
+            thumb_media.get("path"),
+        )
+
+        # 3. build the posts array ------------------------------------
+        ig_full_caption = ig_caption
+        yt_full_description = (
+            f"{yt_title}\n\n{yt_description}".strip()
+            if yt_description
+            else yt_title
+        )
+
+        posts: list[dict[str, Any]] = []
+        if ig_id:
+            ig_settings: dict[str, Any] = {
+                # InstagramDto.post_type — IsIn(['post', 'story']), IsDefined.
+                # Postiz auto-detects video as a Reel inside the "post" type.
+                "post_type": "post",
+            }
+            # Native Postiz collaborators tagging — way cleaner than the
+            # post-publish IG Direct edit fallback.
+            if ig_collab_usernames:
+                ig_settings["collaborators"] = [
+                    {"label": u} for u in ig_collab_usernames if u
+                ]
+            posts.append(
+                {
+                    "integration": {"id": ig_id},
+                    "value": [
+                        {
+                            "content": ig_full_caption,
+                            "image": [
+                                {
+                                    "id": video_media["id"],
+                                    "path": video_media["path"],
+                                }
+                            ],
+                        }
+                    ],
+                    "settings": ig_settings,
+                }
+            )
+        if yt_id:
+            yt_settings: dict[str, Any] = {
+                # YoutubeSettingsDto: title (2-100), type IsIn(public/private/unlisted)
                 "title": yt_title[:100],
-                "description": yt_description,
-                "thumbnail": Path(thumbnail_path).name,
-            },
-        ]
+                "type": "public",
+                # Optional: explicitly mark as not for kids so YT doesn't
+                # restrict comments + recommendations.
+                "selfDeclaredMadeForKids": "no",
+                # Use the uploaded thumbnail as the YouTube custom cover.
+                "thumbnail": {
+                    "id": thumb_media["id"],
+                    "path": thumb_media["path"],
+                },
+            }
+            posts.append(
+                {
+                    "integration": {"id": yt_id},
+                    "value": [
+                        {
+                            "content": yt_full_description,
+                            "image": [
+                                {
+                                    "id": video_media["id"],
+                                    "path": video_media["path"],
+                                }
+                            ],
+                        }
+                    ],
+                    "settings": yt_settings,
+                }
+            )
+
+        # 4. fire CreatePostDto -----------------------------------------
+        date_iso = (scheduled_slot or datetime.utcnow()).isoformat()
+        if not date_iso.endswith("Z") and "+" not in date_iso[-6:]:
+            date_iso = date_iso + "Z"
         body = {
-            "scheduledFor": scheduled_slot.isoformat() if scheduled_slot else None,
-            "platforms": platforms_payload,
+            "type": "now",
+            "shortLink": False,
+            "date": date_iso,
+            "tags": [],
+            "posts": posts,
         }
-
-        max_attempts = 3
-        backoff = [1, 2]
-        last_exc: Optional[Exception] = None
-
-        for attempt in range(max_attempts):
-            try:
-                with open(video_path, "rb") as vf, open(thumbnail_path, "rb") as tf:
-                    files = {
-                        "video": (Path(video_path).name, vf, "video/mp4"),
-                        "thumbnail": (Path(thumbnail_path).name, tf, "image/jpeg"),
-                    }
-                    data = {"payload": json.dumps(body)}
-                    logger.info(
-                        "Postiz publish_post attempt %d/%d -> %s",
-                        attempt + 1,
-                        max_attempts,
-                        url,
-                    )
-                    resp = requests.post(
-                        url,
-                        headers=headers,
-                        files=files,
-                        data=data,
-                        timeout=self.timeout,
-                    )
-            except requests.RequestException as exc:
-                last_exc = exc
-                logger.warning("Postiz request error (attempt %d): %s", attempt + 1, exc)
-                if attempt < max_attempts - 1:
-                    time.sleep(backoff[attempt])
-                    continue
-                raise
-
-            status = resp.status_code
-            if 200 <= status < 300:
-                try:
-                    return resp.json()
-                except ValueError:
-                    return {"raw": resp.text}
-
-            if 400 <= status < 500:
-                raise requests.HTTPError(
-                    f"Postiz 4xx {status}: {resp.text}", response=resp
-                )
-
-            # 5xx
-            logger.warning(
-                "Postiz 5xx %d on attempt %d/%d", status, attempt + 1, max_attempts
-            )
-            if attempt < max_attempts - 1:
-                time.sleep(backoff[attempt])
-                continue
-            raise requests.HTTPError(
-                f"Postiz 5xx {status} after {max_attempts} attempts: {resp.text}",
-                response=resp,
-            )
-
-        if last_exc:
-            raise last_exc
-        raise RuntimeError("PostizClient.publish_post exited retry loop unexpectedly")
+        logger.info(
+            "Postiz publish_post: creating %d post(s) ig_id=%s yt_id=%s",
+            len(posts),
+            ig_id,
+            yt_id,
+        )
+        return self._request_json("POST", POSTIZ_POSTS_PATH, json_body=body)
 
     # ------------------------------------------------------------------
     # get_account_tokens
