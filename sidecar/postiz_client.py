@@ -29,8 +29,8 @@ import requests
 logger = logging.getLogger(__name__)
 
 
-POSTIZ_POSTS_PATH = "/public/v1/posts"
-POSTIZ_ACCOUNTS_PATH = "/public/v1/integrations"
+POSTIZ_POSTS_PATH = "/api/public/v1/posts"
+POSTIZ_ACCOUNTS_PATH = "/api/public/v1/integrations"
 
 
 class PostizClient:
