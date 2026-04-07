@@ -49,10 +49,16 @@ def check(
     topic_title: str,
     lookback_days: int = 30,
     jaccard_threshold: float = DEFAULT_JACCARD_THRESHOLD,
+    exclude_run_id: int | None = None,
 ) -> dict:
     """Return a dict describing whether this topic is a duplicate.
 
     ``{"is_duplicate": bool, "match_run_id": int | None, "match_reason": str}``
+
+    ``exclude_run_id`` skips a specific pipeline_runs.id from the candidate
+    set — required when called from publish_action because the run being
+    published is already in a terminal status (`generated`) and would
+    otherwise self-match as a duplicate.
     """
     try:
         placeholders = ",".join("?" for _ in TERMINAL_STATUSES)
@@ -61,9 +67,12 @@ def check(
             f"FROM pipeline_runs "
             f"WHERE status IN ({placeholders}) "
             f"  AND created_at >= datetime('now', ?) "
-            f"ORDER BY created_at DESC, id DESC"
         )
-        params = list(TERMINAL_STATUSES) + [f"-{int(lookback_days)} days"]
+        params: list = list(TERMINAL_STATUSES) + [f"-{int(lookback_days)} days"]
+        if exclude_run_id is not None:
+            sql += "  AND id != ? "
+            params.append(int(exclude_run_id))
+        sql += "ORDER BY created_at DESC, id DESC"
         rows = conn.execute(sql, params).fetchall()
     except sqlite3.Error as exc:
         logger.warning("duplicate_guard: db error: %s", exc)

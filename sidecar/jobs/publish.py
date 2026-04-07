@@ -46,7 +46,19 @@ def _open_conn():
 
 
 def _get_scheduler():
-    """Best-effort lookup of the running APScheduler instance."""
+    """Best-effort lookup of the running APScheduler instance.
+
+    Prefers the process-wide registry (sidecar.runtime) because job handlers
+    running under the scheduler's own context cannot reliably import
+    sidecar.app without pulling in the whole FastAPI graph.
+    """
+    try:
+        from sidecar import runtime as _rt  # type: ignore
+
+        if _rt.scheduler is not None:
+            return _rt.scheduler
+    except Exception:
+        pass
     try:
         from sidecar.app import app as fastapi_app  # type: ignore
 
@@ -147,6 +159,11 @@ async def schedule_publish(pipeline_run_id: int) -> dict:
             args=[pipeline_run_id],
             id=job_id,
             replace_existing=True,
+            # APScheduler's default misfire_grace_time is 1s — too tight when
+            # the publish target is "now" and the scheduler tick + jobstore
+            # round-trip takes longer than that. Allow up to 5 minutes so a
+            # busy event loop can't silently drop the job.
+            misfire_grace_time=300,
         )
     except Exception as exc:
         logger.warning("schedule_publish add_job failed: %s", exc)
@@ -246,6 +263,7 @@ async def publish_action(pipeline_run_id: int) -> dict:
     NEVER raises out. On any catastrophic failure, marks the run
     ``publish_failed`` and sends a Telegram alert.
     """
+    logger.info("publish_action: starting for run %s", pipeline_run_id)
     try:
         # 1) read the run + captions
         try:
@@ -287,7 +305,12 @@ async def publish_action(pipeline_run_id: int) -> dict:
             topic_title = run.get("topic_title") or ""
             dup_conn = _open_conn()
             try:
-                dup_result = duplicate_check(dup_conn, topic_url, topic_title)
+                dup_result = duplicate_check(
+                    dup_conn,
+                    topic_url,
+                    topic_title,
+                    exclude_run_id=pipeline_run_id,
+                )
             finally:
                 dup_conn.close()
         except Exception as exc:
