@@ -41,9 +41,11 @@ These come from project memory `project_synology_portainer.md` — read it first
 | Postiz host port | `5100` (NOT 5000 — DSM uses 5000 for its own web UI) | NAS .env `POSTIZ_HOST_PORT` |
 | Sidecar host port | `5050` | NAS .env |
 
-## ⚠ Six gotchas this skill MUST handle (each one bit us during the first deploy)
+## ⚠ Gotchas this skill MUST handle (each one bit us during real deploys)
 
 These are baked into the phases below. Do NOT skip any.
+
+### Original 6 (first deploy, 2026-04-07)
 
 1. **DSM owns port 5000** on Synology — Postiz cannot bind to it. Use 5100 (or any non-DSM port). Synology DSM web UI at `http://<nas>:5000` is non-negotiable; you can't move it.
 2. **Portainer container is sandboxed** — `build:` directives in compose fail because Portainer can't see `/volume1/docker/commoncreed/sidecar` from inside its own container. **Pre-build the sidecar image via Portainer's image-build API**, then reference by `image:` tag in the deployed compose. The build context is uploaded as a tar to `POST /api/endpoints/{id}/docker/build?t=<tag>`.
@@ -52,7 +54,21 @@ These are baked into the phases below. Do NOT skip any.
 5. **Temporal's `auto-setup` script races on first boot.** It tries to register search attributes via the frontend before the frontend is fully serving, then completes successfully but the actual `temporal-server` may not transition cleanly. **After the stack starts, restart the temporal container once.** On the second boot, the Postgres+ES schema is already initialized so it boots cleanly in <30s.
 6. **Postiz crash-loops on the initial Temporal connection** — its NestJS backend exits on `ECONNREFUSED 7233` and the container's supervisor keeps restarting it, but it caches the failure between attempts. **After Temporal is restarted (gotcha #5) and fully serving, restart the postiz container once** so it gets a fresh attempt with a working Temporal. The deploy is not complete until BOTH temporal and postiz have been restarted at least once each.
 
-These are documented in `docs/solutions/integration-issues/synology-portainer-deploy-gotchas-2026-04-07.md`.
+### Pipeline bring-up gotchas (2026-04-07 evening)
+
+7. **NEVER `rm -rf` a bind-mounted directory on the host** — that destroys the inode the running container has bound, leaving the container with an empty mount even though the host dir was recreated. Always use **overlay tar**: `tar czf - -C src . | ssh host 'tar xzf - -C dst'` (no `rm -rf` first). If you absolutely must wipe a dir, restart the container afterwards to rebind the mount.
+8. **Pipeline runtime needs its own venv inside the sidecar image** — moviepy, av, faster-whisper, playwright, newer anthropic etc. would conflict with the sidecar's own pinned deps. Bake `/opt/pipeline_venv` from `sidecar/pipeline_requirements.txt`, and have `pipeline_runner` exec `/opt/pipeline_venv/bin/python3` for the smoke subprocess.
+9. **`/app/scripts` is mounted `:ro` but smoke_e2e writes `output/...` relative paths** — set the subprocess `cwd=/app/output` (a writable named volume), pass smoke_e2e.py as an absolute path, and add `PYTHONPATH=/app` so `from scripts.thumbnail_gen.xxx import` style absolute imports resolve.
+10. **The hand-picked subprocess env list will silently miss new vars** (ELEVENLABS_VOICE_ID, FAL_API_KEY, SMOKE_USE_VEED, ...) as the pipeline grows. `pipeline_runner._build_subprocess_env` reads the entire `.env` file at the path the sidecar is configured for and passes every KEY=VALUE through. Secrets only enter a child process the sidecar controls; never echoed.
+11. **httpx + python-telegram-bot log full request URLs at INFO** — that means every Telegram `getUpdates` call dumps the bot token in plaintext into container logs (and from there into chat history when tailing for debug). Mute `httpx`, `httpcore`, `telegram.ext.Application`, and `telegram.request` to WARNING in `sidecar/app.py` *before* any of them logs anything.
+12. **APScheduler default `misfire_grace_time` is 1 second.** Any one-shot `date` job scheduled at "now" that takes longer than 1s of jobstore round-trip + event loop latency gets silently dropped with a misfire warning. For real-world publish jobs always pass `misfire_grace_time=300` (or higher).
+13. **Persistent APScheduler jobstore needs SQLAlchemy.** Without it the scheduler logs "SQLAlchemyJobStore requires SQLAlchemy installed" and silently downgrades to in-memory — every restart wipes scheduled jobs. Pin `sqlalchemy==2.*` in `sidecar/requirements.txt`.
+14. **`anthropic.resources.messages.messages` only exists in anthropic >= 0.40** (it was a flat module in 0.39). Anything that monkey-patches `Messages` / `AsyncMessages` must try the subpackage path first and fall back to the flat module on `ImportError`.
+15. **`duplicate_guard.check` self-matches the run being published** because `status="generated"` is in `TERMINAL_STATUSES` and the run we're about to publish is exactly such a row. Always pass `exclude_run_id=pipeline_run_id` from `publish_action`.
+16. **Postiz public API is mounted at `/api/public/v1/*`, not `/public/v1/*`.** The `/api` segment is the global backend prefix. Hitting the wrong path returns a Next.js 404 with `"Server action not found"` — easy to misread as "endpoint missing".
+17. **Job handlers running under APScheduler can't reach `app.state`** — importing `sidecar.app` from a job module pulls the whole FastAPI graph and either circular-imports or returns a stale view. Use the module-level `sidecar/runtime.py` registry that `app.py` populates at startup (`runtime.scheduler`, `runtime.telegram_app`).
+
+These are documented in `docs/solutions/integration-issues/synology-portainer-deploy-gotchas-2026-04-07.md` and `docs/solutions/integration-issues/nas-pipeline-bringup-gotchas-2026-04-07.md`.
 
 **Never write the password to a file or echo it in chat.** Always read it from Keychain at the moment of use, store it in a shell variable for the duration of the API calls, then unset it.
 

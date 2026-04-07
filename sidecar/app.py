@@ -214,6 +214,26 @@ def _start_scheduler():
     except Exception as exc:
         logger.warning("sidecar scheduler: cost report wire-up failed: %s", exc)
 
+    # Daily TLDR newsletter trigger — parses HH:MM from PIPELINE_TRIGGER_TIME
+    # (defaults to 05:00 in config). Lazy import so a missing optional dep
+    # in jobs.daily_trigger never blocks scheduler startup.
+    try:
+        from .jobs.daily_trigger import run_daily_trigger
+        trigger_time = getattr(s, "PIPELINE_TRIGGER_TIME", "05:00") or "05:00"
+        hh, mm = (int(x) for x in trigger_time.split(":")[:2])
+        sched.add_job(
+            run_daily_trigger,
+            trigger=CronTrigger(hour=hh, minute=mm),
+            id="daily_trigger",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+        logger.info("sidecar scheduler: daily_trigger wired at %02d:%02d", hh, mm)
+    except Exception as exc:
+        logger.warning("sidecar scheduler: daily_trigger wire-up failed: %s", exc)
+
     sched.start()
     # Expose to job handlers (publish auto-approve, etc.) that cannot reach
     # app.state because they run under the scheduler's own context.

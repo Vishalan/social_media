@@ -346,6 +346,7 @@ services:
       PIPELINE_RETENTION_DAYS: ${PIPELINE_RETENTION_DAYS}
     volumes:
       - ../../scripts:/app/scripts:ro
+      - ../../assets:/app/assets:ro
       - commoncreed_output:/app/output
       - sidecar_db:/app/db
       - ../../.env:/env/.env:ro

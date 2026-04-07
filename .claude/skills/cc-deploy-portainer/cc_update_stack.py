@@ -62,6 +62,7 @@ def regen_prod_compose() -> str:
     src = open("deploy/portainer/docker-compose.yml").read()
     out = (
         src.replace("../../scripts", "/volume1/docker/commoncreed/scripts")
+        .replace("../../assets", "/volume1/docker/commoncreed/assets")
         .replace("../../sidecar", "/volume1/docker/commoncreed/sidecar")
         .replace("../../.env", "/volume1/docker/commoncreed/.env")
         .replace("./temporal-dynamicconfig", "/volume1/docker/commoncreed/deploy/portainer/temporal-dynamicconfig")
