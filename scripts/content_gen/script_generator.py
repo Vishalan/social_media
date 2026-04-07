@@ -12,7 +12,10 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import anthropic
-import openai
+try:
+    import openai  # optional — only needed when api_provider="openai"
+except ImportError:
+    openai = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 

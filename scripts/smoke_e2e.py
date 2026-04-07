@@ -157,7 +157,12 @@ _tracker = CostTracker()
 
 def _install_claude_hooks() -> None:
     """Monkey-patch Anthropic sync + async Messages classes to capture token usage."""
-    from anthropic.resources.messages.messages import AsyncMessages, Messages
+    try:
+        # anthropic>=0.40 layout: messages is a subpackage
+        from anthropic.resources.messages.messages import AsyncMessages, Messages
+    except ImportError:
+        # anthropic<=0.39 layout: messages is a flat module
+        from anthropic.resources.messages import AsyncMessages, Messages
 
     # ---- Async client ----
     _orig_async = AsyncMessages.create
