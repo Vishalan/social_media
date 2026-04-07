@@ -253,6 +253,14 @@ services:
       IS_GENERAL: "true"
       DISABLE_REGISTRATION: ${POSTIZ_DISABLE_REGISTRATION:-false}
 
+      # CRITICAL for HTTP-only deployments (LAN/dev): without NOT_SECURED=true,
+      # Postiz sets `Secure; SameSite=None` on its session cookies, which the
+      # browser silently rejects when the page is loaded over plain HTTP. The
+      # auth cookie never lands, the user gets bounced back to /auth on every
+      # login/signup attempt, and the only symptom is "the page does nothing".
+      # Set to false ONLY if you're behind HTTPS reverse proxy.
+      NOT_SECURED: ${NOT_SECURED:-true}
+
       # --- Storage settings -------------------------------------------------
       STORAGE_PROVIDER: ${POSTIZ_STORAGE_PROVIDER:-local}
       UPLOAD_DIRECTORY: /uploads

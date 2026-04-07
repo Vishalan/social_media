@@ -10,11 +10,19 @@ Deploy or update the CommonCreed `docker-compose.yml` stack on the owner's Synol
 ## Usage
 
 ```
-/cc-deploy-portainer                # full fresh deploy or in-place update
-/cc-deploy-portainer --dry-run      # preflight + show what would happen, no changes
-/cc-deploy-portainer --rollback     # restore the previous stack version (uses Portainer's stack history)
-/cc-deploy-portainer --logs <svc>   # tail the last 100 lines of one service after deploy
-/cc-deploy-portainer --status       # quick health check of the running stack, no deploy
+/cc-deploy-portainer                       # full fresh deploy (creates new stack)
+/cc-deploy-portainer --update              # in-place update of existing stack (PUT, not DELETE+POST)
+                                           # use this whenever the compose file or .env changed
+/cc-deploy-portainer --update --restart=postiz,sidecar
+                                           # update + restart specific containers afterward (for env-only changes)
+/cc-deploy-portainer --dry-run             # preflight + show what would happen, no changes
+/cc-deploy-portainer --rollback            # restore the previous stack version
+/cc-deploy-portainer --logs <svc>          # tail the last 200 lines of a single service
+/cc-deploy-portainer --logs <svc> --follow # stream logs in real time
+/cc-deploy-portainer --logs --all          # last 50 lines from every service in the stack
+/cc-deploy-portainer --status              # quick health check of all 7 containers, no deploy
+/cc-deploy-portainer --restart <svc>       # restart a single container (no deploy, no compose change)
+/cc-deploy-portainer --shell <svc>         # open an interactive bash shell inside a container via Portainer's exec API
 ```
 
 ## Connection details
@@ -437,6 +445,117 @@ Logs:
 ```
 
 ---
+
+## Subcommand: `--update`
+
+When the stack is already deployed and you need to push a fix (compose change, .env change, sidecar code change), use `--update` instead of a full deploy. This calls Portainer's PUT stack endpoint, which is faster and preserves named volumes / running state for unchanged services.
+
+```python
+# Pseudocode flow (real implementation: /tmp/cc_update_stack.py from the
+# 2026-04-07 deploy session — copy into the skill's helpers/ on integration)
+jwt = portainer_auth()
+stack_id = find_stack_by_name(jwt, "commoncreed")
+if stack_id is None:
+    fail("no commoncreed stack — use full /cc-deploy-portainer instead")
+
+# 1. If sidecar source changed, rebuild the sidecar image first via Phase 2.5
+if sidecar_source_changed():
+    rebuild_sidecar_image(jwt)
+
+# 2. If pipeline code changed, re-tar+upload via Phase 2's tar-pipe pattern
+if scripts_or_sidecar_changed():
+    tar_upload_to_nas("scripts")
+    tar_upload_to_nas("sidecar")
+
+# 3. Regenerate prod compose payload (Phase 3 — strip ../../  to absolute paths,
+#    strip the build: block from sidecar so it references the prebuilt image)
+compose = regen_prod_compose("deploy/portainer/docker-compose.yml")
+
+# 4. Fetch latest .env from NAS (silent, no echo)
+env = ssh_read_env_silently()
+
+# 5. PUT the updated stack
+PUT /api/stacks/{stack_id}?endpointId=3
+  body: {"stackFileContent": compose, "env": env, "prune": true}
+
+# 6. If --restart=<services> was passed OR env vars changed, restart those
+#    containers individually (env changes don't always trigger Portainer's
+#    container recreate — explicit restart is the only reliable trigger)
+for svc in args.restart_services:
+    restart_container(jwt, svc)
+
+# 7. Poll smoke test (Postiz API → 400, Sidecar /health → 200)
+poll_until_healthy()
+```
+
+**When --update needs an explicit container restart:** any time you change an env var that's already in the compose `environment:` block, Portainer's stack PUT will update the env file on disk but the running container is not always recreated. Use `--restart` to force it. Examples:
+- Added `NOT_SECURED=true` → restart `postiz`
+- Rotated `ANTHROPIC_API_KEY` → restart `commoncreed_sidecar`
+- Changed `POSTIZ_HOST_PORT` → must `--update` + recreate (port changes need a full container recreate, not just restart)
+
+## Subcommand: `--logs`
+
+Pull container logs through Portainer's REST API. This works even when SSH to the NAS is offline (e.g., when debugging from a different network via Tailscale).
+
+```bash
+# Single service, last 200 lines
+SERVICE="commoncreed_postiz"
+CID=$(curl -sf -H "Authorization: Bearer $JWT" \
+  "http://192.168.29.211:9000/api/endpoints/3/docker/containers/json?all=true&filters=%7B%22name%22%3A%5B%22$SERVICE%22%5D%7D" \
+  | python3 -c 'import json,sys; cc=json.load(sys.stdin); print([c for c in cc if c["Names"][0]==f"/$SERVICE"][0]["Id"])')
+
+curl -sf -H "Authorization: Bearer $JWT" \
+  "http://192.168.29.211:9000/api/endpoints/3/docker/containers/$CID/logs?stdout=true&stderr=true&tail=200&timestamps=true" \
+  | strings | tail -100  # `strings` strips Docker's framed-stream multiplex bytes
+```
+
+The Docker logs API uses an 8-byte header per stream chunk (1 byte stream id, 3 reserved, 4 bytes length). `strings` strips them for human reading. For programmatic log parsing, use `python3 -c` with the Docker SDK's stream-frame parser.
+
+**`--logs --all`** loops through every container with the `commoncreed` project label and prints the last 50 lines of each. Useful right after a deploy fails to surface ALL relevant errors at once.
+
+**`--logs --follow`** uses the Portainer logs endpoint with `follow=true&stdout=true&stderr=true` to stream in real time. Only works for one service at a time. Ctrl-C to stop.
+
+**Common log greps when debugging:**
+```bash
+# postiz: backend startup status
+... | grep -iE "backend.*started|listening|port 3000|ECONN|temporal|Backend failed"
+
+# postiz: cookie configuration (NOT_SECURED issue)
+... | grep -iE "cookie|secure|not_secured"
+
+# temporal: bootstrap completion
+... | grep -iE "search attribute|frontend|listen|exit"
+
+# sidecar: pipeline subprocess invocations
+... | grep -iE "pipeline|subprocess|smoke_e2e|cost"
+
+# any service: out-of-memory
+... | grep -iE "OOM|killed|memory|signal"
+```
+
+## Debug → fix → redeploy loop
+
+The most common workflow after the first deploy is "something broken in production, fix locally, push the fix, validate". The skill makes this a tight loop:
+
+```bash
+# 1. See the symptom in the browser (e.g., "Sign Up does nothing")
+# 2. Pull the relevant logs
+/cc-deploy-portainer --logs commoncreed_postiz
+
+# 3. Find the root cause (e.g., cookie has Secure flag on HTTP)
+# 4. Make the fix locally — edit deploy/portainer/docker-compose.yml or .env
+# 5. Test the fix on Colima first if it's in compose
+docker compose --env-file ../../.env up -d --force-recreate postiz
+
+# 6. Once verified locally, push to NAS
+/cc-deploy-portainer --update --restart=postiz
+
+# 7. Verify the fix landed
+/cc-deploy-portainer --logs commoncreed_postiz
+# OR test the symptom in the browser
+```
+
+**Don't skip the local test in step 5.** Each round-trip to the NAS costs 1-3 minutes; iterating on Colima is 5-15 seconds. Use the NAS for VALIDATION, not for ITERATION.
 
 ## Helper script: `portainer_smoke.py`
 
