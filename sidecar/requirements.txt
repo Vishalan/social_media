@@ -3,6 +3,8 @@ uvicorn[standard]==0.32.*
 pydantic==2.*
 pydantic-settings==2.*
 apscheduler==3.10.*
+sqlalchemy==2.*
+pillow==10.*
 python-telegram-bot==21.*
 anthropic==0.39.*
 google-api-python-client==2.*

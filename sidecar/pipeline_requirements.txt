@@ -1,0 +1,28 @@
+# Pipeline venv dependencies — installed at /opt/pipeline_venv inside the
+# sidecar image. Kept separate from sidecar/requirements.txt so the two
+# environments can drift independently (sidecar pins older anthropic, httpx,
+# etc. because the app code was written against those versions).
+#
+# Subset of scripts/requirements.txt: we deliberately exclude faster-whisper
+# (140MB model download + heavy transformers dep), playwright chromium
+# (300MB+), runpod, and CLI tooling (click/rich) that the smoke pipeline
+# doesn't need. Restore them when the pipeline actually needs them.
+anthropic==0.86.0
+openai==2.30.0
+elevenlabs==2.40.0
+moviepy==2.2.1
+imageio-ffmpeg==0.6.0
+av==17.0.0
+faster-whisper==1.2.1
+playwright>=1.50.0
+Pillow==11.3.0
+Pygments==2.19.2
+httpx==0.28.1
+beautifulsoup4==4.14.3
+lxml==6.0.2
+feedparser==6.0.12
+requests==2.33.0
+aiohttp==3.13.3
+websockets==16.0
+python-dotenv==1.2.2
+python-dateutil==2.9.0.post0

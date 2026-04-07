@@ -44,6 +44,16 @@ WORKDIR /app
 COPY requirements.txt /app/sidecar_requirements.txt
 RUN pip install --no-cache-dir -r /app/sidecar_requirements.txt
 
+# Pipeline runtime lives in its own venv so its newer anthropic/httpx/etc.
+# don't conflict with the sidecar app's pinned versions. The sidecar
+# subprocess dispatcher invokes /opt/pipeline_venv/bin/python3 for smoke_e2e.
+COPY pipeline_requirements.txt /app/pipeline_requirements.txt
+RUN python3 -m venv /opt/pipeline_venv \
+    && /opt/pipeline_venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/pipeline_venv/bin/pip install --no-cache-dir -r /app/pipeline_requirements.txt \
+    && /opt/pipeline_venv/bin/playwright install chromium \
+    && /opt/pipeline_venv/bin/playwright install-deps chromium || true
+
 # Copy sidecar source last so edits don't bust the pip cache.
 COPY . /app/sidecar
 
