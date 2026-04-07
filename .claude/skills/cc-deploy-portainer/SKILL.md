@@ -28,7 +28,23 @@ These come from project memory `project_synology_portainer.md` — read it first
 | Portainer password | (Keychain) | `security find-generic-password -a vishalan -s commoncreed-portainer -w` |
 | NAS host | `192.168.29.211` | memory |
 | NAS deploy dir | `/volume1/docker/commoncreed/` | memory |
+| Portainer endpoint id | `3` (verified 2026-04-07; do NOT hardcode in code, query at runtime) | API |
 | Stack name in Portainer | `commoncreed` | constant |
+| Postiz host port | `5100` (NOT 5000 — DSM uses 5000 for its own web UI) | NAS .env `POSTIZ_HOST_PORT` |
+| Sidecar host port | `5050` | NAS .env |
+
+## ⚠ Six gotchas this skill MUST handle (each one bit us during the first deploy)
+
+These are baked into the phases below. Do NOT skip any.
+
+1. **DSM owns port 5000** on Synology — Postiz cannot bind to it. Use 5100 (or any non-DSM port). Synology DSM web UI at `http://<nas>:5000` is non-negotiable; you can't move it.
+2. **Portainer container is sandboxed** — `build:` directives in compose fail because Portainer can't see `/volume1/docker/commoncreed/sidecar` from inside its own container. **Pre-build the sidecar image via Portainer's image-build API**, then reference by `image:` tag in the deployed compose. The build context is uploaded as a tar to `POST /api/endpoints/{id}/docker/build?t=<tag>`.
+3. **Portainer's create-stack API does NOT auto-load `.env`** from the host — `${VAR}` references in the compose resolve to empty strings unless you pass `env: [{"name":"K","value":"V"}, ...]` in the request body. Read the NAS `.env` over SSH (silently, no chat echo), parse, and pass.
+4. **Synology's PAM blocks rsync's `--server` protocol** over SSH for non-interactive sessions. Plain `ssh user@host 'command'` works; `rsync` does not. Use **`tar czf - -C src . | ssh user@host 'tar xzf - -C dst'`** for all code uploads. SCP/SFTP also fail (subsystem disabled). Test transport during preflight before doing real uploads.
+5. **Temporal's `auto-setup` script races on first boot.** It tries to register search attributes via the frontend before the frontend is fully serving, then completes successfully but the actual `temporal-server` may not transition cleanly. **After the stack starts, restart the temporal container once.** On the second boot, the Postgres+ES schema is already initialized so it boots cleanly in <30s.
+6. **Postiz crash-loops on the initial Temporal connection** — its NestJS backend exits on `ECONNREFUSED 7233` and the container's supervisor keeps restarting it, but it caches the failure between attempts. **After Temporal is restarted (gotcha #5) and fully serving, restart the postiz container once** so it gets a fresh attempt with a working Temporal. The deploy is not complete until BOTH temporal and postiz have been restarted at least once each.
+
+These are documented in `docs/solutions/integration-issues/synology-portainer-deploy-gotchas-2026-04-07.md`.
 
 **Never write the password to a file or echo it in chat.** Always read it from Keychain at the moment of use, store it in a shell variable for the duration of the API calls, then unset it.
 
@@ -135,52 +151,89 @@ If any preflight check fails, STOP and report the failure with actionable next s
 
 If this is a fresh deploy (no existing stack), skip the snapshot but still create `.deploy-rollback/` so the directory exists.
 
-### Phase 2 — Upload code and secrets to the NAS
+### Phase 2 — Upload code and secrets to the NAS via tar-over-SSH
 
-The compose file's bind mounts reference:
-- `/volume1/docker/commoncreed/scripts/` — pipeline code
-- `/volume1/docker/commoncreed/sidecar/` — sidecar service source
-- `/volume1/docker/commoncreed/deploy/portainer/temporal-dynamicconfig/` — Temporal config
-- `/volume1/docker/commoncreed/.env` — secrets
-- `/volume1/docker/commoncreed/secrets/gmail_oauth.json` — Gmail OAuth token (if Unit 3 fully configured)
-
-Upload everything via `rsync` over SSH. This is incremental — only changed files transfer on subsequent deploys.
+**Do NOT use `rsync`** — Synology's PAM auth chain (`pam_syno_support.so`) blocks rsync's `--server` invocation over SSH for non-interactive sessions, even with key auth working. SCP also fails because the SFTP subsystem is disabled. The transport that works is `tar | ssh ... 'tar x'`.
 
 ```bash
-# 1. Ensure deploy dir exists on NAS
-ssh vishalan@192.168.29.211 'mkdir -p /volume1/docker/commoncreed/secrets && chmod 700 /volume1/docker/commoncreed/secrets'
+# 0. Ensure deploy dir exists with secrets/ subdir (mode 700)
+ssh -o BatchMode=yes vishalan@192.168.29.211 \
+  'mkdir -p /volume1/docker/commoncreed/secrets && chmod 700 /volume1/docker/commoncreed/secrets'
 
-# 2. Sync pipeline code (scripts/)
-rsync -avz --delete \
-  --exclude '__pycache__' --exclude '*.pyc' \
-  --exclude 'output' --exclude 'tmp*' \
-  ./scripts/ vishalan@192.168.29.211:/volume1/docker/commoncreed/scripts/
+# 1. Pipeline code (scripts/) — full replace via tar pipe
+tar czf - --exclude '__pycache__' --exclude '*.pyc' \
+  --exclude 'output' --exclude 'tmp*' --exclude '.pytest_cache' \
+  -C scripts . | \
+  ssh -o BatchMode=yes vishalan@192.168.29.211 \
+  'rm -rf /volume1/docker/commoncreed/scripts && mkdir -p /volume1/docker/commoncreed/scripts && tar xzf - -C /volume1/docker/commoncreed/scripts'
 
-# 3. Sync sidecar source
-rsync -avz --delete \
-  --exclude '__pycache__' --exclude '*.pyc' --exclude 'tests' \
-  ./sidecar/ vishalan@192.168.29.211:/volume1/docker/commoncreed/sidecar/
+# 2. Sidecar source
+tar czf - --exclude '__pycache__' --exclude '*.pyc' --exclude '.pytest_cache' \
+  -C sidecar . | \
+  ssh -o BatchMode=yes vishalan@192.168.29.211 \
+  'rm -rf /volume1/docker/commoncreed/sidecar && mkdir -p /volume1/docker/commoncreed/sidecar && tar xzf - -C /volume1/docker/commoncreed/sidecar'
 
-# 4. Sync deploy config (temporal-dynamicconfig)
-rsync -avz --delete \
-  ./deploy/portainer/temporal-dynamicconfig/ vishalan@192.168.29.211:/volume1/docker/commoncreed/deploy/portainer/temporal-dynamicconfig/
+# 3. Temporal dynamicconfig
+tar czf - -C deploy/portainer/temporal-dynamicconfig . | \
+  ssh -o BatchMode=yes vishalan@192.168.29.211 \
+  'mkdir -p /volume1/docker/commoncreed/deploy/portainer/temporal-dynamicconfig && tar xzf - -C /volume1/docker/commoncreed/deploy/portainer/temporal-dynamicconfig'
+```
 
-# 5. Sync .env (single file, special handling — only push if user confirms)
-# IMPORTANT: this overwrites the NAS .env. Confirm with the user first.
-# Better default: warn that the local .env and NAS .env are different files
-# and the user should manage them separately. The skill should NEVER auto-push
-# the local .env to the NAS without explicit confirmation, because the local
-# .env may have dev-only values (localhost URLs, test API keys) that would
-# break production.
+**`.env` handling rule:** NEVER push the local `.env` directly. The skill checks whether `/volume1/docker/commoncreed/.env` exists on the NAS via SSH:
+- If absent (first deploy): generate a production `.env` from the local one in a tmpfile, substitute `localhost` URLs with the NAS IP, set `POSTIZ_HOST_PORT=5100` (NOT 5000), upload via tar pipe, set mode 600, **immediately delete the local tmpfile**, never echo its contents to chat.
+- If present (subsequent deploys): leave the NAS `.env` alone — it's production state owned by the operator (or eventually by the sidecar Settings page).
 
-# 6. Sync gmail_oauth.json if it exists locally
+**`gmail_oauth.json`** uploaded the same way:
+```bash
 if [ -f secrets/gmail_oauth.json ]; then
-  scp secrets/gmail_oauth.json vishalan@192.168.29.211:/volume1/docker/commoncreed/secrets/
-  ssh vishalan@192.168.29.211 'chmod 600 /volume1/docker/commoncreed/secrets/gmail_oauth.json'
+  tar czf - -C secrets gmail_oauth.json | \
+    ssh -o BatchMode=yes vishalan@192.168.29.211 \
+    'tar xzf - -C /volume1/docker/commoncreed/secrets && chmod 600 /volume1/docker/commoncreed/secrets/gmail_oauth.json'
 fi
 ```
 
-**.env handling rule:** the skill must NOT push the local `.env` to the NAS automatically. Instead it checks whether `/volume1/docker/commoncreed/.env` exists on the NAS via SSH. If absent, it generates a fresh `.env.synology` template locally (copying from `.env.example` with `localhost` URLs replaced by the NAS IP) and instructs the user to fill it in manually on the NAS the first time. On subsequent deploys, the NAS `.env` is treated as production state and never overwritten.
+**Verify uploads** with file COUNTS only — never `cat`/`head`/`tail` on `.env` or any secrets file (see `feedback_never_cat_dotenv` memory):
+```bash
+ssh vishalan@192.168.29.211 \
+  'echo scripts: $(find /volume1/docker/commoncreed/scripts -type f | wc -l) files;
+   echo sidecar: $(find /volume1/docker/commoncreed/sidecar -type f | wc -l) files;
+   ls /volume1/docker/commoncreed/scripts/smoke_e2e.py /volume1/docker/commoncreed/sidecar/app.py /volume1/docker/commoncreed/sidecar/Dockerfile /volume1/docker/commoncreed/deploy/portainer/temporal-dynamicconfig/development-sql.yaml 2>&1;
+   stat -c "%n size=%s mode=%a" /volume1/docker/commoncreed/.env'
+```
+
+### Phase 2.5 — Build the sidecar image on the NAS Docker daemon
+
+Portainer's compose runner can't see `/volume1/` from inside its container, so a `build:` directive against a NAS path fails with `unable to prepare context`. The fix: build the image directly on the NAS Docker daemon via Portainer's image-build API, then reference it by tag in the deployed compose.
+
+```bash
+# Package the sidecar build context into a tar.gz
+tar czf /tmp/cc_sidecar_build_ctx.tar.gz \
+  --exclude '__pycache__' --exclude '*.pyc' \
+  --exclude '.pytest_cache' --exclude 'tests' \
+  -C sidecar .
+
+# POST the tar to Portainer's image-build endpoint
+curl -sf -X POST \
+  -H "Authorization: Bearer $PORTAINER_JWT" \
+  -H "Content-Type: application/x-tar" \
+  --data-binary @/tmp/cc_sidecar_build_ctx.tar.gz \
+  "http://192.168.29.211:9000/api/endpoints/$ENDPOINT_ID/docker/build?t=commoncreed/sidecar:0.1.0&dockerfile=Dockerfile"
+```
+
+The response is a streaming JSON log of the docker build process. Parse it for the final `"Successfully built ..."` line. On any error during build, abort the deploy.
+
+Subsequent deploys can reuse the cached layers — only changed source files cause rebuilds.
+
+After build, **strip the `build:` block from the compose payload before sending it to Portainer**:
+```python
+import re
+out = re.sub(
+    r'  commoncreed_sidecar:\n    build:\n      context: [^\n]+\n      dockerfile: [^\n]+\n',
+    '  commoncreed_sidecar:\n',
+    compose_text,
+)
+```
+The compose still has `image: commoncreed/sidecar:0.1.0` further down the service block, so removing only the `build:` lines is enough — Docker pulls the local image by tag.
 
 ### Phase 3 — Generate the deployable compose payload
 
@@ -266,6 +319,44 @@ done
 ```
 
 If timeout fires, jump to Phase 7 (rollback).
+
+### Phase 5.5 — Mandatory Temporal + Postiz restart dance
+
+Even when all containers report healthy/running after Phase 5, Postiz's backend is almost certainly in a crash-restart loop because of gotcha #5+#6 (Temporal auto-setup races, Postiz cached the failed connection). You will see HTTP 502 from `POST /api/auth/register` with logs showing `ECONNREFUSED 7233` in the postiz container.
+
+**This is not optional — every fresh deploy needs both restarts.**
+
+```bash
+# 1. Restart Temporal first so it transitions cleanly from auto-setup to server
+TEMPORAL_CID=$(curl -sf -H "Authorization: Bearer $JWT" \
+  "http://192.168.29.211:9000/api/endpoints/$ENDPOINT_ID/docker/containers/json?filters=%7B%22name%22%3A%5B%22commoncreed_temporal%22%5D%7D" \
+  | python3 -c 'import json,sys; cc=json.load(sys.stdin); print([c for c in cc if c["Names"][0]=="/commoncreed_temporal"][0]["Id"])')
+
+curl -sf -X POST -H "Authorization: Bearer $JWT" \
+  "http://192.168.29.211:9000/api/endpoints/$ENDPOINT_ID/docker/containers/$TEMPORAL_CID/restart?t=10"
+
+sleep 60  # Temporal needs ~30-60s to be fully serving on port 7233
+
+# 2. Restart Postiz so its backend retries against the now-serving Temporal
+POSTIZ_CID=$(curl -sf -H "Authorization: Bearer $JWT" \
+  "http://192.168.29.211:9000/api/endpoints/$ENDPOINT_ID/docker/containers/json?filters=%7B%22name%22%3A%5B%22commoncreed_postiz%22%5D%7D" \
+  | python3 -c 'import json,sys; cc=json.load(sys.stdin); print([c for c in cc if c["Names"][0]=="/commoncreed_postiz"][0]["Id"])')
+
+curl -sf -X POST -H "Authorization: Bearer $JWT" \
+  "http://192.168.29.211:9000/api/endpoints/$ENDPOINT_ID/docker/containers/$POSTIZ_CID/restart?t=10"
+
+# 3. Poll the API until it returns 400 (validation error = backend up) instead of 502
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  sleep 15
+  code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+    http://192.168.29.211:5100/api/auth/register \
+    -H "Content-Type: application/json" -d '{}')
+  echo "  t+$((i*15))s: HTTP $code"
+  [ "$code" = "400" ] || [ "$code" = "200" ] && { echo "✓ Postiz backend ready"; break; }
+done
+```
+
+If after 150 seconds the API still returns 502, escalate: Temporal is genuinely broken. Look at temporal container logs for crashes after the search-attribute warnings, and check if `temporal-elasticsearch` is healthy.
 
 ### Phase 6 — Smoke verification
 

@@ -205,12 +205,10 @@ services:
       # Mount the dynamicconfig file from Postiz's official repo into the
       # path Temporal expects to find it.
       - ./temporal-dynamicconfig:/etc/temporal/config/dynamicconfig
-    healthcheck:
-      test: ["CMD-SHELL", "tctl --address temporal:7233 cluster health 2>&1 | grep -q SERVING || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 8
-      start_period: 90s
+    # No healthcheck — tctl was removed from temporal:1.28+ images and the
+    # `temporal` CLI requires a config file to do remote checks. Postiz's
+    # official compose doesn't healthcheck Temporal either; it just lets
+    # Postiz retry the connection on its own. service_started is sufficient.
     deploy:
       resources:
         limits:
@@ -236,7 +234,9 @@ services:
       redis:
         condition: service_healthy
       temporal:
-        condition: service_healthy
+        # service_started not service_healthy — Temporal has no healthcheck
+        # (matches official Postiz compose pattern). Postiz retries on its own.
+        condition: service_started
     environment:
       # --- Required core settings (per official Postiz compose) -------------
       MAIN_URL: ${POSTIZ_MAIN_URL}
