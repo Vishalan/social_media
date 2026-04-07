@@ -10,6 +10,7 @@ settings fail to load, we log the error but still start the app so the
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -216,23 +217,38 @@ def _start_scheduler():
 
     # Daily TLDR newsletter trigger — parses HH:MM from PIPELINE_TRIGGER_TIME
     # (defaults to 05:00 in config). Lazy import so a missing optional dep
-    # in jobs.daily_trigger never blocks scheduler startup.
-    try:
-        from .jobs.daily_trigger import run_daily_trigger
-        trigger_time = getattr(s, "PIPELINE_TRIGGER_TIME", "05:00") or "05:00"
-        hh, mm = (int(x) for x in trigger_time.split(":")[:2])
-        sched.add_job(
-            run_daily_trigger,
-            trigger=CronTrigger(hour=hh, minute=mm),
-            id="daily_trigger",
-            replace_existing=True,
-            max_instances=1,
-            coalesce=True,
-            misfire_grace_time=3600,
+    # in jobs.daily_trigger never blocks scheduler startup. Gated behind
+    # SIDECAR_DAILY_TRIGGER_ENABLED so the cron stays off until Gmail OAuth
+    # is set up and the IG publish leg is fully validated end-to-end.
+    if (os.environ.get("SIDECAR_DAILY_TRIGGER_ENABLED", "").lower()
+            in ("1", "true", "yes", "on")):
+        try:
+            from .jobs.daily_trigger import run_daily_trigger
+            trigger_time = getattr(s, "PIPELINE_TRIGGER_TIME", "05:00") or "05:00"
+            hh, mm = (int(x) for x in trigger_time.split(":")[:2])
+            sched.add_job(
+                run_daily_trigger,
+                trigger=CronTrigger(hour=hh, minute=mm),
+                id="daily_trigger",
+                replace_existing=True,
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=3600,
+            )
+            logger.info("sidecar scheduler: daily_trigger wired at %02d:%02d", hh, mm)
+        except Exception as exc:
+            logger.warning("sidecar scheduler: daily_trigger wire-up failed: %s", exc)
+    else:
+        # Make sure any previously persisted job from an earlier run is removed.
+        try:
+            sched.remove_job("daily_trigger")
+            logger.info("sidecar scheduler: removed stale daily_trigger job (gated off)")
+        except Exception:
+            pass
+        logger.info(
+            "sidecar scheduler: daily_trigger DISABLED "
+            "(set SIDECAR_DAILY_TRIGGER_ENABLED=1 to re-enable)"
         )
-        logger.info("sidecar scheduler: daily_trigger wired at %02d:%02d", hh, mm)
-    except Exception as exc:
-        logger.warning("sidecar scheduler: daily_trigger wire-up failed: %s", exc)
 
     sched.start()
     # Expose to job handlers (publish auto-approve, etc.) that cannot reach
