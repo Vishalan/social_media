@@ -58,38 +58,51 @@ _SCORE_PROMPT = """You are curating AI-tech stories for a short-form video chann
   - ai_tech_relevance: how on-brand for an AI-tech channel?
 
 Then compute score = virality + novelty + thought_provocation + ai_tech_relevance \
-(an integer 4-40) and a 1-2 sentence rationale.
+(an integer 4-40) and a 1-sentence rationale (max 20 words — be terse).
 
-Return ONLY a JSON array, sorted by score DESCENDING (highest first). \
-Each element MUST have EXACTLY these keys:
-  "title" (string), "url" (string), "description" (string),
-  "score" (number), "rationale" (string).
+Return ONLY the TOP 10 items as a JSON array, sorted by score DESCENDING. \
+Do NOT score or return the rest. Each element MUST have EXACTLY these keys:
+  "title" (string), "url" (string), "description" (string — max 100 chars, trim if needed),
+  "score" (number), "rationale" (string, max 20 words).
 
-No markdown, no code fences, no preamble.
+No markdown, no code fences, no preamble. JSON array only.
 
-Items to score:
+Items to score (return only the top 10 of these):
 {items_json}
 """
 
-_SCORE_RETRY_PROMPT = """Your previous response was not valid JSON. \
-Output ONLY a JSON array sorted by score DESCENDING. Each element must have \
-exactly the keys: title, url, description, score, rationale.
+_SCORE_RETRY_PROMPT = """Your previous response was not valid JSON or got truncated. \
+Output ONLY a JSON array with the TOP 10 items, sorted by score DESCENDING. \
+Each element must have exactly: title, url, description (<=100 chars), \
+score (integer), rationale (<=20 words). No markdown, no code fences.
 
-Items to score:
+Items to score (return only the top 10):
 {items_json}
 """
 
 
 def _strip_code_fence(text: str) -> str:
-    """Remove ```json ... ``` fences if the model wrapped the JSON."""
+    """Remove ```json ... ``` (or any) fences if the model wrapped the JSON.
+
+    Handles:
+      - leading ```json\\n or ```\\n
+      - trailing \\n``` (with or without surrounding whitespace)
+      - plain text before/after the fence
+    """
     if not text:
         return text
     t = text.strip()
+    # Regex-strip any ```<lang>? ... ``` block — match is greedy enough
+    # to capture the entire fenced section even when there's text around it.
+    m = re.search(r"```(?:json|javascript|js)?\s*\n?(.*?)\n?```", t, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    # Fallback: line-based strip (older path, covers edge cases the regex
+    # doesn't match like an unclosed fence)
     if t.startswith("```"):
-        # drop first line
         t = t.split("\n", 1)[1] if "\n" in t else ""
         if t.endswith("```"):
-            t = t[: -3]
+            t = t[:-3]
     return t.strip()
 
 
@@ -137,7 +150,7 @@ def _validate_score(items: list) -> bool:
     return True
 
 
-def _call(client: anthropic.Anthropic, model: str, prompt: str, max_tokens: int = 4000) -> str:
+def _call(client: anthropic.Anthropic, model: str, prompt: str, max_tokens: int = 8000) -> str:
     resp = client.messages.create(
         model=model,
         max_tokens=max_tokens,
