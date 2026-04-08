@@ -25,9 +25,13 @@ from __future__ import annotations
 import logging
 from typing import Iterable
 
+from .arxiv_source import ArxivTopicSource
 from .base import TopicSource
+from .github_trending_source import GitHubTrendingTopicSource
 from .gmail_source import GmailTopicSource
 from .hackernews_source import HackerNewsTopicSource
+from .huggingface_trending_source import HuggingFaceTrendingTopicSource
+from .lobsters_source import LobstersTopicSource
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +42,17 @@ _REGISTRY: dict[str, type[TopicSource]] = {
     "gmail": GmailTopicSource,
     "hackernews": HackerNewsTopicSource,
     "hn": HackerNewsTopicSource,  # alias
+    "github_trending": GitHubTrendingTopicSource,
+    "github": GitHubTrendingTopicSource,  # alias
+    "huggingface_trending": HuggingFaceTrendingTopicSource,
+    "huggingface": HuggingFaceTrendingTopicSource,  # alias
+    "hf": HuggingFaceTrendingTopicSource,  # alias
+    "arxiv": ArxivTopicSource,
+    "lobsters": LobstersTopicSource,
+    "lobste.rs": LobstersTopicSource,  # alias
 }
 
-DEFAULT_ENABLED = "gmail"
+DEFAULT_ENABLED = "gmail,hackernews,github_trending,huggingface_trending,arxiv,lobsters"
 
 
 def _parse_enabled(raw: str) -> list[str]:

@@ -5,6 +5,7 @@ pydantic-settings==2.*
 apscheduler==3.10.*
 sqlalchemy==2.*
 pillow==10.*
+beautifulsoup4==4.12.*
 python-telegram-bot==21.*
 anthropic==0.39.*
 google-api-python-client==2.*

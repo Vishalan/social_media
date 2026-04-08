@@ -1,10 +1,58 @@
 ---
 title: "feat: Content curation track (parallel pipeline, Waves 1-3)"
 type: feat
-status: active
+status: reframed
 date: 2026-04-08
 deepened: 2026-04-09
+reframed: 2026-04-09
 origin: docs/brainstorms/2026-04-08-content-curation-track-requirements.md
+---
+
+## 🔁 REFRAME NOTE (2026-04-09)
+
+**Phase 0 TOS review invalidated the core "download media + overlay credit + reupload" architecture.**
+
+Findings in `docs/research/content-curation-tos-review.md`:
+- Reddit, Product Hunt, Substack, Instagram creators, X Lists, YouTube trending all **prohibit** our original use case outright
+- HN, Lobste.rs, GitHub Trending, HF Trending, arXiv are **conditional** — each is TOS-safe as a topic-signal source (title + url + summary) but NOT as a media-reshare source
+- Zero sources survived for the original media-reshare pattern
+
+**Accepted reframe (option 2 from owner decision):** The curation track becomes **topic-signal extension of the existing generative pipeline.** Instead of building a parallel reshare pipeline with its own scorer, safety classifier, media normalizer, credit overlay, opt-out system, and denylist, we simply add 4 new `TopicSource` implementations to the existing `sidecar/topic_sources/` package. Every new source feeds candidate topics (title + url + summary) into the existing `daily_trigger.py` → `process_pending_runs` → generative video pipeline. The generative pipeline's `browser_visit` b-roll generator already screenshots and scrolls the source URL — so the visual "this article" freshness is preserved without ever downloading or re-encoding third-party video.
+
+**What gets built (new scope — ~4-6 units, ~1 week):**
+
+1. `sidecar/topic_sources/github_trending_source.py` — scrape GitHub Trending HTML for the daily "cool AI/dev project launched" signal
+2. `sidecar/topic_sources/huggingface_trending_source.py` — query HF trending API for model/space releases
+3. `sidecar/topic_sources/arxiv_source.py` — RSS of cs.AI and cs.CL, filtering for CC-BY-tagged papers only
+4. `sidecar/topic_sources/lobsters_source.py` — Lobste.rs RSS feed
+5. Registry + config updates to `sidecar/topic_sources/__init__.py` and `sidecar/config.py`
+6. `PIPELINE_TOPIC_SOURCES` default includes the new sources; per-source knobs added
+
+**What gets DELETED from the original plan entirely (not just deferred):**
+
+- `sidecar/content_sources/` package — use existing `topic_sources/` instead
+- `sidecar/content_curation/` package — no scorer/classifier/normalizer/credit.py/trusted_sources needed
+- `curation_candidates`, `curation_slot_log`, `creator_denylist`, `credit_enforcement_log`, `opt_out_events` tables — topics flow through existing `pipeline_runs`
+- `approvals.kind` discriminator — single track, no discriminator
+- All 3 opt-out channels — no reshare = no opt-out system
+- Credit overlay (burned-in + post-overlay probe + integration test + audit log) — no reshare
+- Media normalizer, safe-fetch helper, ffmpeg ulimit sandbox — no third-party media download
+- T-2h warning / T-30min autopilot for curation — existing generative autopilot handles the single track
+- Track-aware slot allocation — single track, existing `compute_next_slot` unchanged
+- `nas_heavy_work_lock` refactor — no parallel heavy work, single generative lock stays local
+- Curation dashboard view, engagement logger, weekly scoring review — defer; the existing generative dashboard already covers the (now unified) single track
+
+**What stays viable:**
+
+- HN source is ALREADY implemented (`sidecar/topic_sources/hackernews_source.py`) — no work
+- Gmail TLDR source is ALREADY implemented (`sidecar/topic_sources/gmail_source.py`) — no work
+- Existing `daily_trigger.py` already iterates enabled sources with per-source failure isolation — no new job code needed
+- Existing `topic_selector.score_topics` already scores merged candidates across sources — no new scorer needed
+- `sidecar/duplicate_guard.py` already handles novelty check — no new logic
+- The generative pipeline (script → voice → thumbnail → b-roll → whisper → assembly) is the same pipeline shipped and validated this week
+
+**Original plan (everything below this section) is preserved as a historical artifact** documenting the full 21-unit reshare-based design, its review, and why it was reframed. Do not execute any unit below — the execution scope is the 6 bullets above.
+
 ---
 
 # Content Curation Track (Waves 1-3)

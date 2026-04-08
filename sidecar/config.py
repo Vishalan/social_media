@@ -66,10 +66,23 @@ class Settings(BaseSettings):
     # that aren't yet configured (e.g. Gmail without its OAuth token) are
     # also skipped silently so adding one to this list never breaks the
     # daily run.
-    PIPELINE_TOPIC_SOURCES: str = "gmail,hackernews"
+    PIPELINE_TOPIC_SOURCES: str = "gmail,hackernews,github_trending,huggingface_trending,arxiv,lobsters"
     # Hacker News source knobs (ignored when "hackernews" isn't in the list)
     HACKERNEWS_MAX_ITEMS: int = 20
     HACKERNEWS_MIN_SCORE: int = 50
+    # GitHub Trending source knobs (ignored when "github_trending" isn't in the list)
+    GITHUB_TRENDING_MAX_ITEMS: int = 15
+    GITHUB_TRENDING_MIN_STARS_TODAY: int = 10
+    # Hugging Face trending source knobs
+    HUGGINGFACE_MAX_ITEMS: int = 20
+    HUGGINGFACE_MIN_DOWNLOADS: int = 1000
+    HUGGINGFACE_MIN_LIKES: int = 5
+    # arXiv source knobs (categories is comma-separated)
+    ARXIV_MAX_ITEMS: int = 15
+    ARXIV_CATEGORIES: str = "cs.AI,cs.CL"
+    # Lobste.rs source knobs
+    LOBSTERS_MAX_ITEMS: int = 15
+    LOBSTERS_MIN_SCORE: int = 10
     PIPELINE_RETENTION_DAYS: int = 14
 
     # --- Sidecar runtime paths --------------------------------------------
