@@ -355,6 +355,10 @@ services:
       - commoncreed_output:/app/output
       - sidecar_db:/app/db
       - ../../.env:/env/.env:ro
+      # OAuth tokens and other long-lived secrets (Gmail, etc.). Lives on
+      # the NAS at /volume1/docker/commoncreed/secrets; the rewriter in
+      # cc_update_stack.py translates the relative path at deploy time.
+      - ../../secrets:/secrets:ro
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "5050:5050"

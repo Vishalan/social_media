@@ -63,6 +63,7 @@ def regen_prod_compose() -> str:
     out = (
         src.replace("../../scripts", "/volume1/docker/commoncreed/scripts")
         .replace("../../assets", "/volume1/docker/commoncreed/assets")
+        .replace("../../secrets", "/volume1/docker/commoncreed/secrets")
         .replace("../../sidecar", "/volume1/docker/commoncreed/sidecar")
         .replace("../../.env", "/volume1/docker/commoncreed/.env")
         .replace("./postiz-nginx.conf", "/volume1/docker/commoncreed/deploy/portainer/postiz-nginx.conf")

@@ -46,3 +46,6 @@ node_modules/
 .ipynb_checkpoints/
 logs/*.log
 logs/launchd_*.log
+
+# Local secrets (OAuth client credentials, one-shot tokens, etc.)
+.secrets/
