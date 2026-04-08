@@ -1,98 +1,103 @@
 """
-Daily 05:00 newsletter trigger.
+Daily topic trigger.
 
-Fetches the most recent TLDR AI newsletter, extracts stories, scores them,
-and persists the top 2 as `pending_generation` rows in `pipeline_runs`.
+Loads every enabled topic source (Gmail, Hacker News, etc. — see
+``sidecar/topic_sources/``), merges their candidate items, scores the
+combined set with Claude, and persists the top N as ``pending_generation``
+rows in ``pipeline_runs``. The process_pending_runs job picks them up from
+there within 30 seconds.
 
-Failure isolation: this function NEVER raises out. ANY exception is caught
-at the outermost level, logged with context, and a failure-marker dict is
-returned. APScheduler's job-error layer is a safety net, not our primary
-defense.
+Failure isolation:
+- This function NEVER raises out. All exceptions are caught at the
+  outermost level and returned as ``{"ok": False, "error": "..."}``.
+- Individual source failures are isolated: one broken source does not
+  take down the run. As long as at least one source returns items, the
+  rest of the pipeline proceeds.
 """
 from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
-from typing import Optional
 
 from .. import db as db_module
 from ..config import settings_manager
-from ..gmail_client import GmailClient
-from ..topic_selector import extract_items, score_topics
+from ..topic_selector import score_topics
+from ..topic_sources import load_enabled_sources
 
 logger = logging.getLogger(__name__)
 
 
-def _load_oauth_token_json(oauth_path: str) -> str:
-    """Read the Gmail OAuth token JSON file as a raw string."""
-    return Path(oauth_path).read_text()
-
-
 def run_daily_trigger() -> dict:
-    """Run the daily newsletter → topic-selection → DB-insert job.
+    """Run the daily topic-collection → scoring → DB-insert job.
 
-    Returns a summary dict. On any failure, returns a dict with
+    Returns a summary dict. On any failure, returns
     ``{"ok": False, "error": "..."}`` instead of raising.
     """
     try:
         settings = settings_manager.settings
         if settings is None:
-            # Attempt a lazy load so this can be invoked outside the FastAPI
-            # lifespan (e.g. from tests that patch settings_manager).
+            # Lazy load so the job can be invoked from tests / one-shot
+            # exec contexts outside the FastAPI lifespan.
             try:
                 settings = settings_manager.load()
             except Exception as exc:
                 logger.error("daily_trigger: settings not loaded: %s", exc)
                 return {"ok": False, "error": f"settings not loaded: {exc}"}
 
-        # --- Gmail fetch --------------------------------------------------
-        try:
-            oauth_json = _load_oauth_token_json(settings.GMAIL_OAUTH_PATH)
-            gmail = GmailClient(oauth_json)
-            newsletter = gmail.fetch_latest_newsletter()
-        except Exception as exc:
-            logger.error("daily_trigger: gmail fetch failed: %s", exc, exc_info=True)
-            return {"ok": False, "error": f"gmail fetch failed: {exc}"}
-
-        if newsletter is None:
-            logger.info("daily_trigger: no newsletter within 24h, skipping")
-            return {
-                "ok": True,
-                "skipped": True,
-                "reason": "no newsletter within 24h",
-                "pipeline_run_ids": [],
-            }
-
-        body_text = newsletter.get("body_text", "") or ""
-        newsletter_date = newsletter.get("received_at", "") or ""
-
-        # --- Extraction ---------------------------------------------------
-        try:
-            items = extract_items(body_text)
-        except Exception as exc:
-            logger.error(
-                "daily_trigger: extract_items failed: %s", exc, exc_info=True
+        # --- Collect from every enabled source ---------------------------
+        sources = load_enabled_sources(settings)
+        if not sources:
+            logger.warning(
+                "daily_trigger: no topic sources enabled or configured "
+                "(PIPELINE_TOPIC_SOURCES)"
             )
             return {
-                "ok": False,
-                "error": f"extract_items failed: {exc}",
-                "newsletter_date": newsletter_date,
-            }
-
-        if not items:
-            logger.warning("daily_trigger: no items extracted from newsletter")
-            return {
                 "ok": True,
                 "skipped": True,
-                "reason": "no items extracted",
-                "newsletter_date": newsletter_date,
+                "reason": "no sources enabled/configured",
                 "pipeline_run_ids": [],
             }
 
-        # --- Scoring ------------------------------------------------------
+        all_items: list[dict] = []
+        source_labels: list[str] = []
+        per_source_counts: dict[str, int] = {}
+        for source in sources:
+            try:
+                items, label = source.fetch_items(settings)
+            except Exception as exc:
+                logger.warning(
+                    "daily_trigger: source %s raised: %s",
+                    getattr(source, "name", "?"),
+                    exc,
+                    exc_info=True,
+                )
+                per_source_counts[source.name] = 0
+                continue
+            per_source_counts[source.name] = len(items)
+            if label:
+                source_labels.append(f"{source.name}:{label}")
+            all_items.extend(items)
+            logger.info(
+                "daily_trigger: source %s returned %d items",
+                source.name,
+                len(items),
+            )
+
+        if not all_items:
+            logger.warning("daily_trigger: every enabled source returned 0 items")
+            return {
+                "ok": True,
+                "skipped": True,
+                "reason": "no items from any source",
+                "per_source_counts": per_source_counts,
+                "pipeline_run_ids": [],
+            }
+
+        combined_label = " | ".join(source_labels) or "daily_trigger"
+
+        # --- Score the merged candidate set ------------------------------
         try:
-            top = score_topics(items, top_n=2)
+            top = score_topics(all_items, top_n=2)
         except Exception as exc:
             logger.error(
                 "daily_trigger: score_topics failed: %s", exc, exc_info=True
@@ -100,8 +105,8 @@ def run_daily_trigger() -> dict:
             return {
                 "ok": False,
                 "error": f"score_topics failed: {exc}",
-                "newsletter_date": newsletter_date,
-                "items_extracted": len(items),
+                "per_source_counts": per_source_counts,
+                "items_collected": len(all_items),
             }
 
         if not top:
@@ -110,11 +115,11 @@ def run_daily_trigger() -> dict:
                 "ok": True,
                 "skipped": True,
                 "reason": "scoring returned no topics",
-                "newsletter_date": newsletter_date,
+                "per_source_counts": per_source_counts,
                 "pipeline_run_ids": [],
             }
 
-        # --- Persist ------------------------------------------------------
+        # --- Persist -----------------------------------------------------
         inserted_ids: list[int] = []
         try:
             conn = db_module.connect(settings.SIDECAR_DB_PATH)
@@ -126,7 +131,7 @@ def run_daily_trigger() -> dict:
                         topic_url=str(t.get("url", "")),
                         topic_score=float(t.get("score", 0) or 0),
                         selection_rationale=str(t.get("rationale", "")),
-                        source_newsletter_date=newsletter_date,
+                        source_newsletter_date=combined_label,
                     )
                     inserted_ids.append(run_id)
             finally:
@@ -138,17 +143,18 @@ def run_daily_trigger() -> dict:
             return {
                 "ok": False,
                 "error": f"db insert failed: {exc}",
-                "newsletter_date": newsletter_date,
-                "items_extracted": len(items),
+                "per_source_counts": per_source_counts,
+                "items_collected": len(all_items),
                 "pipeline_run_ids": inserted_ids,
             }
 
         summary = {
             "ok": True,
-            "newsletter_date": newsletter_date,
-            "items_extracted": len(items),
+            "per_source_counts": per_source_counts,
+            "items_collected": len(all_items),
             "topics_selected": len(inserted_ids),
             "pipeline_run_ids": inserted_ids,
+            "source_labels": source_labels,
         }
         logger.info("daily_trigger: success %s", json.dumps(summary))
         return summary

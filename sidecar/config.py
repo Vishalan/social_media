@@ -60,6 +60,16 @@ class Settings(BaseSettings):
     PIPELINE_SLOT_MORNING: str = "09:00"
     PIPELINE_SLOT_EVENING: str = "19:00"
     PIPELINE_AUTO_APPROVE_OFFSET_MIN: int = 30
+    # Comma-separated list of enabled topic sources — see
+    # sidecar/topic_sources/__init__.py for the registry. Unknown names
+    # are logged and skipped; order determines fetch order only. Sources
+    # that aren't yet configured (e.g. Gmail without its OAuth token) are
+    # also skipped silently so adding one to this list never breaks the
+    # daily run.
+    PIPELINE_TOPIC_SOURCES: str = "gmail,hackernews"
+    # Hacker News source knobs (ignored when "hackernews" isn't in the list)
+    HACKERNEWS_MAX_ITEMS: int = 20
+    HACKERNEWS_MIN_SCORE: int = 50
     PIPELINE_RETENTION_DAYS: int = 14
 
     # --- Sidecar runtime paths --------------------------------------------
