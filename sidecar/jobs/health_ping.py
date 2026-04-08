@@ -95,15 +95,20 @@ async def _ping_postiz() -> bool:
     try:
         import httpx
 
+        # Hit the Postiz public API at /api/public/v1/integrations: any 2xx
+        # means backend is up AND the API key is valid. The old /auth/me
+        # path no longer exists. Authorization is the raw API key, no Bearer.
         s = settings_manager.settings
         base = getattr(s, "POSTIZ_BASE_URL", "") if s else ""
         key = getattr(s, "POSTIZ_API_KEY", "") if s else ""
-        if not base:
+        if not base or not key:
             return False
-        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        headers = {"Authorization": key}
         with httpx.Client(timeout=5.0) as client:
-            r = client.get(f"{base}/auth/me", headers=headers)
-            return r.status_code == 200
+            r = client.get(
+                f"{base}/api/public/v1/integrations", headers=headers
+            )
+            return 200 <= r.status_code < 300
     except Exception as exc:
         logger.warning("health_ping: postiz ping raised: %s", exc)
         return False
@@ -123,18 +128,24 @@ async def _ping_telegram() -> bool:
         return False
 
 
-async def _ping_gmail() -> bool:
+async def _ping_gmail():
+    """Return True/False/'skipped'.
+
+    'skipped' means Gmail OAuth isn't configured yet (no path set, or the
+    token file doesn't exist) — this is a known-pending setup state, not a
+    failure. The health loop should NOT alert on it.
+    """
     try:
         from sidecar.gmail_client import GmailClient
 
         s = settings_manager.settings
         oauth_path = getattr(s, "GMAIL_OAUTH_PATH", "") if s else ""
         if not oauth_path:
-            return False
+            return "skipped"
         from pathlib import Path as _P
 
         if not _P(oauth_path).exists():
-            return False
+            return "skipped"
         oauth_json = _P(oauth_path).read_text()
         client = GmailClient(oauth_json)
         profile = client.get_profile()
@@ -202,11 +213,13 @@ async def run_health_pings() -> dict:
                 to_telegram=False,
             )
 
-        # Gmail
+        # Gmail — "skipped" means OAuth not yet configured; do not alert.
         ok = await _ping_gmail()
         result["gmail"] = ok
-        if ok:
+        if ok is True:
             _record_success("gmail")
+        elif ok == "skipped":
+            logger.info("health_ping: gmail skipped (OAuth not configured)")
         else:
             await _alert(
                 "gmail",
