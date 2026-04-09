@@ -47,8 +47,12 @@ _MEDIA_WORK_DIR = Path("/app/output/memes")
 # ---------------------------------------------------------------------------
 
 
-def run_meme_trigger() -> dict:
-    """Fetch memes from enabled sources + send new candidates to Telegram."""
+async def run_meme_trigger() -> dict:
+    """Fetch memes from enabled sources + send new candidates to Telegram.
+
+    Async so it can be fired from the APScheduler loop (which is already
+    running an event loop) or from a one-shot ``asyncio.run(...)`` call.
+    """
     try:
         settings = settings_manager.settings
         if settings is None:
@@ -136,15 +140,9 @@ def run_meme_trigger() -> dict:
     sent: list[int] = []
     for cid in surfaced_ids:
         try:
-            msg_id = asyncio.get_event_loop().run_until_complete(
-                _send_meme_preview(cid)
-            ) if not _loop_running() else None
-            if msg_id is None:
-                # Already inside an event loop — schedule on it
-                msg_id = asyncio.run_coroutine_threadsafe(
-                    _send_meme_preview(cid), asyncio.get_event_loop()
-                ).result(timeout=60)
-            sent.append(msg_id)
+            msg_id = await _send_meme_preview(cid)
+            if msg_id is not None:
+                sent.append(msg_id)
         except Exception as exc:
             logger.warning(
                 "meme_trigger: send_meme_preview(%s) failed: %s", cid, exc
@@ -162,22 +160,27 @@ def run_meme_trigger() -> dict:
     }
 
 
-def _loop_running() -> bool:
-    try:
-        loop = asyncio.get_running_loop()
-        return loop.is_running()
-    except RuntimeError:
-        return False
-
-
 async def _send_meme_preview(candidate_id: int) -> int | None:
-    """Send a single meme candidate to Telegram with Approve/Reject buttons."""
+    """Send a single meme candidate to Telegram with Approve/Reject buttons.
+
+    Prefers the long-lived runtime.telegram_app (set by app.py at startup).
+    Falls back to a fresh one-shot Application when fired from a manual
+    exec context where the lifespan hasn't populated the singleton.
+    """
     from .. import runtime as _rt
 
     tg_app = _rt.telegram_app
+    one_shot_app = None
     if tg_app is None:
-        logger.warning("send_meme_preview: no telegram app registered")
-        return None
+        try:
+            from ..telegram_bot import build_application as _build_tg
+            settings_manager.load()
+            one_shot_app = _build_tg(settings_manager.settings)
+            await one_shot_app.initialize()
+            tg_app = one_shot_app
+        except Exception as exc:
+            logger.warning("send_meme_preview: build one-shot app failed: %s", exc)
+            return None
 
     settings = settings_manager.settings
     chat_id = getattr(settings, "TELEGRAM_CHAT_ID", "") if settings else ""
@@ -264,6 +267,12 @@ async def _send_meme_preview(candidate_id: int) -> int | None:
             conn.close()
     except Exception as exc:
         logger.warning("send_meme_preview(%s): db update failed: %s", candidate_id, exc)
+
+    if one_shot_app is not None:
+        try:
+            await one_shot_app.shutdown()
+        except Exception:
+            pass
 
     return msg.message_id
 

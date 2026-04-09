@@ -83,6 +83,15 @@ class Settings(BaseSettings):
     # Lobste.rs source knobs
     LOBSTERS_MAX_ITEMS: int = 15
     LOBSTERS_MIN_SCORE: int = 10
+    # Meme reposter v0 (Reddit)
+    MEME_SOURCES: str = "reddit_programmerhumor,reddit_techhumor"
+    MEME_SUBREDDIT_MAP: str = (
+        "reddit_programmerhumor:ProgrammerHumor,reddit_techhumor:techhumor"
+    )
+    MEME_DAILY_SURFACE_LIMIT: int = 5
+    REDDIT_MEME_TIME_FILTER: str = "day"
+    REDDIT_MEME_MAX_ITEMS: int = 25
+    REDDIT_MEME_MIN_SCORE: int = 500
     PIPELINE_RETENTION_DAYS: int = 14
 
     # --- Sidecar runtime paths --------------------------------------------

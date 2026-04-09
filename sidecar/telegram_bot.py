@@ -457,8 +457,101 @@ def build_application(settings):
     app.add_handler(
         CallbackQueryHandler(handle_edit_caption, pattern=r"^edit_caption:")
     )
+    # Meme reposter v0 — pattern is meme:{approve|reject|deny}:{candidate_id}
+    app.add_handler(CallbackQueryHandler(handle_meme_callback, pattern=r"^meme:"))
     app.add_handler(
         MessageHandler(filters.REPLY & ~filters.COMMAND, handle_caption_edit_reply)
     )
 
     return app
+
+
+# ---------------------------------------------------------------------------
+# Meme reposter callback — handles approve / reject / deny_creator in one
+# ---------------------------------------------------------------------------
+
+
+async def handle_meme_callback(update, context) -> None:
+    """Route meme:{action}:{candidate_id} callbacks.
+
+    Actions:
+      approve — fire the media download + overlay + Postiz upload chain
+      reject  — mark the candidate rejected, don't post
+      deny    — add the creator to the meme denylist AND reject
+    """
+    query = update.callback_query
+    await _safe_answer(query)
+    data = (query.data or "").strip()
+    parts = data.split(":", 2)
+    if len(parts) != 3:
+        await _send_error(query, f"malformed meme callback: {data}")
+        return
+    _, action, raw_id = parts
+    try:
+        candidate_id = int(raw_id)
+    except ValueError:
+        await _send_error(query, f"bad candidate id: {raw_id}")
+        return
+
+    from sidecar.jobs.meme_flow import (
+        publish_meme_candidate,
+        reject_meme_candidate,
+        deny_meme_creator,
+    )
+
+    try:
+        if action == "approve":
+            # Acknowledge immediately — the publish chain takes 10-30 seconds
+            try:
+                await query.edit_message_caption(
+                    caption=(query.message.caption or "") + "\n\n⏳ Publishing…"
+                )
+            except Exception:
+                pass
+            result = await publish_meme_candidate(candidate_id)
+            if result.get("ok"):
+                try:
+                    await query.edit_message_caption(
+                        caption=(query.message.caption or "").replace(
+                            "⏳ Publishing…", "✅ Published to Postiz queue"
+                        )
+                    )
+                except Exception:
+                    pass
+            else:
+                try:
+                    await query.edit_message_caption(
+                        caption=(query.message.caption or "").replace(
+                            "⏳ Publishing…", f"❌ {result.get('error', 'failed')[:120]}"
+                        )
+                    )
+                except Exception:
+                    pass
+        elif action == "reject":
+            reject_meme_candidate(candidate_id)
+            try:
+                await query.edit_message_caption(
+                    caption=(query.message.caption or "") + "\n\n🚫 Rejected"
+                )
+            except Exception:
+                pass
+        elif action == "deny":
+            deny_meme_creator(candidate_id)
+            try:
+                await query.edit_message_caption(
+                    caption=(query.message.caption or "")
+                    + "\n\n🚫 Rejected + creator denylisted"
+                )
+            except Exception:
+                pass
+        else:
+            await _send_error(query, f"unknown meme action: {action}")
+    except Exception as exc:
+        logger.exception("handle_meme_callback failed")
+        try:
+            await query.edit_message_caption(
+                caption=(query.message.caption or "")
+                + f"\n\n❌ error: {str(exc)[:120]}"
+            )
+        except Exception:
+            pass
