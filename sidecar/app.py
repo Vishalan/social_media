@@ -250,6 +250,44 @@ def _start_scheduler():
             "(set SIDECAR_DAILY_TRIGGER_ENABLED=1 to re-enable)"
         )
 
+    # Meme reposter daily fetch — fires twice per day (06:00 morning before
+    # the 09:00 slot, and 16:00 afternoon before the 19:00 slot) so the owner
+    # always has fresh meme candidates ready in Telegram. The trigger itself
+    # also self-schedules a meme_auto_approve fallback for the next slot, so
+    # if the owner never taps, the highest-scored meme still publishes.
+    # Gated behind the same SIDECAR_DAILY_TRIGGER_ENABLED flag.
+    if (os.environ.get("SIDECAR_DAILY_TRIGGER_ENABLED", "").lower()
+            in ("1", "true", "yes", "on")):
+        try:
+            from .jobs.meme_flow import run_meme_trigger
+            for slot_name, hh, mm in [("morning", 6, 0), ("afternoon", 16, 0)]:
+                sched.add_job(
+                    run_meme_trigger,
+                    trigger=CronTrigger(hour=hh, minute=mm),
+                    id=f"meme_trigger_{slot_name}",
+                    replace_existing=True,
+                    max_instances=1,
+                    coalesce=True,
+                    misfire_grace_time=3600,
+                )
+            logger.info(
+                "sidecar scheduler: meme_trigger wired at 06:00 and 16:00"
+            )
+        except Exception as exc:
+            logger.warning(
+                "sidecar scheduler: meme_trigger wire-up failed: %s", exc
+            )
+    else:
+        for slot_name in ("morning", "afternoon"):
+            try:
+                sched.remove_job(f"meme_trigger_{slot_name}")
+            except Exception:
+                pass
+        logger.info(
+            "sidecar scheduler: meme_trigger DISABLED "
+            "(set SIDECAR_DAILY_TRIGGER_ENABLED=1 to re-enable)"
+        )
+
     sched.start()
     # Expose to job handlers (publish auto-approve, etc.) that cannot reach
     # app.state because they run under the scheduler's own context.

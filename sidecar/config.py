@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     REDDIT_MEME_TIME_FILTER: str = "day"
     REDDIT_MEME_MAX_ITEMS: int = 25
     REDDIT_MEME_MIN_SCORE: int = 500
+    # Meme autopilot — fires at slot-offset if no human tap landed
+    MEME_AUTO_APPROVE_ENABLED: bool = True
+    MEME_AUTO_APPROVE_OFFSET_MIN: int = 30
+    MEME_DAILY_AUTO_APPROVE_COUNT: int = 1
     PIPELINE_RETENTION_DAYS: int = 14
 
     # --- Sidecar runtime paths --------------------------------------------

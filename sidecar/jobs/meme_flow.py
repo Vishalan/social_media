@@ -24,6 +24,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
+from typing import Any
 from pathlib import Path
 
 from .. import db as db_module
@@ -148,6 +149,13 @@ async def run_meme_trigger() -> dict:
                 "meme_trigger: send_meme_preview(%s) failed: %s", cid, exc
             )
 
+    # Schedule the autopilot fallback so that if the owner doesn't tap any
+    # of the previews, the highest-scored ones still publish at the next
+    # peak slot. Idempotent — replaces any existing scheduled job.
+    auto_job_id = None
+    if surfaced_ids:
+        auto_job_id = schedule_meme_auto_approve_after_trigger(settings)
+
     return {
         "ok": True,
         "per_source": per_source,
@@ -157,6 +165,7 @@ async def run_meme_trigger() -> dict:
         "telegram_sent": len(sent),
         "inserted_ids": inserted_ids,
         "surfaced_ids": surfaced_ids,
+        "auto_approve_job_id": auto_job_id,
     }
 
 
@@ -492,6 +501,162 @@ def reject_meme_candidate(candidate_id: int) -> dict:
     finally:
         conn.close()
     return {"ok": True, "id": candidate_id}
+
+
+async def meme_auto_approve_action() -> dict:
+    """Fired by APScheduler at next-peak-slot - MEME_AUTO_APPROVE_OFFSET_MIN.
+
+    Picks the top-scoring meme candidates that are still in
+    ``pending_review`` and auto-publishes ``MEME_DAILY_AUTO_APPROVE_COUNT``
+    of them. The rest are marked ``auto_skipped`` so they don't pile up
+    across days.
+
+    Never raises. Safe-fail closed: if Postiz/sidecar/network is down at
+    fire time, the candidates stay in pending_review and the next
+    scheduled tick (or the next manual trigger) gets another chance.
+    """
+    settings = settings_manager.settings
+    if settings is None:
+        try:
+            settings = settings_manager.load()
+        except Exception as exc:
+            logger.error("meme_auto_approve_action: settings: %s", exc)
+            return {"ok": False, "error": f"settings: {exc}"}
+
+    if not bool(getattr(settings, "MEME_AUTO_APPROVE_ENABLED", True)):
+        logger.info("meme_auto_approve_action: disabled, skipping")
+        return {"ok": True, "skipped": True, "reason": "disabled"}
+
+    take = int(getattr(settings, "MEME_DAILY_AUTO_APPROVE_COUNT", 1) or 1)
+
+    # Find the top N pending_review meme candidates by Reddit score.
+    try:
+        conn = db_module.connect(settings.SIDECAR_DB_PATH)
+    except Exception as exc:
+        logger.error("meme_auto_approve_action: db connect: %s", exc)
+        return {"ok": False, "error": f"db: {exc}"}
+
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, engagement_json
+              FROM meme_candidates
+             WHERE status = 'pending_review'
+             ORDER BY id DESC
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        logger.info("meme_auto_approve_action: no pending candidates")
+        return {"ok": True, "picked": 0, "reason": "no pending"}
+
+    def _score(row) -> int:
+        try:
+            return int((json.loads(row["engagement_json"] or "{}")).get("score") or 0)
+        except Exception:
+            return 0
+
+    sorted_rows = sorted(rows, key=_score, reverse=True)
+    chosen_ids = [int(r["id"]) for r in sorted_rows[:take]]
+    skipped_ids = [int(r["id"]) for r in sorted_rows[take:]]
+
+    logger.info(
+        "meme_auto_approve_action: picked %d (top score=%d), skipping %d",
+        len(chosen_ids),
+        _score(sorted_rows[0]) if sorted_rows else 0,
+        len(skipped_ids),
+    )
+
+    # Skip the rest first so subsequent ticks see a clean slate
+    if skipped_ids:
+        try:
+            conn = db_module.connect(settings.SIDECAR_DB_PATH)
+            try:
+                with conn:
+                    for sid in skipped_ids:
+                        conn.execute(
+                            "UPDATE meme_candidates SET status='auto_skipped' WHERE id=?",
+                            (sid,),
+                        )
+            finally:
+                conn.close()
+        except Exception as exc:
+            logger.warning("meme_auto_approve_action: skip-mark failed: %s", exc)
+
+    # Publish the chosen candidates serially (nas_heavy_work_lock would
+    # serialize them anyway, but explicit is better than implicit)
+    results: list[dict] = []
+    for cid in chosen_ids:
+        try:
+            r = await publish_meme_candidate(cid)
+            results.append({"id": cid, "ok": r.get("ok"), "error": r.get("error")})
+        except Exception as exc:
+            logger.exception(
+                "meme_auto_approve_action: publish_meme_candidate(%s) raised: %s",
+                cid,
+                exc,
+            )
+            results.append({"id": cid, "ok": False, "error": str(exc)})
+
+    return {
+        "ok": True,
+        "picked": chosen_ids,
+        "skipped": skipped_ids,
+        "results": results,
+    }
+
+
+def schedule_meme_auto_approve_after_trigger(
+    settings: Any,
+) -> str | None:
+    """Schedule one meme_auto_approve_action job at next-peak-slot - offset.
+
+    Idempotent on the day: replaces any existing job with the same id.
+    Returns the job_id, or None if no scheduler is registered.
+    """
+    from .. import runtime as _rt
+    from .publish import compute_next_slot
+    from datetime import timedelta as _td
+
+    sched = getattr(_rt, "scheduler", None)
+    if sched is None:
+        logger.info(
+            "schedule_meme_auto_approve_after_trigger: no scheduler registered"
+        )
+        return None
+
+    offset_min = int(
+        getattr(settings, "MEME_AUTO_APPROVE_OFFSET_MIN", 30) or 30
+    )
+    slot = compute_next_slot()
+    fire_at = slot - _td(minutes=offset_min)
+    if fire_at < datetime.now():
+        fire_at = datetime.now() + _td(seconds=10)
+
+    job_id = "meme_auto_approve_next_slot"
+    try:
+        sched.add_job(
+            meme_auto_approve_action,
+            trigger="date",
+            run_date=fire_at,
+            id=job_id,
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
+        logger.info(
+            "scheduled meme_auto_approve at %s (slot=%s, offset=%dmin)",
+            fire_at.isoformat(),
+            slot.isoformat(),
+            offset_min,
+        )
+    except Exception as exc:
+        logger.warning(
+            "schedule_meme_auto_approve_after_trigger add_job failed: %s", exc
+        )
+        return None
+    return job_id
 
 
 def deny_meme_creator(candidate_id: int) -> dict:
