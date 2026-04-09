@@ -426,12 +426,12 @@ def _publish_blocking(
             yt_description=yt_description,
             ig_collab_usernames=[],  # Reddit handles aren't IG handles
             scheduled_slot=scheduled_slot,
+            media_kind="video",
         )
     else:
-        # v0: image-only posts are IG-only; skip YouTube since YT Shorts
-        # requires video. Publish via the same helper but with the image
-        # as both fields — Postiz will reject or coerce it. This is a
-        # known rough edge; document and revisit.
+        # Image-only meme — IG post only, YouTube is skipped at the
+        # client level. The image is uploaded once via /api/public/v1/upload
+        # and queued as an IG feed post for the next peak slot.
         postiz_resp = client.publish_post(
             video_path=str(credited_path),
             thumbnail_path=str(credited_path),
@@ -440,6 +440,7 @@ def _publish_blocking(
             yt_description=yt_description,
             ig_collab_usernames=[],
             scheduled_slot=scheduled_slot,
+            media_kind="image",
         )
 
     conn = db_module.connect(settings.SIDECAR_DB_PATH)

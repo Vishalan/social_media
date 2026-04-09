@@ -186,6 +186,7 @@ class PostizClient:
         scheduled_slot: datetime,
         ig_profile: Optional[str] = None,
         yt_profile: Optional[str] = None,
+        media_kind: str = "video",
     ) -> dict:
         """Publish a video to Instagram + YouTube via Postiz.
 
@@ -214,22 +215,43 @@ class PostizClient:
         Raises ``requests.HTTPError`` on persistent failure.
         """
         # 1. resolve integration ids ----------------------------------
+        # YouTube only makes sense for video content — image-only memes
+        # are skipped from YT entirely (YT Shorts requires actual video,
+        # not a static JPEG, and a 30s freeze-frame "Short" is bad UX).
+        is_image = media_kind == "image"
         ig_id = self.integration_id_for(PROVIDER_INSTAGRAM, profile=ig_profile)
-        yt_id = self.integration_id_for(PROVIDER_YOUTUBE, profile=yt_profile)
+        yt_id = (
+            self.integration_id_for(PROVIDER_YOUTUBE, profile=yt_profile)
+            if not is_image
+            else None
+        )
         if not ig_id and not yt_id:
             raise RuntimeError(
                 "Postiz publish_post: no instagram or youtube integration "
                 "found — check Postiz Settings → Channels"
             )
 
-        # 2. upload video + thumbnail ---------------------------------
-        logger.info(
-            "Postiz publish_post: uploading video=%s thumbnail=%s",
-            Path(video_path).name,
-            Path(thumbnail_path).name,
-        )
-        video_media = self.upload_file(video_path, mime="video/mp4")
-        thumb_media = self.upload_file(thumbnail_path, mime="image/jpeg")
+        # 2. upload primary media (and thumbnail when applicable) -----
+        if is_image:
+            logger.info(
+                "Postiz publish_post: uploading IMAGE=%s (image-only mode, no YT)",
+                Path(video_path).name,
+            )
+            # In image-only mode, video_path is actually the image file
+            # (the meme reposter passes the credited.jpg there). Thumb
+            # upload is skipped because IG image posts don't need a
+            # separate thumb — the image IS the post.
+            primary_media = self.upload_file(video_path, mime="image/jpeg")
+            video_media = primary_media
+            thumb_media = primary_media
+        else:
+            logger.info(
+                "Postiz publish_post: uploading video=%s thumbnail=%s",
+                Path(video_path).name,
+                Path(thumbnail_path).name,
+            )
+            video_media = self.upload_file(video_path, mime="video/mp4")
+            thumb_media = self.upload_file(thumbnail_path, mime="image/jpeg")
         logger.info(
             "Postiz upload result: video.id=%s video.path=%s thumb.id=%s thumb.path=%s",
             video_media.get("id"),
