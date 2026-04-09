@@ -259,7 +259,7 @@ def apply_credit_overlay(
     source_name: str,
     media_type: str,
 ) -> None:
-    """Burn ``via {author_handle} · {source_label}`` into the top-left."""
+    """Apply two overlays: top-left credit + bottom-right CommonCreed watermark."""
     if not author_handle:
         raise MemePipelineError("cannot overlay without an author_handle (R12 gate)")
 
@@ -275,21 +275,33 @@ def apply_credit_overlay(
         _apply_overlay_image_pil(input_path, out_path, credit)
         return
 
-    # video — ffmpeg drawtext filter
+    # Video path: render the CommonCreed watermark as a transparent PNG once,
+    # then chain (a) drawtext for credit + (b) overlay for the watermark.
+    watermark_png = out_path.parent / "_commoncreed_watermark.png"
+    _render_commoncreed_watermark(watermark_png)
+
     safe_text = _sanitize_for_drawtext(credit)
     safe_font = _FONT_PATH.replace(":", r"\:")
-    filter_expr = (
-        f"drawtext=fontfile={safe_font}"
+    # filter_complex: input 0 = video, input 1 = watermark PNG
+    # 1) drawtext applies the credit
+    # 2) overlay places the watermark in the bottom-right with 32px padding
+    filter_complex = (
+        f"[0:v]drawtext=fontfile={safe_font}"
         f":text='{safe_text}'"
         f":fontcolor=white:fontsize=42"
         f":x=36:y=96"
         f":bordercolor=black:borderw=3"
-        f":box=1:boxcolor=black@0.45:boxborderw=18"
+        f":box=1:boxcolor=black@0.45:boxborderw=18[credited];"
+        f"[credited][1:v]overlay=W-w-32:H-h-32[out]"
     )
     _run_ffmpeg(
         [
-            "ffmpeg", "-y", "-i", str(input_path),
-            "-vf", filter_expr,
+            "ffmpeg", "-y",
+            "-i", str(input_path),
+            "-i", str(watermark_png),
+            "-filter_complex", filter_complex,
+            "-map", "[out]",
+            "-map", "0:a?",  # copy audio if present
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
             "-c:a", "copy",
             "-pix_fmt", "yuv420p",
@@ -297,6 +309,74 @@ def apply_credit_overlay(
             str(out_path),
         ]
     )
+
+
+# -------------------------------------------------------------------------
+# CommonCreed two-tone watermark — bottom-right brand mark
+# -------------------------------------------------------------------------
+
+# Brand colours pulled to match the owner's existing CommonCreed brand:
+# "Common" in deep blue, "Creed" in slate grey. Both bold sans-serif (Inter).
+_WATERMARK_COMMON_FILL = (30, 64, 175)   # blue-800
+_WATERMARK_CREED_FILL = (75, 85, 99)     # gray-600 / slate
+_WATERMARK_OUTLINE = (255, 255, 255)     # white outline for legibility on busy backgrounds
+_WATERMARK_FONT_SIZE = 56
+
+
+def _render_commoncreed_watermark(out_path: Path) -> None:
+    """Render the two-tone CommonCreed brand mark as a transparent PNG.
+
+    Used by apply_credit_overlay for both the image and video paths.
+    Cached on disk per call site (callers pass a per-output dir path).
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError as exc:
+        raise MemePipelineError(f"Pillow missing: {exc}")
+
+    try:
+        font = ImageFont.truetype(_FONT_PATH, _WATERMARK_FONT_SIZE)
+    except Exception:
+        font = ImageFont.load_default()
+
+    # Measure each half so we can size the canvas tightly
+    tmp_canvas = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    tmp_draw = ImageDraw.Draw(tmp_canvas)
+    common_bbox = tmp_draw.textbbox((0, 0), "Common", font=font)
+    creed_bbox = tmp_draw.textbbox((0, 0), "Creed", font=font)
+    common_w = common_bbox[2] - common_bbox[0]
+    common_h = common_bbox[3] - common_bbox[1]
+    creed_w = creed_bbox[2] - creed_bbox[0]
+    creed_h = creed_bbox[3] - creed_bbox[1]
+
+    pad = 12  # outline + breathing room
+    total_w = common_w + creed_w + pad * 2
+    total_h = max(common_h, creed_h) + pad * 2
+
+    canvas = Image.new("RGBA", (total_w, total_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+
+    # "Common" half — deep blue with white outline
+    draw.text(
+        (pad - common_bbox[0], pad - common_bbox[1]),
+        "Common",
+        font=font,
+        fill=_WATERMARK_COMMON_FILL,
+        stroke_width=3,
+        stroke_fill=_WATERMARK_OUTLINE,
+    )
+    # "Creed" half — red, butted up against "Common" with no space
+    draw.text(
+        (pad + common_w - creed_bbox[0], pad - creed_bbox[1]),
+        "Creed",
+        font=font,
+        fill=_WATERMARK_CREED_FILL,
+        stroke_width=3,
+        stroke_fill=_WATERMARK_OUTLINE,
+    )
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(out_path, "PNG")
 
 
 def _apply_overlay_image_pil(input_path: Path, out_path: Path, credit: str) -> None:
@@ -343,5 +423,20 @@ def _apply_overlay_image_pil(input_path: Path, out_path: Path, credit: str) -> N
         stroke_width=3,
         stroke_fill=(0, 0, 0),
     )
+
+    # Paste the CommonCreed two-tone watermark into the bottom-right corner.
+    watermark_png = out_path.parent / "_commoncreed_watermark.png"
+    _render_commoncreed_watermark(watermark_png)
+    try:
+        wm = Image.open(watermark_png).convert("RGBA")
+    except Exception as exc:
+        raise MemePipelineError(f"cannot open watermark png: {exc}")
+
+    wm_pad = 32
+    wm_x = img.width - wm.width - wm_pad
+    wm_y = img.height - wm.height - wm_pad
+    img_rgba = img.convert("RGBA")
+    img_rgba.paste(wm, (wm_x, wm_y), wm)  # use alpha channel as mask
+    img = img_rgba.convert("RGB")
 
     img.save(out_path, "JPEG", quality=92)
