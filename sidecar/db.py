@@ -40,6 +40,37 @@ SCHEMA_STATEMENTS = [
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS meme_candidates (
+        id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at             TEXT NOT NULL DEFAULT (datetime('now')),
+        source                 TEXT NOT NULL,
+        source_url             TEXT NOT NULL,
+        author_handle          TEXT NOT NULL,
+        title                  TEXT NOT NULL,
+        media_url              TEXT NOT NULL,
+        media_type             TEXT NOT NULL,
+        engagement_json        TEXT,
+        published_at           TEXT,
+        status                 TEXT NOT NULL DEFAULT 'pending_review',
+        telegram_message_id    INTEGER,
+        normalized_path        TEXT,
+        credited_path          TEXT,
+        postiz_response_json   TEXT,
+        publish_error          TEXT,
+        reviewed_at            TEXT,
+        published_at_local     TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS meme_denylist (
+        handle     TEXT NOT NULL,
+        source     TEXT NOT NULL,
+        reason     TEXT,
+        added_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (handle, source)
+    )
+    """,
 ]
 
 
@@ -533,3 +564,92 @@ def cursor(db_path: str) -> Iterator[sqlite3.Cursor]:
         conn.commit()
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# meme_candidates helpers (v0 Reddit meme reposter)
+# ---------------------------------------------------------------------------
+
+
+def insert_meme_candidate(conn: sqlite3.Connection, candidate: dict) -> int:
+    """Insert a MemeCandidate dict from meme_sources, return new id.
+
+    Idempotent on (source, source_url): if a row with the same source_url
+    already exists in any status, we skip and return the existing id.
+    """
+    existing = conn.execute(
+        "SELECT id FROM meme_candidates WHERE source=? AND source_url=? LIMIT 1",
+        (candidate["source"], candidate["source_url"]),
+    ).fetchone()
+    if existing:
+        return int(existing["id"])
+
+    import json as _json
+
+    cur = conn.execute(
+        """
+        INSERT INTO meme_candidates (
+            source, source_url, author_handle, title, media_url, media_type,
+            engagement_json, published_at, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_review')
+        """,
+        (
+            candidate["source"],
+            candidate["source_url"],
+            candidate["author_handle"],
+            candidate["title"],
+            candidate["media_url"],
+            candidate["media_type"],
+            _json.dumps(candidate.get("engagement") or {}),
+            candidate.get("published_at"),
+        ),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def get_meme_candidate(conn: sqlite3.Connection, candidate_id: int) -> Optional[dict]:
+    row = conn.execute(
+        "SELECT * FROM meme_candidates WHERE id=?", (candidate_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def update_meme_candidate(
+    conn: sqlite3.Connection,
+    candidate_id: int,
+    **fields,
+) -> None:
+    """Update arbitrary fields on a meme_candidates row."""
+    if not fields:
+        return
+    cols = ", ".join(f"{k}=?" for k in fields)
+    vals = list(fields.values()) + [candidate_id]
+    with conn:
+        conn.execute(f"UPDATE meme_candidates SET {cols} WHERE id=?", vals)
+
+
+def is_meme_creator_denied(
+    conn: sqlite3.Connection, handle: str, source: str
+) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM meme_denylist WHERE handle=? AND source=? LIMIT 1",
+        (handle, source),
+    ).fetchone()
+    return row is not None
+
+
+def add_meme_creator_to_denylist(
+    conn: sqlite3.Connection,
+    handle: str,
+    source: str,
+    reason: str = "",
+) -> None:
+    with conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO meme_denylist (handle, source, reason)
+            VALUES (?, ?, ?)
+            """,
+            (handle, source, reason),
+        )
