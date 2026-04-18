@@ -23,14 +23,19 @@ Service names (full container names):
 from __future__ import annotations
 import argparse
 import json
+import ssl
 import subprocess
 import sys
 import urllib.parse
 import urllib.request
 import urllib.error
 
-PORTAINER = "http://192.168.29.211:9000"
+PORTAINER = "https://192.168.29.237:9443"
 ENDPOINT_ID = 3
+
+_SSL_CTX = ssl.create_default_context()
+_SSL_CTX.check_hostname = False
+_SSL_CTX.verify_mode = ssl.CERT_NONE
 EXPECTED = [
     "commoncreed_postgres",
     "commoncreed_redis",
@@ -44,16 +49,16 @@ EXPECTED = [
 
 def get_jwt() -> str:
     pw = subprocess.check_output(
-        ["security", "find-generic-password", "-a", "vishalan", "-s", "commoncreed-portainer", "-w"],
+        ["security", "find-generic-password", "-a", "vishalan", "-s", "commoncreed-portainer-new", "-w"],
         text=True,
     ).strip()
     req = urllib.request.Request(
         f"{PORTAINER}/api/auth",
-        data=json.dumps({"username": "vishalan", "password": pw}).encode(),
+        data=json.dumps({"username": "admin", "password": pw}).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=10) as r:
+    with urllib.request.urlopen(req, timeout=10, context=_SSL_CTX) as r:
         return json.loads(r.read())["jwt"]
 
 
@@ -63,7 +68,7 @@ def find_container_id(jwt: str, name: str) -> str | None:
         f"{PORTAINER}/api/endpoints/{ENDPOINT_ID}/docker/containers/json?{qs}",
         headers={"Authorization": f"Bearer {jwt}"},
     )
-    with urllib.request.urlopen(req, timeout=15) as r:
+    with urllib.request.urlopen(req, timeout=15, context=_SSL_CTX) as r:
         cc = json.load(r)
     for c in cc:
         if c["Names"][0] == f"/{name}":
@@ -100,7 +105,7 @@ def fetch_logs(jwt: str, cid: str, tail: int = 200, follow: bool = False) -> str
     )
     if follow:
         # Stream and print line-buffered
-        with urllib.request.urlopen(req, timeout=None) as r:
+        with urllib.request.urlopen(req, timeout=None, context=_SSL_CTX) as r:
             buf = bytearray()
             while True:
                 chunk = r.read(4096)
@@ -115,7 +120,7 @@ def fetch_logs(jwt: str, cid: str, tail: int = 200, follow: bool = False) -> str
                     sys.stdout.flush()
                     buf = bytearray(partial.encode("utf-8"))
         return ""
-    with urllib.request.urlopen(req, timeout=60) as r:
+    with urllib.request.urlopen(req, timeout=60, context=_SSL_CTX) as r:
         return strip_docker_frames(r.read())
 
 

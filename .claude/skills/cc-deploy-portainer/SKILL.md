@@ -31,11 +31,11 @@ These come from project memory `project_synology_portainer.md` — read it first
 
 | Field | Value | Source |
 |---|---|---|
-| Portainer URL | `http://192.168.29.211:9000` | memory |
+| Portainer URL | `http://192.168.29.237:9000` | memory |
 | Portainer username | `vishalan` | memory |
 | Portainer password | (Keychain) | `security find-generic-password -a vishalan -s commoncreed-portainer -w` |
-| NAS host | `192.168.29.211` | memory |
-| NAS deploy dir | `/volume1/docker/commoncreed/` | memory |
+| NAS host | `192.168.29.237` | memory |
+| NAS deploy dir | `/opt/commoncreed/` | memory |
 | Portainer endpoint id | `3` (verified 2026-04-07; do NOT hardcode in code, query at runtime) | API |
 | Stack name in Portainer | `commoncreed` | constant |
 | Postiz host port | `5100` (NOT 5000 — DSM uses 5000 for its own web UI) | NAS .env `POSTIZ_HOST_PORT` |
@@ -48,7 +48,7 @@ These are baked into the phases below. Do NOT skip any.
 ### Original 6 (first deploy, 2026-04-07)
 
 1. **DSM owns port 5000** on Synology — Postiz cannot bind to it. Use 5100 (or any non-DSM port). Synology DSM web UI at `http://<nas>:5000` is non-negotiable; you can't move it.
-2. **Portainer container is sandboxed** — `build:` directives in compose fail because Portainer can't see `/volume1/docker/commoncreed/sidecar` from inside its own container. **Pre-build the sidecar image via Portainer's image-build API**, then reference by `image:` tag in the deployed compose. The build context is uploaded as a tar to `POST /api/endpoints/{id}/docker/build?t=<tag>`.
+2. **Portainer container is sandboxed** — `build:` directives in compose fail because Portainer can't see `/opt/commoncreed/sidecar` from inside its own container. **Pre-build the sidecar image via Portainer's image-build API**, then reference by `image:` tag in the deployed compose. The build context is uploaded as a tar to `POST /api/endpoints/{id}/docker/build?t=<tag>`.
 3. **Portainer's create-stack API does NOT auto-load `.env`** from the host — `${VAR}` references in the compose resolve to empty strings unless you pass `env: [{"name":"K","value":"V"}, ...]` in the request body. Read the NAS `.env` over SSH (silently, no chat echo), parse, and pass.
 4. **Synology's PAM blocks rsync's `--server` protocol** over SSH for non-interactive sessions. Plain `ssh user@host 'command'` works; `rsync` does not. Use **`tar czf - -C src . | ssh user@host 'tar xzf - -C dst'`** for all code uploads. SCP/SFTP also fail (subsystem disabled). Test transport during preflight before doing real uploads.
 5. **Temporal's `auto-setup` script races on first boot.** It tries to register search attributes via the frontend before the frontend is fully serving, then completes successfully but the actual `temporal-server` may not transition cleanly. **After the stack starts, restart the temporal container once.** On the second boot, the Postgres+ES schema is already initialized so it boots cleanly in <30s.
@@ -99,11 +99,11 @@ Run BEFORE any network call to the NAS. All checks must pass.
    Read `deploy/portainer/docker-compose.yml` and grep for relative bind mount paths. Look for any `volumes:` entry whose host side starts with `./` or `../`. If found, the deploy script must rewrite them to absolute NAS paths in the compose payload sent to Portainer (do NOT modify the on-disk file — generate a transient version).
 
    Specifically transform on the way out:
-   - `../../scripts:/app/scripts:ro` → `/volume1/docker/commoncreed/scripts:/app/scripts:ro`
-   - `../../.env:/env/.env:ro` → `/volume1/docker/commoncreed/.env:/env/.env:ro`
-   - `./temporal-dynamicconfig:/etc/temporal/config/dynamicconfig` → `/volume1/docker/commoncreed/deploy/portainer/temporal-dynamicconfig:/etc/temporal/config/dynamicconfig`
+   - `../../scripts:/app/scripts:ro` → `/opt/commoncreed/scripts:/app/scripts:ro`
+   - `../../.env:/env/.env:ro` → `/opt/commoncreed/.env:/env/.env:ro`
+   - `./temporal-dynamicconfig:/etc/temporal/config/dynamicconfig` → `/opt/commoncreed/deploy/portainer/temporal-dynamicconfig:/etc/temporal/config/dynamicconfig`
    - `./postgres-init:...` → same pattern (if still present)
-   - The sidecar build context `../../sidecar` → for Portainer it must be `/volume1/docker/commoncreed/sidecar`
+   - The sidecar build context `../../sidecar` → for Portainer it must be `/opt/commoncreed/sidecar`
 
 4. **Drop the macOS-only port remap for Synology**
    Synology has no AirPlay Receiver competing for port 5000. The compose currently maps `${POSTIZ_HOST_PORT:-5100}:5000`. For the Synology payload, keep the env-var pattern but expect `POSTIZ_HOST_PORT=5000` in the NAS `.env` (don't hardcode — let the env file decide).
@@ -117,14 +117,14 @@ Run BEFORE any network call to the NAS. All checks must pass.
    - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `GMAIL_OAUTH_PATH`
    - All `PIPELINE_*` tunables
 
-   The Synology `POSTIZ_MAIN_URL` and `POSTIZ_FRONTEND_URL` must reference the NAS hostname/IP, NOT `localhost`. Default: `http://192.168.29.211:5000` or `http://your-nas.local:5000`.
+   The Synology `POSTIZ_MAIN_URL` and `POSTIZ_FRONTEND_URL` must reference the NAS hostname/IP, NOT `localhost`. Default: `http://192.168.29.237:5000` or `http://your-nas.local:5000`.
 
 6. **Check the temporal-dynamicconfig file exists**
    `deploy/portainer/temporal-dynamicconfig/development-sql.yaml` — fetched from the official Postiz repo. Must be present.
 
 7. **Confirm SSH access to the NAS**
    ```bash
-   ssh -o ConnectTimeout=5 -o BatchMode=yes vishalan@192.168.29.211 'echo ok' 2>&1
+   ssh -o ConnectTimeout=5 -o BatchMode=yes vishalan@192.168.29.237 'echo ok' 2>&1
    ```
    If batch-mode SSH fails (no key set up), prompt the user once interactively to enable SSH key auth on the NAS, OR fall back to interactive password auth via `sshpass` (less ideal — install on first run if needed).
 
@@ -139,7 +139,7 @@ If any preflight check fails, STOP and report the failure with actionable next s
 
 2. Authenticate against Portainer:
    ```bash
-   PORTAINER_JWT=$(curl -sf -X POST http://192.168.29.211:9000/api/auth \
+   PORTAINER_JWT=$(curl -sf -X POST http://192.168.29.237:9000/api/auth \
      -H "Content-Type: application/json" \
      -d "{\"username\":\"vishalan\",\"password\":\"$PORTAINER_PASSWORD\"}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["jwt"])')
    unset PORTAINER_PASSWORD
@@ -149,27 +149,27 @@ If any preflight check fails, STOP and report the failure with actionable next s
 3. Discover the Docker endpoint ID:
    ```bash
    ENDPOINT_ID=$(curl -sf -H "Authorization: Bearer $PORTAINER_JWT" \
-     http://192.168.29.211:9000/api/endpoints | python3 -c 'import json,sys; e=json.load(sys.stdin); print([x["Id"] for x in e if x["Type"]==1][0])')
+     http://192.168.29.237:9000/api/endpoints | python3 -c 'import json,sys; e=json.load(sys.stdin); print([x["Id"] for x in e if x["Type"]==1][0])')
    ```
    Type 1 = local Docker endpoint. There's almost always exactly one on a single-NAS Portainer install. **As of the smoke test on 2026-04-07, the endpoint ID on this Synology is `3`** (Portainer increments IDs as endpoints come and go; do not hardcode).
 
 4. Find the existing `commoncreed` stack if present:
    ```bash
    EXISTING_STACK_ID=$(curl -sf -H "Authorization: Bearer $PORTAINER_JWT" \
-     "http://192.168.29.211:9000/api/stacks?filters=%7B%22EndpointId%22%3A$ENDPOINT_ID%7D" | python3 -c 'import json,sys; ss=json.load(sys.stdin); print(next((s["Id"] for s in ss if s["Name"]=="commoncreed"), ""))')
+     "http://192.168.29.237:9000/api/stacks?filters=%7B%22EndpointId%22%3A$ENDPOINT_ID%7D" | python3 -c 'import json,sys; ss=json.load(sys.stdin); print(next((s["Id"] for s in ss if s["Name"]=="commoncreed"), ""))')
    ```
 
 5. If the stack exists, fetch its current compose content + env vars and save to a local rollback file:
    ```bash
    mkdir -p .deploy-rollback
    curl -sf -H "Authorization: Bearer $PORTAINER_JWT" \
-     "http://192.168.29.211:9000/api/stacks/$EXISTING_STACK_ID/file" > .deploy-rollback/$(date +%Y%m%d-%H%M%S)-stack-file.json
+     "http://192.168.29.237:9000/api/stacks/$EXISTING_STACK_ID/file" > .deploy-rollback/$(date +%Y%m%d-%H%M%S)-stack-file.json
    ```
 
 6. Capture the running container state for diff after deploy:
    ```bash
    curl -sf -H "Authorization: Bearer $PORTAINER_JWT" \
-     "http://192.168.29.211:9000/api/endpoints/$ENDPOINT_ID/docker/containers/json?all=true&filters=%7B%22label%22%3A%5B%22com.docker.compose.project%3Dcommoncreed%22%5D%7D" \
+     "http://192.168.29.237:9000/api/endpoints/$ENDPOINT_ID/docker/containers/json?all=true&filters=%7B%22label%22%3A%5B%22com.docker.compose.project%3Dcommoncreed%22%5D%7D" \
      > .deploy-rollback/$(date +%Y%m%d-%H%M%S)-containers-before.json
    ```
 
@@ -181,29 +181,29 @@ If this is a fresh deploy (no existing stack), skip the snapshot but still creat
 
 ```bash
 # 0. Ensure deploy dir exists with secrets/ subdir (mode 700)
-ssh -o BatchMode=yes vishalan@192.168.29.211 \
-  'mkdir -p /volume1/docker/commoncreed/secrets && chmod 700 /volume1/docker/commoncreed/secrets'
+ssh -o BatchMode=yes vishalan@192.168.29.237 \
+  'mkdir -p /opt/commoncreed/secrets && chmod 700 /opt/commoncreed/secrets'
 
 # 1. Pipeline code (scripts/) — full replace via tar pipe
 tar czf - --exclude '__pycache__' --exclude '*.pyc' \
   --exclude 'output' --exclude 'tmp*' --exclude '.pytest_cache' \
   -C scripts . | \
-  ssh -o BatchMode=yes vishalan@192.168.29.211 \
-  'rm -rf /volume1/docker/commoncreed/scripts && mkdir -p /volume1/docker/commoncreed/scripts && tar xzf - -C /volume1/docker/commoncreed/scripts'
+  ssh -o BatchMode=yes vishalan@192.168.29.237 \
+  'rm -rf /opt/commoncreed/scripts && mkdir -p /opt/commoncreed/scripts && tar xzf - -C /opt/commoncreed/scripts'
 
 # 2. Sidecar source
 tar czf - --exclude '__pycache__' --exclude '*.pyc' --exclude '.pytest_cache' \
   -C sidecar . | \
-  ssh -o BatchMode=yes vishalan@192.168.29.211 \
-  'rm -rf /volume1/docker/commoncreed/sidecar && mkdir -p /volume1/docker/commoncreed/sidecar && tar xzf - -C /volume1/docker/commoncreed/sidecar'
+  ssh -o BatchMode=yes vishalan@192.168.29.237 \
+  'rm -rf /opt/commoncreed/sidecar && mkdir -p /opt/commoncreed/sidecar && tar xzf - -C /opt/commoncreed/sidecar'
 
 # 3. Temporal dynamicconfig
 tar czf - -C deploy/portainer/temporal-dynamicconfig . | \
-  ssh -o BatchMode=yes vishalan@192.168.29.211 \
-  'mkdir -p /volume1/docker/commoncreed/deploy/portainer/temporal-dynamicconfig && tar xzf - -C /volume1/docker/commoncreed/deploy/portainer/temporal-dynamicconfig'
+  ssh -o BatchMode=yes vishalan@192.168.29.237 \
+  'mkdir -p /opt/commoncreed/deploy/portainer/temporal-dynamicconfig && tar xzf - -C /opt/commoncreed/deploy/portainer/temporal-dynamicconfig'
 ```
 
-**`.env` handling rule:** NEVER push the local `.env` directly. The skill checks whether `/volume1/docker/commoncreed/.env` exists on the NAS via SSH:
+**`.env` handling rule:** NEVER push the local `.env` directly. The skill checks whether `/opt/commoncreed/.env` exists on the NAS via SSH:
 - If absent (first deploy): generate a production `.env` from the local one in a tmpfile, substitute `localhost` URLs with the NAS IP, set `POSTIZ_HOST_PORT=5100` (NOT 5000), upload via tar pipe, set mode 600, **immediately delete the local tmpfile**, never echo its contents to chat.
 - If present (subsequent deploys): leave the NAS `.env` alone — it's production state owned by the operator (or eventually by the sidecar Settings page).
 
@@ -211,18 +211,18 @@ tar czf - -C deploy/portainer/temporal-dynamicconfig . | \
 ```bash
 if [ -f secrets/gmail_oauth.json ]; then
   tar czf - -C secrets gmail_oauth.json | \
-    ssh -o BatchMode=yes vishalan@192.168.29.211 \
-    'tar xzf - -C /volume1/docker/commoncreed/secrets && chmod 600 /volume1/docker/commoncreed/secrets/gmail_oauth.json'
+    ssh -o BatchMode=yes vishalan@192.168.29.237 \
+    'tar xzf - -C /opt/commoncreed/secrets && chmod 600 /opt/commoncreed/secrets/gmail_oauth.json'
 fi
 ```
 
 **Verify uploads** with file COUNTS only — never `cat`/`head`/`tail` on `.env` or any secrets file (see `feedback_never_cat_dotenv` memory):
 ```bash
-ssh vishalan@192.168.29.211 \
-  'echo scripts: $(find /volume1/docker/commoncreed/scripts -type f | wc -l) files;
-   echo sidecar: $(find /volume1/docker/commoncreed/sidecar -type f | wc -l) files;
-   ls /volume1/docker/commoncreed/scripts/smoke_e2e.py /volume1/docker/commoncreed/sidecar/app.py /volume1/docker/commoncreed/sidecar/Dockerfile /volume1/docker/commoncreed/deploy/portainer/temporal-dynamicconfig/development-sql.yaml 2>&1;
-   stat -c "%n size=%s mode=%a" /volume1/docker/commoncreed/.env'
+ssh vishalan@192.168.29.237 \
+  'echo scripts: $(find /opt/commoncreed/scripts -type f | wc -l) files;
+   echo sidecar: $(find /opt/commoncreed/sidecar -type f | wc -l) files;
+   ls /opt/commoncreed/scripts/smoke_e2e.py /opt/commoncreed/sidecar/app.py /opt/commoncreed/sidecar/Dockerfile /opt/commoncreed/deploy/portainer/temporal-dynamicconfig/development-sql.yaml 2>&1;
+   stat -c "%n size=%s mode=%a" /opt/commoncreed/.env'
 ```
 
 ### Phase 2.5 — Build the sidecar image on the NAS Docker daemon
@@ -241,7 +241,7 @@ curl -sf -X POST \
   -H "Authorization: Bearer $PORTAINER_JWT" \
   -H "Content-Type: application/x-tar" \
   --data-binary @/tmp/cc_sidecar_build_ctx.tar.gz \
-  "http://192.168.29.211:9000/api/endpoints/$ENDPOINT_ID/docker/build?t=commoncreed/sidecar:0.1.0&dockerfile=Dockerfile"
+  "http://192.168.29.237:9000/api/endpoints/$ENDPOINT_ID/docker/build?t=commoncreed/sidecar:0.1.0&dockerfile=Dockerfile"
 ```
 
 The response is a streaming JSON log of the docker build process. Parse it for the final `"Successfully built ..."` line. On any error during build, abort the deploy.
@@ -267,11 +267,11 @@ Read `deploy/portainer/docker-compose.yml` from disk, transform relative paths t
 # Pseudocode — implemented inline by the orchestrator
 compose_text = open('deploy/portainer/docker-compose.yml').read()
 replacements = {
-  '../../scripts': '/volume1/docker/commoncreed/scripts',
-  '../../sidecar': '/volume1/docker/commoncreed/sidecar',
-  '../../.env': '/volume1/docker/commoncreed/.env',
-  './temporal-dynamicconfig': '/volume1/docker/commoncreed/deploy/portainer/temporal-dynamicconfig',
-  './postgres-init': '/volume1/docker/commoncreed/deploy/portainer/postgres-init',
+  '../../scripts': '/opt/commoncreed/scripts',
+  '../../sidecar': '/opt/commoncreed/sidecar',
+  '../../.env': '/opt/commoncreed/.env',
+  './temporal-dynamicconfig': '/opt/commoncreed/deploy/portainer/temporal-dynamicconfig',
+  './postgres-init': '/opt/commoncreed/deploy/portainer/postgres-init',
 }
 for src, dst in replacements.items():
     compose_text = compose_text.replace(src, dst)
@@ -285,7 +285,7 @@ Also fetch the NAS `.env` content (via SSH) and pass it to Portainer alongside t
 
 If `EXISTING_STACK_ID` from Phase 1 is empty → CREATE:
 ```bash
-curl -sf -X POST "http://192.168.29.211:9000/api/stacks/create/standalone/string?endpointId=$ENDPOINT_ID" \
+curl -sf -X POST "http://192.168.29.237:9000/api/stacks/create/standalone/string?endpointId=$ENDPOINT_ID" \
   -H "Authorization: Bearer $PORTAINER_JWT" \
   -H "Content-Type: application/json" \
   -d "$(jq -n \
@@ -298,7 +298,7 @@ curl -sf -X POST "http://192.168.29.211:9000/api/stacks/create/standalone/string
 
 If it exists → UPDATE:
 ```bash
-curl -sf -X PUT "http://192.168.29.211:9000/api/stacks/$EXISTING_STACK_ID?endpointId=$ENDPOINT_ID" \
+curl -sf -X PUT "http://192.168.29.237:9000/api/stacks/$EXISTING_STACK_ID?endpointId=$ENDPOINT_ID" \
   -H "Authorization: Bearer $PORTAINER_JWT" \
   -H "Content-Type: application/json" \
   -d "$(jq -n \
@@ -321,7 +321,7 @@ Poll the container list every 10 seconds until either:
 deadline=$(($(date +%s) + 360))
 while [ $(date +%s) -lt $deadline ]; do
   containers=$(curl -sf -H "Authorization: Bearer $PORTAINER_JWT" \
-    "http://192.168.29.211:9000/api/endpoints/$ENDPOINT_ID/docker/containers/json?filters=%7B%22label%22%3A%5B%22com.docker.compose.project%3Dcommoncreed%22%5D%7D")
+    "http://192.168.29.237:9000/api/endpoints/$ENDPOINT_ID/docker/containers/json?filters=%7B%22label%22%3A%5B%22com.docker.compose.project%3Dcommoncreed%22%5D%7D")
   unhealthy=$(echo "$containers" | python3 -c '
 import json,sys
 data=json.load(sys.stdin)
@@ -353,27 +353,27 @@ Even when all containers report healthy/running after Phase 5, Postiz's backend 
 ```bash
 # 1. Restart Temporal first so it transitions cleanly from auto-setup to server
 TEMPORAL_CID=$(curl -sf -H "Authorization: Bearer $JWT" \
-  "http://192.168.29.211:9000/api/endpoints/$ENDPOINT_ID/docker/containers/json?filters=%7B%22name%22%3A%5B%22commoncreed_temporal%22%5D%7D" \
+  "http://192.168.29.237:9000/api/endpoints/$ENDPOINT_ID/docker/containers/json?filters=%7B%22name%22%3A%5B%22commoncreed_temporal%22%5D%7D" \
   | python3 -c 'import json,sys; cc=json.load(sys.stdin); print([c for c in cc if c["Names"][0]=="/commoncreed_temporal"][0]["Id"])')
 
 curl -sf -X POST -H "Authorization: Bearer $JWT" \
-  "http://192.168.29.211:9000/api/endpoints/$ENDPOINT_ID/docker/containers/$TEMPORAL_CID/restart?t=10"
+  "http://192.168.29.237:9000/api/endpoints/$ENDPOINT_ID/docker/containers/$TEMPORAL_CID/restart?t=10"
 
 sleep 60  # Temporal needs ~30-60s to be fully serving on port 7233
 
 # 2. Restart Postiz so its backend retries against the now-serving Temporal
 POSTIZ_CID=$(curl -sf -H "Authorization: Bearer $JWT" \
-  "http://192.168.29.211:9000/api/endpoints/$ENDPOINT_ID/docker/containers/json?filters=%7B%22name%22%3A%5B%22commoncreed_postiz%22%5D%7D" \
+  "http://192.168.29.237:9000/api/endpoints/$ENDPOINT_ID/docker/containers/json?filters=%7B%22name%22%3A%5B%22commoncreed_postiz%22%5D%7D" \
   | python3 -c 'import json,sys; cc=json.load(sys.stdin); print([c for c in cc if c["Names"][0]=="/commoncreed_postiz"][0]["Id"])')
 
 curl -sf -X POST -H "Authorization: Bearer $JWT" \
-  "http://192.168.29.211:9000/api/endpoints/$ENDPOINT_ID/docker/containers/$POSTIZ_CID/restart?t=10"
+  "http://192.168.29.237:9000/api/endpoints/$ENDPOINT_ID/docker/containers/$POSTIZ_CID/restart?t=10"
 
 # 3. Poll the API until it returns 400 (validation error = backend up) instead of 502
 for i in 1 2 3 4 5 6 7 8 9 10; do
   sleep 15
   code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-    http://192.168.29.211:5100/api/auth/register \
+    http://192.168.29.237:5100/api/auth/register \
     -H "Content-Type: application/json" -d '{}')
   echo "  t+$((i*15))s: HTTP $code"
   [ "$code" = "400" ] || [ "$code" = "200" ] && { echo "✓ Postiz backend ready"; break; }
@@ -388,17 +388,17 @@ Once all containers are healthy, prove the actual application paths work:
 
 ```bash
 # 1. Postiz frontend reachable
-curl -sf -o /dev/null -w "Postiz auth page: HTTP %{http_code}\n" http://192.168.29.211:5000/auth
+curl -sf -o /dev/null -w "Postiz auth page: HTTP %{http_code}\n" http://192.168.29.237:5000/auth
 
 # 2. Postiz API responds (will be 400 because of missing fields, NOT 502)
 curl -sf -o /tmp/r.json -w "Postiz register API: HTTP %{http_code}\n" \
-  -X POST http://192.168.29.211:5000/api/auth/register \
+  -X POST http://192.168.29.237:5000/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{}' || true
 grep -q "company\|email" /tmp/r.json && echo "  ✓ backend reachable (got validation error, not 502)"
 
 # 3. Sidecar /health all flags green
-curl -sf http://192.168.29.211:5050/health | python3 -m json.tool
+curl -sf http://192.168.29.237:5050/health | python3 -m json.tool
 ```
 
 All three must return non-error responses (Postiz API may legitimately return 400 with a validation error — that's a healthy backend). Sidecar `/health` must return 200 with all 5 flags `true`.
@@ -410,12 +410,12 @@ If health verification or smoke test fails:
 1. Print the failing service's last 100 log lines for diagnosis:
    ```bash
    curl -sf -H "Authorization: Bearer $PORTAINER_JWT" \
-     "http://192.168.29.211:9000/api/endpoints/$ENDPOINT_ID/docker/containers/<container_id>/logs?stdout=true&stderr=true&tail=100"
+     "http://192.168.29.237:9000/api/endpoints/$ENDPOINT_ID/docker/containers/<container_id>/logs?stdout=true&stderr=true&tail=100"
    ```
 
 2. If we have a rollback file from Phase 1, restore it:
    ```bash
-   curl -sf -X PUT "http://192.168.29.211:9000/api/stacks/$EXISTING_STACK_ID?endpointId=$ENDPOINT_ID" \
+   curl -sf -X PUT "http://192.168.29.237:9000/api/stacks/$EXISTING_STACK_ID?endpointId=$ENDPOINT_ID" \
      -H "Authorization: Bearer $PORTAINER_JWT" \
      -H "Content-Type: application/json" \
      -d "$(jq -n --arg compose "$(cat .deploy-rollback/<latest>-stack-file.json | jq -r '.StackFileContent')" '{StackFileContent:$compose, Env:[], Prune:true}')"
@@ -423,7 +423,7 @@ If health verification or smoke test fails:
 
 3. If no previous version (fresh deploy that failed), DOWN the stack so it doesn't sit in a half-broken state:
    ```bash
-   curl -sf -X POST "http://192.168.29.211:9000/api/stacks/$NEW_STACK_ID/stop?endpointId=$ENDPOINT_ID" \
+   curl -sf -X POST "http://192.168.29.237:9000/api/stacks/$NEW_STACK_ID/stop?endpointId=$ENDPOINT_ID" \
      -H "Authorization: Bearer $PORTAINER_JWT"
    ```
 
@@ -438,20 +438,20 @@ If health verification or smoke test fails:
 On success, print a structured report:
 
 ```
-✓ CommonCreed stack deployed to http://192.168.29.211:9000
+✓ CommonCreed stack deployed to http://192.168.29.237:9000
 
 Stack:           commoncreed (id: <id>, version: <n>)
 Containers:      7/7 healthy
-Postiz UI:       http://192.168.29.211:5000
-Sidecar dashboard: http://192.168.29.211:5050
+Postiz UI:       http://192.168.29.237:5000
+Sidecar dashboard: http://192.168.29.237:5050
 Sidecar admin password: (in Keychain — `security find-generic-password -a sidecar -s commoncreed-sidecar-admin -w`)
 
 Next steps if first deploy:
-  1. Open http://192.168.29.211:5000/auth and register the Postiz admin user
+  1. Open http://192.168.29.237:5000/auth and register the Postiz admin user
   2. Set DISABLE_REGISTRATION=true on the NAS .env, restart postiz container
   3. Connect IG/YT accounts via Postiz UI (each platform requires a Google Cloud / Meta Developer App — see docs/social-oauth-setup.md)
   4. Generate Postiz API key, paste into NAS .env as POSTIZ_API_KEY, restart commoncreed_sidecar
-  5. Open http://192.168.29.211:5050 and log in to the sidecar dashboard
+  5. Open http://192.168.29.237:5050 and log in to the sidecar dashboard
   6. Send a test message via the Telegram bot to confirm bot ↔ owner wiring
 
 Logs:
@@ -517,11 +517,11 @@ Pull container logs through Portainer's REST API. This works even when SSH to th
 # Single service, last 200 lines
 SERVICE="commoncreed_postiz"
 CID=$(curl -sf -H "Authorization: Bearer $JWT" \
-  "http://192.168.29.211:9000/api/endpoints/3/docker/containers/json?all=true&filters=%7B%22name%22%3A%5B%22$SERVICE%22%5D%7D" \
+  "http://192.168.29.237:9000/api/endpoints/3/docker/containers/json?all=true&filters=%7B%22name%22%3A%5B%22$SERVICE%22%5D%7D" \
   | python3 -c 'import json,sys; cc=json.load(sys.stdin); print([c for c in cc if c["Names"][0]==f"/$SERVICE"][0]["Id"])')
 
 curl -sf -H "Authorization: Bearer $JWT" \
-  "http://192.168.29.211:9000/api/endpoints/3/docker/containers/$CID/logs?stdout=true&stderr=true&tail=200&timestamps=true" \
+  "http://192.168.29.237:9000/api/endpoints/3/docker/containers/$CID/logs?stdout=true&stderr=true&tail=200&timestamps=true" \
   | strings | tail -100  # `strings` strips Docker's framed-stream multiplex bytes
 ```
 
@@ -614,18 +614,18 @@ Auth → find container by name → fetch last 100 log lines via Portainer API �
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `curl: (7) Failed to connect to 192.168.29.211 port 9000` | NAS off, wrong IP, firewall | Ping the NAS; check if Portainer is running |
+| `curl: (7) Failed to connect to 192.168.29.237 port 9000` | NAS off, wrong IP, firewall | Ping the NAS; check if Portainer is running |
 | Auth returns 401 | Password rotated | Update Keychain entry: `security delete-generic-password -a vishalan -s commoncreed-portainer && security add-generic-password -a vishalan -s commoncreed-portainer -w '<new>'` |
 | Stack create returns 500 with "duplicate name" | A `commoncreed` stack already exists but Phase 1 didn't find it (filter typo) | Manually find stack ID via `GET /api/stacks` and patch the EXISTING_STACK_ID variable |
 | Phase 5 timeout: Postiz never goes healthy | First-pull of Postiz image takes long on slow networks; OR Temporal/ES not ready yet | Re-run with longer timeout; check Phase 6 logs for the actual error |
-| `rsync: connection unexpectedly closed` | SSH key not set up; using password auth without `sshpass` | Set up SSH key auth: `ssh-copy-id vishalan@192.168.29.211` |
-| Sidecar `/health` says `pipeline_code_visible: false` | Phase 2 rsync didn't reach `/volume1/docker/commoncreed/scripts/` OR the bind mount path in the deployed compose still has `../../scripts/` | Re-check Phase 0 step 3 transformation and re-run |
-| Postiz UI blank but `/auth` returns 200 | Cookie domain mismatch — `MAIN_URL` in NAS .env is `localhost` instead of the NAS IP | Edit `/volume1/docker/commoncreed/.env`, fix `POSTIZ_MAIN_URL` and `POSTIZ_FRONTEND_URL`, restart postiz container |
+| `rsync: connection unexpectedly closed` | SSH key not set up; using password auth without `sshpass` | Set up SSH key auth: `ssh-copy-id vishalan@192.168.29.237` |
+| Sidecar `/health` says `pipeline_code_visible: false` | Phase 2 rsync didn't reach `/opt/commoncreed/scripts/` OR the bind mount path in the deployed compose still has `../../scripts/` | Re-check Phase 0 step 3 transformation and re-run |
+| Postiz UI blank but `/auth` returns 200 | Cookie domain mismatch — `MAIN_URL` in NAS .env is `localhost` instead of the NAS IP | Edit `/opt/commoncreed/.env`, fix `POSTIZ_MAIN_URL` and `POSTIZ_FRONTEND_URL`, restart postiz container |
 
 ## When NOT to use this skill
 
 - Code is mid-development and not committed → stash or commit first
-- You want to do a one-off command on the NAS (use direct `ssh vishalan@192.168.29.211` instead)
-- The deploy is a brand-new install and the user hasn't created the NAS deploy directory yet → walk the user through `mkdir /volume1/docker/commoncreed/` manually first
+- You want to do a one-off command on the NAS (use direct `ssh vishalan@192.168.29.237` instead)
+- The deploy is a brand-new install and the user hasn't created the NAS deploy directory yet → walk the user through `mkdir /opt/commoncreed/` manually first
 - You're trying to debug why Postiz crashed at the application layer → use `--logs postiz` or SSH directly
-- You want to RESTART a single service without redeploying → use the sidecar Settings page (Unit 8) or `ssh vishalan@192.168.29.211 docker compose -f /volume1/docker/commoncreed/deploy/portainer/docker-compose.yml restart <svc>`
+- You want to RESTART a single service without redeploying → use the sidecar Settings page (Unit 8) or `ssh vishalan@192.168.29.237 docker compose -f /opt/commoncreed/deploy/portainer/docker-compose.yml restart <svc>`

@@ -7,8 +7,8 @@ import urllib.request
 import urllib.error
 from typing import Optional
 
-PORTAINER_URL = "http://192.168.29.211:9000"
-USERNAME = "vishalan"
+PORTAINER_URL = "https://192.168.29.237:9443"
+USERNAME = "admin"
 
 
 def keychain_password() -> str:

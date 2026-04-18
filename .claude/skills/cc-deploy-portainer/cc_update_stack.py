@@ -4,37 +4,43 @@ and the latest .env from the NAS, then restart Postiz to pick up env changes."""
 from __future__ import annotations
 import json
 import re
+import ssl
 import subprocess
 import sys
 import time
 import urllib.request
 import urllib.error
 
-PORTAINER = "http://192.168.29.211:9000"
+# Self-signed TLS on the new Ubuntu Portainer instance
+_SSL_CTX = ssl.create_default_context()
+_SSL_CTX.check_hostname = False
+_SSL_CTX.verify_mode = ssl.CERT_NONE
+
+PORTAINER = "https://192.168.29.237:9443"
 ENDPOINT_ID = 3
-NAS_HOST = "192.168.29.211"
-NAS_USER = "vishalan"
-NAS_ENV_PATH = "/volume1/docker/commoncreed/.env"
+SERVER_HOST = "192.168.29.237"
+SERVER_USER = "vishalan"
+SERVER_ENV_PATH = "/opt/commoncreed/.env"
 
 
 def get_jwt() -> str:
     pw = subprocess.check_output(
-        ["security", "find-generic-password", "-a", "vishalan", "-s", "commoncreed-portainer", "-w"],
+        ["security", "find-generic-password", "-a", "vishalan", "-s", "commoncreed-portainer-new", "-w"],
         text=True,
     ).strip()
     req = urllib.request.Request(
         f"{PORTAINER}/api/auth",
-        data=json.dumps({"username": "vishalan", "password": pw}).encode(),
+        data=json.dumps({"username": "admin", "password": pw}).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=10) as r:
+    with urllib.request.urlopen(req, timeout=10, context=_SSL_CTX) as r:
         return json.loads(r.read())["jwt"]
 
 
-def fetch_env_from_nas() -> list[dict]:
+def fetch_env_from_server() -> list[dict]:
     result = subprocess.run(
-        ["ssh", "-o", "BatchMode=yes", f"{NAS_USER}@{NAS_HOST}", f"cat {NAS_ENV_PATH}"],
+        ["ssh", "-o", "BatchMode=yes", f"{SERVER_USER}@{SERVER_HOST}", f"cat {SERVER_ENV_PATH}"],
         capture_output=True, text=True, check=True,
     )
     env: list[dict] = []
@@ -44,13 +50,13 @@ def fetch_env_from_nas() -> list[dict]:
             continue
         k, _, v = line.partition("=")
         env.append({"name": k.strip(), "value": v.strip().strip('"').strip("'")})
-    print(f"  parsed {len(env)} env vars from NAS .env (values not echoed)")
+    print(f"  parsed {len(env)} env vars from server .env (values not echoed)")
     return env
 
 
 def find_stack_id(jwt: str, name: str) -> int | None:
     req = urllib.request.Request(f"{PORTAINER}/api/stacks", headers={"Authorization": f"Bearer {jwt}"})
-    with urllib.request.urlopen(req, timeout=15) as r:
+    with urllib.request.urlopen(req, timeout=15, context=_SSL_CTX) as r:
         ss = json.load(r)
     for s in ss:
         if s["Name"] == name:
@@ -61,13 +67,13 @@ def find_stack_id(jwt: str, name: str) -> int | None:
 def regen_prod_compose() -> str:
     src = open("deploy/portainer/docker-compose.yml").read()
     out = (
-        src.replace("../../scripts", "/volume1/docker/commoncreed/scripts")
-        .replace("../../assets", "/volume1/docker/commoncreed/assets")
-        .replace("../../secrets", "/volume1/docker/commoncreed/secrets")
-        .replace("../../sidecar", "/volume1/docker/commoncreed/sidecar")
-        .replace("../../.env", "/volume1/docker/commoncreed/.env")
-        .replace("./postiz-nginx.conf", "/volume1/docker/commoncreed/deploy/portainer/postiz-nginx.conf")
-        .replace("./temporal-dynamicconfig", "/volume1/docker/commoncreed/deploy/portainer/temporal-dynamicconfig")
+        src.replace("../../scripts", "/opt/commoncreed/scripts")
+        .replace("../../assets", "/opt/commoncreed/assets")
+        .replace("../../secrets", "/opt/commoncreed/secrets")
+        .replace("../../sidecar", "/opt/commoncreed/sidecar")
+        .replace("../../.env", "/opt/commoncreed/.env")
+        .replace("./postiz-nginx.conf", "/opt/commoncreed/deploy/portainer/postiz-nginx.conf")
+        .replace("./temporal-dynamicconfig", "/opt/commoncreed/deploy/portainer/temporal-dynamicconfig")
     )
     out = re.sub(
         r"  commoncreed_sidecar:\n    build:\n      context: [^\n]+\n      dockerfile: [^\n]+\n",
@@ -86,7 +92,7 @@ def update_stack(jwt: str, stack_id: int, compose: str, env: list[dict]) -> dict
         data=body, method="PUT",
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {jwt}"},
     )
-    with urllib.request.urlopen(req, timeout=900) as r:
+    with urllib.request.urlopen(req, timeout=900, context=_SSL_CTX) as r:
         return json.loads(r.read())
 
 
@@ -95,7 +101,7 @@ def restart_container(jwt: str, name: str) -> bool:
         f"{PORTAINER}/api/endpoints/{ENDPOINT_ID}/docker/containers/json?filters=%7B%22name%22%3A%5B%22{name}%22%5D%7D",
         headers={"Authorization": f"Bearer {jwt}"},
     )
-    with urllib.request.urlopen(req, timeout=15) as r:
+    with urllib.request.urlopen(req, timeout=15, context=_SSL_CTX) as r:
         cc = json.load(r)
     cid = next((c["Id"] for c in cc if c["Names"][0] == f"/{name}"), None)
     if not cid:
@@ -105,7 +111,7 @@ def restart_container(jwt: str, name: str) -> bool:
         f"{PORTAINER}/api/endpoints/{ENDPOINT_ID}/docker/containers/{cid}/restart?t=10",
         method="POST", headers={"Authorization": f"Bearer {jwt}"},
     )
-    with urllib.request.urlopen(req, timeout=60) as r:
+    with urllib.request.urlopen(req, timeout=60, context=_SSL_CTX) as r:
         r.read()
     print(f"  ✓ {name} restart issued")
     return True
@@ -127,8 +133,8 @@ def main() -> int:
     compose = regen_prod_compose()
     print(f"  ✓ {len(compose)} bytes")
 
-    print("[4] fetch latest .env from NAS")
-    env = fetch_env_from_nas()
+    print("[4] fetch latest .env from server")
+    env = fetch_env_from_server()
 
     print("[5] PUT updated stack to Portainer")
     t0 = time.time()
@@ -149,7 +155,7 @@ def main() -> int:
         time.sleep(15)
         try:
             req = urllib.request.Request(
-                "http://192.168.29.211:5100/api/auth/register",
+                f"http://{SERVER_HOST}:5000/api/auth/register",
                 data=b"{}",
                 headers={"Content-Type": "application/json"},
                 method="POST",
