@@ -377,3 +377,38 @@ services:
           memory: 2G
         reservations:
           memory: 256M
+
+  # ===========================================================================
+  # CommonCreed Remotion sidecar — cinematic chart renderer (Engagement Layer
+  # v2, Unit C1). Node 20 + headless Chromium + ffmpeg. Peers with the FastAPI
+  # sidecar on the commoncreed network; the Python pipeline POSTs render
+  # specs to this service and picks up the resulting MP4 off the shared
+  # commoncreed_output volume.
+  # ===========================================================================
+  commoncreed_remotion:
+    build:
+      # Build context = repo root so `COPY assets/fonts/` resolves, matching
+      # the pattern Unit 0.1 introduced for the Python sidecar.
+      context: ../..
+      dockerfile: deploy/remotion/Dockerfile
+    image: commoncreed/remotion:0.1.0
+    container_name: commoncreed_remotion
+    restart: unless-stopped
+    networks:
+      - commoncreed
+    volumes:
+      # Shared with the Python sidecar so it can read rendered MP4s by path.
+      - commoncreed_output:/app/output
+    expose:
+      - "3030"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3030/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+        reservations:
+          memory: 256M
