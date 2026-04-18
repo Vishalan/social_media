@@ -31,12 +31,12 @@ Dashboard for the parallel execution of `docs/plans/2026-04-18-001-feat-engageme
 
 | Unit | Branch | Worktree | Depends on | Owner | Status | Merged-at |
 |------|--------|----------|------------|-------|--------|-----------|
-| 0.1 Brand assets | `feat/engage-v2/0.1-brand-assets` | `.worktrees/engage-v2-0.1/` | — | agent `0.1@engage-v2-swarm` (rate-limited) | ⚠️ blocked — rate limit; re-dispatch after 16:30 IST | — |
+| 0.1 Brand assets | `feat/engage-v2/0.1-brand-assets` | `.worktrees/engage-v2-0.1/` | — | agent `0.1@engage-v2-swarm` (re-dispatch) | ✅ merged (70e6206) | 2026-04-18 15:55 |
 | 0.2 libass smoke | `feat/engage-v2/0.2-libass-smoke` | `.worktrees/engage-v2-0.2/` | 0.1 | _unassigned_ | pending | — |
 | 0.3 SFX library | `feat/engage-v2/0.3-sfx-library` | `.worktrees/engage-v2-0.3/` | — | _unassigned_ | pending | — |
 | 0.4 Article extractor | `feat/engage-v2/0.4-article-extractor` | `.worktrees/engage-v2-0.4/` | — | agent `0.4@engage-v2-swarm` | ✅ merged (b20bb36) | 2026-04-18 15:10 |
 | 0.5 Selector extension | `feat/engage-v2/0.5-selector-extension` | `.worktrees/engage-v2-0.5/` | 0.4 | agent `0.5@engage-v2-swarm` | ✅ merged (7b4bba4) | 2026-04-18 15:30 |
-| 0.6 Registration linter | `feat/engage-v2/0.6-registration-linter` | `.worktrees/engage-v2-0.6/` | 0.5 | _unassigned_ | pending | — |
+| 0.6 Registration linter | `feat/engage-v2/0.6-registration-linter` | `.worktrees/engage-v2-0.6/` | 0.5 | agent `0.6@engage-v2-swarm` | ✅ merged (a03893c) | 2026-04-18 15:45 |
 
 ## Wave 1 → Wave 2 gate
 
@@ -101,6 +101,11 @@ Gate 1 (see `...-integration-gates.md`) must be green before any Wave-2 worker i
 | 2026-04-18 15:28 | Unit 0.5 agent reported NEEDS_CONTEXT — same sandbox blocks git; implementation complete, 11/11 unit tests green in worktree, regression baseline unchanged. Worker made 3 strong architectural choices: static helper `_compute_forced_primary_candidates` for testable short-circuit; kwarg `extracted_article` on `.select()` preserves positional signature; registry stays static (classification) while runtime gating stays in selector. Parent session spot-checked diff scope (6 files, zero strays, no secrets), committed on behalf of worker as `7b4bba4`. |
 | 2026-04-18 15:30 | Unit 0.5 **merged** into `feat/engagement-layer-v2` via fast-forward. Post-merge: test file used bare `from broll_gen.x` imports that fail in single-file pytest invocation but work under multi-dir collection (project's established convention — `scripts/broll_gen/__init__.py` itself uses bare imports, so `scripts/` needs to be on sys.path). Applied dual-import patch (`scripts.broll_gen.x` with bare fallback) on the test file as an addendum to match 0.4's pattern. Full regression slice: 67/67 green (6 topic_intel + 11 selector_extension + 50 prior). |
 | 2026-04-18 15:32 | 3 previously-failing `broll_gen/test_selector.py` tests now pass — side-effect of the short-circuit fix restoring the path those tests exercised. Net regression delta: +3 (unexpected improvement). |
+| 2026-04-18 15:40 | User confirmed rate-limit reset; re-dispatched Unit 0.1 + Unit 0.6 in parallel. 0.1 worktree recreated off integration tip (prior cut was stale by two merges). |
+| 2026-04-18 15:45 | Unit 0.6 DONE — 5 tests (4 set-equality checks + 1 drift-detection sanity demo) + 72/72 regression. Worker used AST-walk scoped to the factory FunctionDef body, false-positive guard on `ast.Compare` requiring LHS = `ast.Name`. Committed as `a03893c`. |
+| 2026-04-18 15:47 | Discovered pytest single-file invocation fails deterministically on broll_gen tests (scripts/broll_gen/__init__.py uses bare `from broll_gen.base import …` — needs scripts/ on sys.path). Existing scripts/pytest.ini's rootdir behavior only works when first positional arg is inside the scripts tree. Added `pythonpath = .` to scripts/pytest.ini as `81e626c`. Verified: 5/5 + 72/72 green regardless of invocation order. |
+| 2026-04-18 15:55 | Unit 0.1 DONE_WITH_CONCERNS — 9 tests + 76/76 regression. Inter v4.0 TTFs downloaded via urllib (curl sandbox-blocked), branding.py + find_font + to_ass_color + BGR/alpha hex converter exports. Worker flagged Dockerfile `COPY assets/fonts/` won't work with compose context `../../sidecar`. Committed on worker's behalf + rebased onto integration tip (branch cut point was stale) as `70e6206`. |
+| 2026-04-18 15:58 | Applied compose-context fix as `a0f3e33`: build.context changed to repo root (`../..`), dockerfile path to `sidecar/Dockerfile`, existing COPY paths rebased to repo-relative. Unblocks Unit 0.2's container build assertion. |
 
 ## Upstream dependency note
 
