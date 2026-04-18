@@ -26,23 +26,24 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Dual-import so tests pass whether pytest is invoked from the repo root
-# (``python -m pytest scripts/...``) or from ``scripts/`` directly.
+# Dual-import — bare path primary (matches factory.py's import path, preserves
+# class identity so isinstance checks in test_factory_wiring succeed), scripts.*
+# fallback for callers that only have the repo root on sys.path.
 try:
-    from scripts.broll_gen.base import BrollError
-    from scripts.broll_gen.factory import make_broll_generator
-    from scripts.broll_gen.headline_burst import HeadlineBurstGenerator
-    from scripts.broll_gen.split_screen import (
+    from broll_gen.base import BrollError
+    from broll_gen.factory import make_broll_generator
+    from broll_gen.headline_burst import HeadlineBurstGenerator
+    from broll_gen.split_screen import (
         _FULL_H,
         _FULL_W,
         _HALF_W,
         SplitScreenGenerator,
     )
-except ImportError:  # pragma: no cover — fallback when cwd is scripts/
-    from broll_gen.base import BrollError  # type: ignore[no-redef]
-    from broll_gen.factory import make_broll_generator  # type: ignore[no-redef]
-    from broll_gen.headline_burst import HeadlineBurstGenerator  # type: ignore[no-redef]
-    from broll_gen.split_screen import (  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover — fallback when only repo root is on sys.path
+    from scripts.broll_gen.base import BrollError  # type: ignore[no-redef]
+    from scripts.broll_gen.factory import make_broll_generator  # type: ignore[no-redef]
+    from scripts.broll_gen.headline_burst import HeadlineBurstGenerator  # type: ignore[no-redef]
+    from scripts.broll_gen.split_screen import (  # type: ignore[no-redef]
         _FULL_H,
         _FULL_W,
         _HALF_W,
