@@ -1,7 +1,9 @@
 ---
 title: Engagement Layer v2 — Parallel Execution Progress Tracker
-status: active
+status: archived
 date: 2026-04-18
+archived_at: 2026-04-18
+rollup_commit: 7d98ec2
 origin_plan: docs/plans/2026-04-18-001-feat-engagement-layer-v2-plan.md
 origin_plan_sha: 74072ebf354b31f2d2df1137d7e4d1e8f4e12089
 execution_plan: docs/plans/2026-04-18-002-feat-engage-v2-agent-team-execution-plan.md

@@ -1,9 +1,11 @@
 ---
 title: "feat: Engagement Layer v2 — Agent-Team Parallel Execution Plan"
 type: feat
-status: active
+status: completed
 date: 2026-04-18
 deepened: 2026-04-18
+completed_at: 2026-04-18
+rollup_commit: 7d98ec2
 origin: docs/plans/2026-04-18-001-feat-engagement-layer-v2-plan.md
 companion_to: docs/plans/2026-04-18-001-feat-engagement-layer-v2-plan.md
 brainstorm: docs/brainstorms/2026-04-18-engagement-layer-v2-requirements.md
