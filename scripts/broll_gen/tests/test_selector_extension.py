@@ -20,18 +20,33 @@ from __future__ import annotations
 
 import pytest
 
-from broll_gen.factory import make_broll_generator
-from broll_gen.registry import (
-    BROLL_REGISTRY,
-    cpu_types,
-    gpu_types,
-    valid_types,
-)
-from broll_gen.selector import (
-    _RESPONSE_SCHEMA,
-    _VALID_TYPES,
-    BrollSelector,
-)
+# Dual-import: run from repo root (scripts.broll_gen...) or from scripts/.
+try:
+    from scripts.broll_gen.factory import make_broll_generator
+    from scripts.broll_gen.registry import (
+        BROLL_REGISTRY,
+        cpu_types,
+        gpu_types,
+        valid_types,
+    )
+    from scripts.broll_gen.selector import (
+        _RESPONSE_SCHEMA,
+        _VALID_TYPES,
+        BrollSelector,
+    )
+except ImportError:  # pragma: no cover — fallback when cwd is scripts/
+    from broll_gen.factory import make_broll_generator  # type: ignore[no-redef]
+    from broll_gen.registry import (  # type: ignore[no-redef]
+        BROLL_REGISTRY,
+        cpu_types,
+        gpu_types,
+        valid_types,
+    )
+    from broll_gen.selector import (  # type: ignore[no-redef]
+        _RESPONSE_SCHEMA,
+        _VALID_TYPES,
+        BrollSelector,
+    )
 
 
 _NEW_TYPES_UNIT_05 = {

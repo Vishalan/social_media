@@ -35,7 +35,7 @@ Dashboard for the parallel execution of `docs/plans/2026-04-18-001-feat-engageme
 | 0.2 libass smoke | `feat/engage-v2/0.2-libass-smoke` | `.worktrees/engage-v2-0.2/` | 0.1 | _unassigned_ | pending | — |
 | 0.3 SFX library | `feat/engage-v2/0.3-sfx-library` | `.worktrees/engage-v2-0.3/` | — | _unassigned_ | pending | — |
 | 0.4 Article extractor | `feat/engage-v2/0.4-article-extractor` | `.worktrees/engage-v2-0.4/` | — | agent `0.4@engage-v2-swarm` | ✅ merged (b20bb36) | 2026-04-18 15:10 |
-| 0.5 Selector extension | `feat/engage-v2/0.5-selector-extension` | `.worktrees/engage-v2-0.5/` | 0.4 | _unassigned_ | pending | — |
+| 0.5 Selector extension | `feat/engage-v2/0.5-selector-extension` | `.worktrees/engage-v2-0.5/` | 0.4 | agent `0.5@engage-v2-swarm` | ✅ merged (7b4bba4) | 2026-04-18 15:30 |
 | 0.6 Registration linter | `feat/engage-v2/0.6-registration-linter` | `.worktrees/engage-v2-0.6/` | 0.5 | _unassigned_ | pending | — |
 
 ## Wave 1 → Wave 2 gate
@@ -97,6 +97,10 @@ Gate 1 (see `...-integration-gates.md`) must be green before any Wave-2 worker i
 | 2026-04-18 15:05 | Unit 0.4 agent reported DONE_WITH_CONCERNS — all 6 unit tests + 50 regression tests green; blocked only by sandbox from `git commit`. Parent session spot-checked failure isolation + secrets sweep (clean), committed on behalf of worker as `b20bb36` (message preserves worker's structured rationale + decision log). |
 | 2026-04-18 15:10 | Unit 0.4 **merged** into `feat/engagement-layer-v2` via fast-forward (`32c4842..b20bb36`). Post-merge regression: 56/56 tests green across topic_intel + thumbnail_gen + video_edit + posting. In-flight working-tree changes were stashed before merge; unstash produced one trivial conflict on `sidecar/requirements.txt` (keep both `trafilatura>=1.6.0` and `yt-dlp`). |
 | 2026-04-18 15:12 | Unit 0.1 agent hit rate limit before completion (resets 16:30 Asia/Calcutta). Worktree `.worktrees/engage-v2-0.1/` remains on branch `feat/engage-v2/0.1-brand-assets` — needs re-dispatch after reset. |
+| 2026-04-18 15:25 | Unit 0.5 dispatched — architecture-strategist reviewer per manifest (cross-boundary: selector + factory + registry + pipelines). |
+| 2026-04-18 15:28 | Unit 0.5 agent reported NEEDS_CONTEXT — same sandbox blocks git; implementation complete, 11/11 unit tests green in worktree, regression baseline unchanged. Worker made 3 strong architectural choices: static helper `_compute_forced_primary_candidates` for testable short-circuit; kwarg `extracted_article` on `.select()` preserves positional signature; registry stays static (classification) while runtime gating stays in selector. Parent session spot-checked diff scope (6 files, zero strays, no secrets), committed on behalf of worker as `7b4bba4`. |
+| 2026-04-18 15:30 | Unit 0.5 **merged** into `feat/engagement-layer-v2` via fast-forward. Post-merge: test file used bare `from broll_gen.x` imports that fail in single-file pytest invocation but work under multi-dir collection (project's established convention — `scripts/broll_gen/__init__.py` itself uses bare imports, so `scripts/` needs to be on sys.path). Applied dual-import patch (`scripts.broll_gen.x` with bare fallback) on the test file as an addendum to match 0.4's pattern. Full regression slice: 67/67 green (6 topic_intel + 11 selector_extension + 50 prior). |
+| 2026-04-18 15:32 | 3 previously-failing `broll_gen/test_selector.py` tests now pass — side-effect of the short-circuit fix restoring the path those tests exercised. Net regression delta: +3 (unexpected improvement). |
 
 ## Upstream dependency note
 
