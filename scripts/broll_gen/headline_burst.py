@@ -26,6 +26,21 @@ from PIL import Image, ImageDraw, ImageFont
 from .base import BrollBase, BrollError
 from video_edit.video_editor import FFMPEG
 
+# Dual-import so this module works whether pytest / CLI runs from repo root
+# (``python -m scripts.pipeline``) or from ``scripts/`` directly.
+try:
+    from scripts.branding import (
+        BOLD_FONT_CANDIDATES,
+        REGULAR_FONT_CANDIDATES,
+        find_font,
+    )
+except ImportError:  # pragma: no cover — fallback when cwd is scripts/
+    from branding import (  # type: ignore[no-redef]
+        BOLD_FONT_CANDIDATES,
+        REGULAR_FONT_CANDIDATES,
+        find_font,
+    )
+
 if TYPE_CHECKING:
     from pipeline import VideoJob
 
@@ -52,38 +67,35 @@ _ACCENT = (99, 102, 241)             # Indigo accent line
 _TEXT_COLOR = (255, 255, 255)
 _SUBTEXT_COLOR = (180, 185, 240)
 
-_BOLD_CANDIDATES = [
-    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-    "/System/Library/Fonts/Helvetica.ttc",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-    "C:/Windows/Fonts/arialbd.ttf",
-]
+# Font candidate lists come from scripts.branding — single source of truth.
+# Relative paths (in-repo ``assets/fonts/...``) are resolved against the project
+# root so downstream helpers (``_try_font``, ``_auto_font_size``) can iterate
+# them directly via ``ImageFont.truetype`` regardless of the caller's CWD.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# Font validation: warn at import time if no bold font candidate is loadable
-_font_validation_passed = False
-for _candidate in _BOLD_CANDIDATES:
-    try:
-        ImageFont.truetype(_candidate, 40)
-        _font_validation_passed = True
-        break
-    except (OSError, AttributeError):
-        continue
-if not _font_validation_passed:
-    logging.getLogger(__name__).critical(
+
+def _resolve_candidate(c: str) -> str:
+    p = Path(c)
+    return str(p if p.is_absolute() else _PROJECT_ROOT / p)
+
+
+_BOLD_CANDIDATES = [_resolve_candidate(c) for c in BOLD_FONT_CANDIDATES]
+_REG_CANDIDATES = [_resolve_candidate(c) for c in REGULAR_FONT_CANDIDATES]
+
+# Font validation: log at import time if no bold font is resolvable. We use
+# branding.find_font (which returns an absolute, existing path) so the check
+# matches what runtime rendering will actually load.
+try:
+    _resolved_bold = find_font("bold")
+    logger.debug("headline_burst: bold font resolved to %s", _resolved_bold)
+except FileNotFoundError:
+    logger.critical(
         "headline_burst: no bold font found — tried: %s. "
         "Text will fall back to PIL default (low quality). "
-        "Install a bold TTF font at one of the listed paths.",
+        "Install a bold TTF font at one of the listed paths or ship "
+        "assets/fonts/Inter-Bold.ttf in the image.",
         _BOLD_CANDIDATES,
     )
-
-_REG_CANDIDATES = [
-    "/System/Library/Fonts/Supplemental/Arial.ttf",
-    "/System/Library/Fonts/Helvetica.ttc",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-    "C:/Windows/Fonts/arial.ttf",
-]
 
 _LINES_SCHEMA = {
     "type": "object",

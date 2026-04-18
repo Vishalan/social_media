@@ -36,7 +36,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libcairo2 \
         libasound2 \
         sqlite3 \
+        fontconfig \
+        fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
+
+# CommonCreed brand fonts (Inter, SIL OFL) — shipped in-repo under assets/fonts.
+# fc-cache rebuilds the fontconfig index so Pillow/libass can resolve "Inter".
+# The grep asserts registration succeeded; a failed fontconfig would otherwise
+# silently fall back to default fonts and ruin every caption + headline frame.
+COPY assets/fonts/ /usr/local/share/fonts/commoncreed/
+RUN fc-cache -f -v && fc-list | grep -qi "Inter" || (echo "Inter font registration failed" && exit 1)
 
 WORKDIR /app
 
