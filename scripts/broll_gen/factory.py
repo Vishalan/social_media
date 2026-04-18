@@ -24,6 +24,7 @@ from broll_gen.browser_visit import BrowserVisitGenerator
 from broll_gen.code_walkthrough import CodeWalkthroughGenerator
 from broll_gen.headline_burst import HeadlineBurstGenerator
 from broll_gen.image_montage import ImageMontageGenerator
+from broll_gen.phone_highlight import PhoneHighlightGenerator
 from broll_gen.stats_card import StatsCardGenerator
 from broll_gen.stock_video import StockVideoGenerator
 
@@ -109,8 +110,9 @@ def make_broll_generator(type_name: str, **kwargs) -> BrollBase:
     # replacing it (A1 / B1 / B2 / C2) cannot overlap another worker's edit.
     # Real implementations land in their respective Wave-2 units.
     if type_name == "phone_highlight":
-        raise NotImplementedError(
-            "phone_highlight not yet wired — lands in Unit A1"
+        logger.info("B-roll generator: PhoneHighlightGenerator")
+        return PhoneHighlightGenerator(
+            anthropic_client=kwargs.get("anthropic_client"),
         )
 
     if type_name == "tweet_reveal":

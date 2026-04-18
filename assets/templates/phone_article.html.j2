@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+{#
+  Phone-highlight article template (Unit A1).
+
+  Renders a trimmed article view as it would appear on a phone, with the
+  currently-spoken phrase wrapped in an active <mark>, already-spoken phrases
+  wrapped in <mark class="past">, and upcoming text unhighlighted. The page
+  is rendered at 1080x1920 by Playwright, then composited under the
+  iphone_chrome.png overlay by FFmpeg.
+
+  Context variables:
+    title              str   — article title (may be empty).
+    byline             str   — author byline (may be empty).
+    publish_date       str   — ISO-ish date (may be empty).
+    paragraphs         list  — list of {"index": int, "runs": [ {kind, text} ]}
+                               where kind in {"plain", "active", "past"}.
+    scroll_offset_px   int   — y-offset (negative or 0) applied to the article
+                               column to bring the active <mark> to ~33% of
+                               the viewport. 0 before any phrase is active.
+    brand_sky_blue     str   — SKY_BLUE hex (#5C9BFF).
+    brand_sky_blue_past str  — SKY_BLUE with 55 alpha (#5C9BFF55).
+    brand_navy         str   — NAVY hex (#1E3A8A).
+    brand_white        str   — WHITE hex (#FFFFFF).
+#}
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ title | e }}</title>
+  <style>
+    :root {
+      --sky: {{ brand_sky_blue }};
+      --sky-past: {{ brand_sky_blue_past }};
+      --navy: {{ brand_navy }};
+      --white: {{ brand_white }};
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--white);
+      color: var(--navy);
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+                   Roboto, Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      width: 1080px;
+      height: 1920px;
+      overflow: hidden;
+    }
+    .viewport {
+      width: 1080px;
+      height: 1920px;
+      position: relative;
+      overflow: hidden;
+    }
+    .column {
+      position: absolute;
+      top: {{ scroll_offset_px }}px;
+      left: 0;
+      right: 0;
+      padding: 120px 80px 120px 80px;
+      box-sizing: border-box;
+      width: 1080px;
+    }
+    .meta {
+      font-size: 36px;
+      color: var(--navy);
+      opacity: 0.55;
+      margin-bottom: 18px;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    h1.title {
+      font-size: 76px;
+      line-height: 1.1;
+      margin: 0 0 40px 0;
+      font-weight: 800;
+      color: var(--navy);
+    }
+    p.body {
+      font-size: 52px;
+      line-height: 1.35;
+      margin: 0 0 36px 0;
+      font-weight: 500;
+      color: var(--navy);
+      word-wrap: break-word;
+    }
+    /*
+     * Karaoke highlight styling.
+     *
+     * box-decoration-break: clone makes each line of a wrapped <mark>
+     * render its own rounded background, instead of one giant rectangle
+     * spanning the line break.
+     */
+    mark {
+      background: var(--sky);
+      color: var(--white);
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+      padding: 0.08em 0.22em;
+      border-radius: 0.22em;
+    }
+    mark.past {
+      background: var(--sky-past);
+      color: var(--navy);
+    }
+  </style>
+</head>
+<body>
+  <div class="viewport">
+    <div class="column">
+      {% if byline or publish_date %}
+        <div class="meta">
+          {%- if byline -%}{{ byline | e }}{%- endif -%}
+          {%- if byline and publish_date %} &middot; {% endif -%}
+          {%- if publish_date -%}{{ publish_date | e }}{%- endif -%}
+        </div>
+      {% endif %}
+      {% if title %}<h1 class="title">{{ title | e }}</h1>{% endif %}
+      {% for para in paragraphs %}
+        <p class="body" data-para-idx="{{ para.index }}">
+          {%- for run in para.runs -%}
+            {%- if run.kind == "active" -%}
+              <mark>{{ run.text | e }}</mark>
+            {%- elif run.kind == "past" -%}
+              <mark class="past">{{ run.text | e }}</mark>
+            {%- else -%}
+              {{ run.text | e }}
+            {%- endif -%}
+          {%- endfor -%}
+        </p>
+      {% endfor %}
+    </div>
+  </div>
+</body>
+</html>

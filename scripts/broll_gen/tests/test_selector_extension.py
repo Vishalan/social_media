@@ -183,17 +183,33 @@ def test_videojob_new_fields_default_values() -> None:
 # ── 7. Factory placeholder branches raise NotImplementedError ─────────────────
 
 @pytest.mark.parametrize(
-    ("type_name", "expected_unit"),
+    ("type_name", "expected_unit", "wired"),
     [
-        ("phone_highlight", "A1"),
-        ("tweet_reveal", "B1"),
-        ("split_screen", "B2"),
-        ("cinematic_chart", "C2"),
+        # Unit A1 is now wired — factory returns a real generator instead of
+        # raising NotImplementedError. The `wired` flag flips this test's
+        # assertion so the parametrize row still runs (keeping the count
+        # stable) and the positive-path contract is covered here, alongside
+        # the deeper coverage in test_phone_highlight.py::test_factory_wiring.
+        ("phone_highlight", "A1", True),
+        ("tweet_reveal", "B1", False),
+        ("split_screen", "B2", False),
+        ("cinematic_chart", "C2", False),
     ],
 )
 def test_factory_raises_notimplemented_for_new_types(
-    type_name: str, expected_unit: str
+    type_name: str, expected_unit: str, wired: bool
 ) -> None:
+    if wired:
+        # Type has been implemented — factory must return a BrollBase subclass
+        # and NOT raise. Individual behavior is tested in the per-unit test
+        # file (e.g. test_phone_highlight.py for A1).
+        gen = make_broll_generator(type_name)
+        from broll_gen.base import BrollBase  # type: ignore[import-not-found]
+        assert isinstance(gen, BrollBase), (
+            f"factory returned non-BrollBase for wired type {type_name!r}: {gen!r}"
+        )
+        return
+
     with pytest.raises(NotImplementedError) as excinfo:
         make_broll_generator(type_name)
     msg = str(excinfo.value)
