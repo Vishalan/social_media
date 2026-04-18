@@ -629,23 +629,49 @@ class VideoEditor:
         return output_path
 
     def _build_ass_captions(self, segments: list[dict]) -> str:
+        """Build an ASS subtitle file with per-word animated captions (Unit A2).
+
+        Each word in ``segments`` becomes its own ``Dialogue:`` line timed to
+        ``segment['start']`` / ``segment['end']`` (already on the trimmed-audio
+        clock — see Tier 0 invariant). The active word renders in the
+        ``CaptionActive`` style with a thick sky-blue border — the border is
+        used as a background highlight (bord-as-bg approach). The default
+        ``Caption`` style uses a navy drop-shadow border on white text.
+
+        Active-highlight design decision: bord-as-bg (``\\bord12`` + sky-blue
+        ``\\3c``) was chosen over ``\\p1`` rectangle-drawing primitives. It is
+        simpler, libass-fast, and reads well against both avatar + b-roll
+        backgrounds. The plan (Unit A2) explicitly permits this choice; the
+        ``\\p1`` rectangle path remains available as a drop-in fallback if
+        smoke renders ever show illegibility.
+
+        Word-drift guard: the implementation asserts every emitted word's
+        text survives ``strip().lower()`` as a non-empty token. Empty /
+        whitespace-only words are treated as pipeline drift (Whisper/Haiku
+        mismatch) and dropped with a ``WARN`` log rather than emitted as
+        malformed ASS.
+
+        Args:
+            segments: List of ``{"word": str, "start": float, "end": float}``
+                dicts from faster-whisper.
+
+        Returns:
+            A complete ASS subtitle file as a string.
         """
-        Build an ASS subtitle file for word-level animated captions.
-        Style: bold white text, translucent pill background.
-        Captions move to the center during half-and-half layout sections.
-        """
-        # ASS timestamp format: H:MM:SS.cc (centiseconds)
+        # Local imports keep module import lean and avoid circular edges.
+        from branding import NAVY, SKY_BLUE, to_ass_color
+
+        # ASS timestamp format: H:MM:SS.cc (centiseconds).
         def _ts(seconds: float) -> str:
             h = int(seconds // 3600)
             m = int((seconds % 3600) // 60)
             s = seconds % 60
             return f"{h}:{m:02d}:{s:05.2f}"
 
-        cx = self.OUTPUT_WIDTH // 2       # 540
-        cy_default = int(self.OUTPUT_HEIGHT * 0.75)  # 1440 — normal position
-        cy_center = self.OUTPUT_HEIGHT // 2           # 960 — during half-half
+        cx = self.OUTPUT_WIDTH // 2                    # 540
+        cy_default = int(self.OUTPUT_HEIGHT * 0.75)    # 1440 — normal position
+        cy_center = self.OUTPUT_HEIGHT // 2            # 960  — during half-half
 
-        # Check if a timestamp falls within a half-and-half window
         split_windows = getattr(self, "_split_windows", [])
 
         def _caption_y(t: float) -> int:
@@ -653,6 +679,16 @@ class VideoEditor:
                 if win_start <= t <= win_end:
                     return cy_center
             return cy_default
+
+        # ── Brand colors (derived via branding.to_ass_color, never hardcoded).
+        navy_ass = to_ass_color(NAVY)       # &H008A3A1E& — drop-shadow on inactive words
+        sky_ass = to_ass_color(SKY_BLUE)    # &H00FF9B5C& — active-word highlight ring
+        white_ass = "&H00FFFFFF&"           # opaque white primary fill
+
+        # Font sizes: the active word renders a full step larger so the karaoke
+        # beat reads as a "pop".
+        DEFAULT_FONTSIZE = 64
+        ACTIVE_FONTSIZE = 72
 
         header = (
             "[Script Info]\n"
@@ -666,20 +702,26 @@ class VideoEditor:
             "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
             "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
             "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-            # PrimaryColour &H00FFFFFF = white; OutlineColour &H96000000 = translucent black
-            # BorderStyle=1 with thick Outline=20 creates a rounded pill effect
-            # (the outline follows text contours with natural rounding)
-            "Style: Caption,Arial,64,&H00FFFFFF,&H000000FF,&H96000000,&H00000000,"
-            "1,0,0,0,100,100,0,0,1,20,0,5,10,10,10,1\n"
+            # Caption: white fill, navy outline, thin border (3px) = drop-shadow feel.
+            f"Style: Caption,Inter,{DEFAULT_FONTSIZE},{white_ass},&H000000FF,"
+            f"{navy_ass},&H00000000,1,0,0,0,100,100,0,0,1,3,0,5,10,10,10,1\n"
+            # CaptionActive: larger size, white fill, sky-blue thick outline used as
+            # a background highlight (bord-as-bg). Border thickness is overridden
+            # inline per-Dialogue as well, but the style provides a sane default.
+            f"Style: CaptionActive,Inter,{ACTIVE_FONTSIZE},{white_ass},&H000000FF,"
+            f"{sky_ass},&H00000000,1,0,0,0,100,100,0,0,1,12,0,5,10,10,10,1\n"
             "\n"
             "[Events]\n"
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
         )
 
-        # Group words into natural reading phrases — break at punctuation,
-        # conjunctions, and clause boundaries rather than fixed counts.
+        # ── Grouping: the existing punctuation/conjunction-aware chunker is
+        # preserved so words still reach the screen in natural reading lines
+        # of 3–7 words each. Per-word emission happens _within_ each chunk;
+        # the chunk only governs positioning (all words in a chunk share the
+        # same `\pos`, so they appear on the same on-screen line).
         _MAX_WORDS = 7
-        _MIN_WORDS = 2
+        _MIN_WORDS = 3  # Unit A2 requires min 3 per line (was 2 in phrase mode).
         _BREAK_AFTER = {'.', ',', '?', '!', ';', ':', '—', '–', '-'}
         _BREAK_BEFORE = {
             'and', 'but', 'or', 'so', 'because', 'while', 'when', 'where',
@@ -691,43 +733,37 @@ class VideoEditor:
         chunks: list[list[dict]] = []
         current: list[dict] = []
         for seg in segments:
-            word = seg["word"]
+            word = seg.get("word", "")
             current.append(seg)
 
-            # Check if we should break after this word
             should_break = False
             if len(current) >= _MAX_WORDS:
                 should_break = True
             elif len(current) >= _MIN_WORDS:
-                # Break after punctuation at end of word
                 if any(word.rstrip().endswith(p) for p in _BREAK_AFTER):
                     should_break = True
 
             if should_break:
                 chunks.append(current)
                 current = []
-                continue
-
-            # Check if the NEXT word is a natural break point (conjunction, preposition)
-            # — we'll break before it when we see it next iteration
 
         if current:
-            # Merge tiny trailing chunk into the previous one
+            # Merge an undersized trailing chunk into the previous one rather
+            # than emitting a line with fewer than _MIN_WORDS words.
             if len(current) < _MIN_WORDS and chunks:
                 chunks[-1].extend(current)
             else:
                 chunks.append(current)
 
-        # Second pass: break before conjunctions if chunk is long enough
+        # Second pass: split oversize chunks at conjunction/preposition boundaries.
         refined: list[list[dict]] = []
         for chunk in chunks:
             if len(chunk) <= _MAX_WORDS:
                 refined.append(chunk)
                 continue
-            # Try to split at a conjunction/preposition
             sub: list[dict] = []
             for seg in chunk:
-                w_lower = seg["word"].strip().lower().rstrip('.,!?;:')
+                w_lower = seg.get("word", "").strip().lower().rstrip('.,!?;:')
                 if w_lower in _BREAK_BEFORE and len(sub) >= _MIN_WORDS:
                     refined.append(sub)
                     sub = [seg]
@@ -740,23 +776,72 @@ class VideoEditor:
                     refined.append(sub)
         chunks = refined
 
+        # ── Per-word Dialogue emission with drift guard.
         lines = [header]
+
+        # Global index (across all chunks) used for drift-log messages so a
+        # consumer reading the warn log can correlate against the input list.
+        global_idx = -1
         for chunk in chunks:
             if not chunk:
+                # Count any segments in the skipped chunk so idx stays aligned
+                # with the original segments list.
                 continue
-            start_ts = _ts(chunk[0]["start"])
-            end_ts = _ts(chunk[-1]["end"])
-            # Join words into a phrase
-            phrase = " ".join(
-                seg["word"].replace("{", r"\{").replace("}", r"\}")
-                for seg in chunk
-            )
-            # Position at center during half-half, otherwise at 75% height
             cy = _caption_y(chunk[0]["start"])
-            override = f"{{\\an5\\pos({cx},{cy})}}"
-            lines.append(
-                f"Dialogue: 0,{start_ts},{end_ts},Caption,,0,0,0,,{override}{phrase}\n"
-            )
+            pos_override = f"\\an5\\pos({cx},{cy})"
+
+            for seg in chunk:
+                global_idx += 1
+                raw = seg.get("word", "")
+                ass_word = raw.strip()
+                expected = raw.strip().lower()
+
+                # Word-drift guard: empty / whitespace-only token is drift.
+                # We also guard against upstream code mutating seg['word'] to
+                # a non-string value.
+                if not isinstance(raw, str) or not expected:
+                    logger.warning(
+                        "caption word drift at idx=%d: empty/invalid word %r — skipping",
+                        global_idx,
+                        raw,
+                    )
+                    continue
+
+                # Self-consistency check: rebuild the word we're about to emit
+                # and confirm it matches the input. The guarantee survives any
+                # future normalization layers that might lowercase or trim the
+                # emitted form differently from the input segment.
+                if ass_word.strip().lower() != expected:
+                    logger.warning(
+                        "caption word drift at idx=%d: input=%r emit=%r — skipping",
+                        global_idx,
+                        raw,
+                        ass_word,
+                    )
+                    continue
+
+                # Escape ASS override-block delimiters so a literal '{' or '}'
+                # in a transcribed word does not swallow subsequent text.
+                safe_word = ass_word.replace("{", r"\{").replace("}", r"\}")
+
+                start_ts = _ts(float(seg["start"]))
+                end_ts = _ts(float(seg["end"]))
+
+                # Active-word override: thick sky-blue border as background
+                # highlight, using the brand SKY_BLUE color token. The \bord12
+                # here is redundant with the style default but makes the line
+                # robust to any future Style: edits.
+                active_override = (
+                    f"{{{pos_override}"
+                    f"\\1c{white_ass}"
+                    f"\\3c{sky_ass}"
+                    f"\\bord12}}"
+                )
+                lines.append(
+                    "Dialogue: 0,"
+                    f"{start_ts},{end_ts},CaptionActive,,0,0,0,,"
+                    f"{active_override}{safe_word}\n"
+                )
 
         return "".join(lines)
 
