@@ -65,6 +65,11 @@ volumes:
     name: commoncreed_output
   sidecar_db:
     name: commoncreed_sidecar_db
+  # HuggingFace model cache for the chatterbox sidecar — persists the
+  # ~2-3 GB model weights across container restarts so only the first
+  # boot pays the download cost.
+  commoncreed_chatterbox_cache:
+    name: commoncreed_chatterbox_cache
 
 services:
 
@@ -414,3 +419,59 @@ services:
           memory: 1024M
         reservations:
           memory: 256M
+
+  # ===========================================================================
+  # CommonCreed Chatterbox sidecar — local TTS (Resemble AI Chatterbox) on
+  # RTX 3090. Replaces ElevenLabs when VOICE_PROVIDER=chatterbox is set in
+  # the pipeline subprocess environment. Loads ~2-3 GB of model weights into
+  # GPU memory at first /tts call (persisted in commoncreed_chatterbox_cache
+  # so subsequent container starts re-use them).
+  #
+  # Reference audio (the clip whose voice chatterbox clones) is mounted
+  # read-only from the host at /opt/commoncreed/assets so the client can
+  # reference it via e.g. CHATTERBOX_REFERENCE_AUDIO=/app/refs/voice_ref.wav.
+  # ===========================================================================
+  commoncreed_chatterbox:
+    build:
+      context: ../..
+      dockerfile: deploy/chatterbox/Dockerfile
+    image: commoncreed/chatterbox:0.1.0
+    container_name: commoncreed_chatterbox
+    restart: unless-stopped
+    networks:
+      - commoncreed
+    environment:
+      CHATTERBOX_PORT: "7777"
+      CHATTERBOX_DEVICE: "cuda"
+      # HuggingFace cache landing point — matches the volume mount below.
+      HF_HOME: "/root/.cache/huggingface"
+    volumes:
+      # Generated WAVs go onto the shared output volume so the Python
+      # sidecar can pick them up by path.
+      - commoncreed_output:/app/output
+      # Reference audio clips live on the host — mounted read-only so the
+      # container can read them without ever writing back.
+      - /opt/commoncreed/assets:/app/refs:ro
+      # Persist the 2-3 GB model download across restarts.
+      - commoncreed_chatterbox_cache:/root/.cache/huggingface
+    expose:
+      - "7777"
+    healthcheck:
+      # Startup is fast (model loads lazily), so /healthz responds in <1s.
+      test: ["CMD-SHELL", "curl -f http://localhost:7777/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 8192M
+        reservations:
+          memory: 2048M
+          devices:
+            # Grants the container one NVIDIA GPU with full capabilities.
+            # Requires nvidia-container-toolkit on the host (confirmed
+            # present on the Ubuntu server via `docker info`).
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

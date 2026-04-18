@@ -31,6 +31,7 @@ def make_voice_generator(config: Dict[str, Any]) -> VoiceGenLike:
     if provider == "chatterbox":
         return ChatterboxVoiceGenerator(
             reference_audio=config.get("chatterbox_reference_audio") or None,
+            endpoint=config.get("chatterbox_endpoint") or None,
             device=config.get("chatterbox_device", "cuda"),
         )
     if provider == "elevenlabs":

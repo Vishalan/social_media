@@ -846,6 +846,7 @@ if __name__ == "__main__":
         "elevenlabs_api_key": os.environ.get("ELEVENLABS_API_KEY", ""),
         "voice_id": os.environ.get("ELEVENLABS_VOICE_ID", ""),
         "chatterbox_reference_audio": os.environ.get("CHATTERBOX_REFERENCE_AUDIO", ""),
+        "chatterbox_endpoint": os.environ.get("CHATTERBOX_ENDPOINT", ""),
         "chatterbox_device": os.environ.get("CHATTERBOX_DEVICE", "cuda"),
         "comfyui_url": os.environ.get("COMFYUI_URL", ""),  # empty = use RunPod
         "comfyui_api_key": os.environ.get("COMFYUI_API_KEY", ""),
