@@ -60,6 +60,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+try:
+    from broll_gen.registry import BROLL_REGISTRY, cpu_types, gpu_types
+except ImportError:  # pragma: no cover — tests import via top-level scripts.
+    from scripts.broll_gen.registry import BROLL_REGISTRY, cpu_types, gpu_types
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
@@ -552,7 +557,8 @@ async def step_broll(topic: dict, script: dict, audio_duration: float) -> tuple[
     }
 
     winning_type = None
-    for type_name in [t for t in types_ranked if t != "ai_video"]:
+    _gpu_types = gpu_types()
+    for type_name in [t for t in types_ranked if t not in _gpu_types]:
         try:
             print(f"  ↗  Trying {type_name}...")
             gen = make_broll_generator(type_name, **gen_kwargs)

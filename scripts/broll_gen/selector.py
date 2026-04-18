@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 
 _VALID_TYPES = frozenset(
     ["browser_visit", "image_montage", "code_walkthrough", "stats_card",
-     "headline_burst", "ai_video", "stock_video"]
+     "headline_burst", "ai_video", "stock_video",
+     "phone_highlight", "tweet_reveal", "split_screen", "cinematic_chart"]
 )
 
 _SYSTEM_PROMPT = """\
@@ -30,6 +31,10 @@ Types and when to use them:
 - image_montage: general tech news, product reveal, company story; good fallback when Pexels key is available
 - stock_video: cinematic real-world footage for emotional or context-setting beats; use for topics involving data centers, smartphones, keyboards, server rooms, or any scene where cinematic real-world footage reinforces the mood
 - ai_video: only for abstract/speculative topics with zero concrete visuals
+- phone_highlight: Vertical phone mockup of the article being narrated, with the spoken phrase highlighted in real time.
+- tweet_reveal: CommonCreed-branded tweet card with animated like counter. Select when source article quotes a named person.
+- split_screen: Vertical 50/50 split-screen comparison with center wipe. Select for A-vs-B topics.
+- cinematic_chart: Animated bar chart / number ticker / line chart rendered by the Remotion sidecar. Gated by CINEMATIC_CHART_ENABLED env flag and numeric-density signal.
 
 Priority rule: stats_card beats headline_burst only when there are clear numeric comparisons.
 headline_burst beats image_montage for high-impact announcements.
@@ -52,6 +57,10 @@ _RESPONSE_SCHEMA = {
                 "headline_burst",
                 "stock_video",
                 "ai_video",
+                "phone_highlight",
+                "tweet_reveal",
+                "split_screen",
+                "cinematic_chart",
             ],
         },
         "fallback": {
@@ -64,6 +73,10 @@ _RESPONSE_SCHEMA = {
                 "headline_burst",
                 "stock_video",
                 "ai_video",
+                "phone_highlight",
+                "tweet_reveal",
+                "split_screen",
+                "cinematic_chart",
             ],
         },
     },
@@ -80,11 +93,35 @@ class BrollSelector:
     def __init__(self, anthropic_client: AsyncAnthropic) -> None:
         self._client = anthropic_client
 
+    @staticmethod
+    def _compute_forced_primary_candidates(
+        topic_url: str,
+        extracted_article: dict | None,
+    ) -> list[str] | None:
+        """Return the forced primary-candidate list for an article URL, or None.
+
+        When a real article URL is available, bias selection toward
+        article-rooted b-roll. With an extracted article body (≥2 body
+        paragraphs) we can also use ``phone_highlight``; otherwise we fall back
+        to ``browser_visit`` only. Tweet / split / chart paths are gated
+        separately by ``tweet_quote`` / ``split_screen_pair`` / numeric-density
+        signals handled downstream (Wave-2 units).
+        """
+        topic_url_is_article = bool(topic_url) and not any(
+            d in topic_url for d in ("youtube.com", "twitter.com", "x.com", "reddit.com")
+        )
+        if not topic_url_is_article:
+            return None
+        if extracted_article and len(extracted_article.get("body_paragraphs", [])) >= 2:
+            return ["phone_highlight", "browser_visit"]
+        return ["browser_visit"]
+
     async def select(
         self,
         topic_title: str,
         topic_url: str,
         script_text: str,
+        extracted_article: dict | None = None,
     ) -> list[str]:
         """Analyze the topic and script to choose primary and fallback b-roll types.
 
@@ -92,26 +129,36 @@ class BrollSelector:
             topic_title: The title/headline of the video topic.
             topic_url: The source URL for the topic article.
             script_text: The generated voiceover script.
+            extracted_article: Optional ``ArticleExtract.to_dict()`` payload
+                (see ``scripts/topic_intel/article_extractor.py``). When
+                present with ≥2 ``body_paragraphs``, enables the
+                ``phone_highlight`` candidate for article URLs.
 
         Returns:
             A 2-element list ``[primary_type, fallback_type]`` where each element
-            is one of: ``browser_visit``, ``image_montage``, ``code_walkthrough``,
-            ``stats_card``, ``ai_video``.
+            is one of the registered b-roll type names in ``_VALID_TYPES``.
             Falls back to ``["image_montage", "ai_video"]`` on any Claude error.
         """
-        # Always prefer browser_visit when a real article URL is available —
-        # website screenshots are the highest-engagement b-roll type.
-        if topic_url and not any(
-            d in topic_url for d in ("youtube.com", "twitter.com", "x.com", "reddit.com")
-        ):
-            logger.info("BrollSelector: forcing browser_visit (real article URL available)")
-            return ["browser_visit", "headline_burst"]
+        forced_primary_candidates = self._compute_forced_primary_candidates(
+            topic_url, extracted_article,
+        )
+        if forced_primary_candidates is not None:
+            logger.info(
+                "BrollSelector: article URL detected — forced_primary_candidates=%s",
+                forced_primary_candidates,
+            )
 
         user_prompt = (
             f"Topic: {topic_title}\n"
             f"URL: {topic_url}\n"
             f"Script excerpt (first 300 chars): {script_text[:300]}"
         )
+        if forced_primary_candidates is not None:
+            user_prompt += (
+                f"\nConstraint: 'primary' MUST be one of "
+                f"{forced_primary_candidates} (choose whichever fits best). "
+                f"'fallback' must be a different type."
+            )
 
         try:
             response = await self._client.messages.create(

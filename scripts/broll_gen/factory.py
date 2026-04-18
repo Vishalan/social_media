@@ -104,8 +104,33 @@ def make_broll_generator(type_name: str, **kwargs) -> BrollBase:
         logger.info("B-roll generator: StockVideoGenerator (Pexels video)")
         return StockVideoGenerator(pexels_api_key=kwargs.get("pexels_api_key", ""))
 
+    # ── Unit 0.5 placeholder branches ─────────────────────────────────────
+    # Each new type owns a distinct ``elif`` block so the Wave-2 worker
+    # replacing it (A1 / B1 / B2 / C2) cannot overlap another worker's edit.
+    # Real implementations land in their respective Wave-2 units.
+    if type_name == "phone_highlight":
+        raise NotImplementedError(
+            "phone_highlight not yet wired — lands in Unit A1"
+        )
+
+    if type_name == "tweet_reveal":
+        raise NotImplementedError(
+            "tweet_reveal not yet wired — lands in Unit B1"
+        )
+
+    if type_name == "split_screen":
+        raise NotImplementedError(
+            "split_screen not yet wired — lands in Unit B2"
+        )
+
+    if type_name == "cinematic_chart":
+        raise NotImplementedError(
+            "cinematic_chart not yet wired — lands in Unit C2"
+        )
+
     raise ValueError(
         f"Unknown b-roll type {type_name!r}. "
         f"Supported: browser_visit, image_montage, code_walkthrough, stats_card, "
-        f"headline_burst, ai_video, stock_video"
+        f"headline_burst, ai_video, stock_video, phone_highlight, tweet_reveal, "
+        f"split_screen, cinematic_chart"
     )

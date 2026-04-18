@@ -64,6 +64,12 @@ from approval.telegram_bot import TelegramApprovalBot
 from avatar_gen import AvatarLayout, AvatarQualityError, make_avatar_client
 from broll_gen import BrollError, make_broll_generator
 from broll_gen.selector import BrollSelector
+
+try:
+    from broll_gen.registry import BROLL_REGISTRY, cpu_types, gpu_types
+except ImportError:  # pragma: no cover — tests import via top-level scripts.
+    from scripts.broll_gen.registry import BROLL_REGISTRY, cpu_types, gpu_types
+
 from content_gen.script_generator import ScriptGenerator
 from gpu.pod_manager import PodManager, PodStartupError
 from news_sourcing.news_sourcer import InsufficientTopicsError, NewsSourcer
@@ -90,6 +96,11 @@ class VideoJob:
     avatar_layout: AvatarLayout = AvatarLayout.HALF_SCREEN
     broll_type: str = ""       # winning generator type (e.g. "browser_visit"), for logging
     needs_gpu_broll: bool = False  # True if all CPU generators failed → triggers Phase 2 pod
+    # ── Unit 0.5: optional signals that gate new b-roll types ──────────────
+    extracted_article: Optional[dict] = None           # ArticleExtract.to_dict() (from Unit 0.4)
+    tweet_quote: Optional[dict] = None                 # {author, handle, body, like_count_estimate, verified}
+    split_screen_pair: Optional[dict] = None           # {left: {type, params}, right: {type, params}}
+    keyword_punches: list = field(default_factory=list)  # [{word, t_start, t_end, intensity}]
 
     @property
     def broll_only(self) -> bool:
@@ -420,9 +431,12 @@ class CommonCreedPipeline:
             "comfyui_client": self.comfyui,
         }
 
-        # Try primary then fallback — CPU types only (ai_video handled in Phase 2)
-        cpu_types = [t for t in types if t != "ai_video"]
-        for type_name in cpu_types:
+        # Try primary then fallback — CPU types only (GPU types handled in Phase 2).
+        # Classification is registry-driven so new GPU-bound types are routed
+        # correctly without touching this code.
+        _gpu_types = gpu_types()
+        cpu_only_types = [t for t in types if t not in _gpu_types]
+        for type_name in cpu_only_types:
             try:
                 gen = make_broll_generator(type_name, **gen_kwargs)
                 path = await gen.generate(job, target_duration_s, output_path)
