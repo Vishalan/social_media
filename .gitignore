@@ -15,7 +15,7 @@ venv/
 output/
 outputs/
 
-# Media files (large, gitignored except assets/logos/)
+# Media files (large, gitignored except assets/logos/ and assets/sfx/)
 *.mp3
 *.mp4
 *.wav
@@ -23,6 +23,9 @@ outputs/
 *.mov
 assets/input_media/
 assets/spike/
+
+# Whitelist curated SFX bundle (Unit 0.3) — these ARE committed despite *.wav rule above.
+!assets/sfx/*.wav
 
 # macOS
 .DS_Store
