@@ -75,12 +75,23 @@ def regen_prod_compose() -> str:
         .replace("./postiz-nginx.conf", "/opt/commoncreed/deploy/portainer/postiz-nginx.conf")
         .replace("./temporal-dynamicconfig", "/opt/commoncreed/deploy/portainer/temporal-dynamicconfig")
     )
+    # Strip ALL service build: blocks. Portainer's sandboxed container can't
+    # see build contexts on the host; every buildable service must already
+    # exist as a pre-built image on the docker daemon (we build via SSH
+    # before running this).
+    # Handles optional comment/blank lines between `build:` and the next
+    # `    <key>:` (the engage-v2 compose-context fix introduced inline
+    # comments in the sidecar build block).
     out = re.sub(
-        r"  commoncreed_sidecar:\n    build:\n      context: [^\n]+\n      dockerfile: [^\n]+\n",
-        "  commoncreed_sidecar:\n",
+        r"^(  \w+:)\n    build:\n(?:      [^\n]*\n)+",
+        r"\1\n",
         out,
+        flags=re.MULTILINE,
     )
-    assert "build:" not in out
+    # Only fail on UNCOMMENTED build: lines (commented references in narrative
+    # comments above services are fine).
+    uncommented_build = [ln for ln in out.splitlines() if ln.lstrip().startswith("build:")]
+    assert not uncommented_build, f"uncommented build: lines remain: {uncommented_build}"
     assert "image: commoncreed/sidecar:0.1.0" in out
     return out
 
