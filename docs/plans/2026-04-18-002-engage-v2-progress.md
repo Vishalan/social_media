@@ -19,8 +19,8 @@ Dashboard for the parallel execution of `docs/plans/2026-04-18-001-feat-engageme
 | # | Unit | Artifact | Status |
 |---|------|----------|--------|
 | 1 | Repo prerequisites | `.gitignore` + this tracker + `feat/engagement-layer-v2` branch | ✅ completed (fc21345) |
-| 2 | Stream manifest | `docs/plans/2026-04-18-002-engage-v2-stream-manifest.yaml` | pending |
-| 3 | Conflict register | `docs/plans/2026-04-18-002-engage-v2-conflict-register.md` | pending |
+| 2 | Stream manifest | `docs/plans/2026-04-18-002-engage-v2-stream-manifest.yaml` | ✅ completed |
+| 3 | Conflict register | `docs/plans/2026-04-18-002-engage-v2-conflict-register.md` | ✅ completed |
 | 4 | Worker prompt template | `docs/plans/2026-04-18-002-engage-v2-worker-prompt.md` | pending |
 | 5 | Reviewer prompt templates | `docs/plans/2026-04-18-002-engage-v2-spec-reviewer-prompt.md` + `...-code-quality-reviewer-prompt.md` | pending |
 | 6 | Orchestrator runbook | `docs/plans/2026-04-18-002-engage-v2-orchestrator-runbook.md` | pending |
