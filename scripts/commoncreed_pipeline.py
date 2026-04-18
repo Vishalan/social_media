@@ -502,8 +502,48 @@ class CommonCreedPipeline:
         job.caption_segments = caption_segments
         job.trimmed_audio_path = trimmed_audio
 
+        # ── Unit A3: keyword-punch extraction (failure-isolated). ──
+        # Runs between transcribe and assemble so it consumes the
+        # trimmed-audio caption_segments directly (Tier 0 invariant).
+        # Any exception here degrades to a plain assembly without
+        # zoom-punches — the post still ships.
+        try:
+            try:
+                from content_gen.keyword_extractor import extract_keyword_punches
+            except ImportError:
+                from scripts.content_gen.keyword_extractor import (
+                    extract_keyword_punches,
+                )
+            script_text = job.script.get("script", job.script.get("body", ""))
+            punches = await extract_keyword_punches(
+                script_text=script_text,
+                caption_segments=caption_segments,
+                anthropic_client=AsyncAnthropic(
+                    api_key=self.config["anthropic_api_key"]
+                ),
+            )
+            job.keyword_punches = list(punches)
+            logger.info(
+                "[A3] extracted %d keyword punches for '%s'",
+                len(job.keyword_punches), job.topic["title"],
+            )
+        except Exception as exc:
+            logger.warning(
+                "[A3] keyword extraction crashed for '%s': %s — "
+                "continuing without punches",
+                job.topic["title"], exc,
+            )
+            job.keyword_punches = []
+
+        # SFX events — best-effort derivation from the existing job timeline.
+        sfx_events = _derive_sfx_events(job, caption_segments)
+
         # Assemble final video (CPU — MoviePy + FFmpeg)
-        final_video = self._assemble(job, job.avatar_path, f"{safe_title}_final.mp4")
+        final_video = self._assemble(
+            job, job.avatar_path, f"{safe_title}_final.mp4",
+            keyword_punches=job.keyword_punches,
+            sfx_events=sfx_events,
+        )
 
         # Telegram approval
         decision = await self.telegram.request_approval(
@@ -526,7 +566,14 @@ class CommonCreedPipeline:
         else:
             logger.info("Skipped after rejection: %s", job.topic["title"])
 
-    def _assemble(self, job: VideoJob, avatar_path: str, filename: str) -> str:
+    def _assemble(
+        self,
+        job: VideoJob,
+        avatar_path: str,
+        filename: str,
+        keyword_punches: Optional[list] = None,
+        sfx_events: Optional[list] = None,
+    ) -> str:
         """Assemble final 9:16 video, dispatching on job.avatar_layout.
 
         Layout modes:
@@ -534,6 +581,9 @@ class CommonCreedPipeline:
           HALF_SCREEN — avatar bottom half, b-roll top half (default).
           FULL_SCREEN — avatar fills entire frame.
           STITCHED    — stitched multi-clip avatar; assembled as HALF_SCREEN.
+
+        Unit A3: ``keyword_punches`` + ``sfx_events`` flow through to
+        ``VideoEditor.assemble``; only BROLL_BODY currently consumes them.
         """
         output_path = f"output/video/{filename}"
         layout = job.avatar_layout
@@ -547,6 +597,8 @@ class CommonCreedPipeline:
                 caption_segments=job.caption_segments,
                 output_path=output_path,
                 layout=AvatarLayout.SKIPPED,
+                keyword_punches=keyword_punches,
+                sfx_events=sfx_events,
             )
 
         # crop_to_portrait is now driven by the client, not a config string comparison
@@ -561,6 +613,8 @@ class CommonCreedPipeline:
                 output_path=output_path,
                 crop_to_portrait=crop,
                 layout=AvatarLayout.HALF_SCREEN,
+                keyword_punches=keyword_punches,
+                sfx_events=sfx_events,
             )
 
         if layout == AvatarLayout.FULL_SCREEN:
@@ -572,6 +626,21 @@ class CommonCreedPipeline:
                 output_path=output_path,
                 crop_to_portrait=crop,
                 layout=AvatarLayout.FULL_SCREEN,
+                keyword_punches=keyword_punches,
+                sfx_events=sfx_events,
+            )
+
+        if layout == AvatarLayout.BROLL_BODY:
+            return self.video_editor.assemble(
+                avatar_path=avatar_path,
+                broll_path=job.broll_path,
+                audio_path=job.trimmed_audio_path,
+                caption_segments=job.caption_segments,
+                output_path=output_path,
+                crop_to_portrait=crop,
+                layout=AvatarLayout.BROLL_BODY,
+                keyword_punches=keyword_punches,
+                sfx_events=sfx_events,
             )
 
         # Fallback — treat unknown layouts as HALF_SCREEN
@@ -584,6 +653,8 @@ class CommonCreedPipeline:
             output_path=output_path,
             crop_to_portrait=crop,
             layout=AvatarLayout.HALF_SCREEN,
+            keyword_punches=keyword_punches,
+            sfx_events=sfx_events,
         )
 
     # ─── Private: generation helpers ──────────────────────────────────────
@@ -668,6 +739,53 @@ class CommonCreedPipeline:
 def _safe(title: str) -> str:
     """Sanitize a topic title for use in file paths."""
     return re.sub(r"[^a-z0-9_]", "_", title.lower())[:40]
+
+
+def _derive_sfx_events(job: "VideoJob", caption_segments: list[dict]) -> list:
+    """Derive ``SfxEvent`` timeline events from a ``VideoJob`` (Unit A3).
+
+    Sources:
+      * Each keyword-punch on the job → a ``punch`` event at ``t_start``.
+      * Each tweet-reveal / split-screen reveal → a ``reveal`` event at 0.0
+        (landing roughly on the first visible frame of the reveal).
+
+    Cut events for b-roll segment boundaries are NOT derived here because
+    the current pipeline does not expose a machine-readable cut list
+    (the b-roll is a single continuous clip). This is additive-only —
+    later units can populate cuts without touching A3 wiring.
+
+    Never raises — returns ``[]`` on any failure so assembly keeps shipping.
+    """
+    try:
+        try:
+            from audio.sfx import SfxEvent
+        except ImportError:
+            from scripts.audio.sfx import SfxEvent
+
+        events: list = []
+        # Punch SFX for each keyword-punch.
+        for p in getattr(job, "keyword_punches", []) or []:
+            t = getattr(p, "t_start", None)
+            if t is None:
+                continue
+            intensity = getattr(p, "intensity", "medium")
+            # Map extractor intensity (light/medium/heavy) to SFX intensity
+            # (light/heavy) — medium collapses into light.
+            sfx_intensity = "heavy" if intensity == "heavy" else "light"
+            events.append(SfxEvent(
+                t_seconds=float(t),
+                category="punch",
+                intensity=sfx_intensity,
+            ))
+
+        # Reveal SFX when a tweet_quote or split_screen_pair signal fired.
+        if getattr(job, "tweet_quote", None) or getattr(job, "split_screen_pair", None):
+            events.append(SfxEvent(t_seconds=0.0, category="reveal", intensity="heavy"))
+
+        return events
+    except Exception as exc:
+        logger.warning("SFX event derivation failed: %s — continuing without sfx", exc)
+        return []
 
 
 # ─── CLI entry point ──────────────────────────────────────────────────────

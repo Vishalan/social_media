@@ -611,6 +611,40 @@ def step_assemble(
 
     print(f"  {_PASS}  Transcribed in {time.monotonic()-t0:.1f}s  ({len(caption_segments)} words)")
 
+    # ── Unit A3: keyword-punch extraction (failure-isolated). ──
+    # Mirrors the commoncreed_pipeline step between transcribe and assemble.
+    keyword_punches: list = []
+    try:
+        from anthropic import AsyncAnthropic
+        from content_gen.keyword_extractor import extract_keyword_punches
+        anthropic_client = AsyncAnthropic(api_key=_env("ANTHROPIC_API_KEY"))
+        punches = asyncio.run(extract_keyword_punches(
+            script_text=script_text or topic.get("title", ""),
+            caption_segments=caption_segments,
+            anthropic_client=anthropic_client,
+        ))
+        keyword_punches = list(punches)
+        print(f"  {_PASS}  [A3] extracted {len(keyword_punches)} keyword punches")
+    except Exception as _e:
+        print(f"  ⚠  [A3] keyword extraction crashed (non-fatal): {_e}")
+        keyword_punches = []
+
+    # ── SFX event derivation (best-effort). ──
+    sfx_events: list = []
+    try:
+        from audio.sfx import SfxEvent
+        for p in keyword_punches:
+            intensity = "heavy" if p.intensity == "heavy" else "light"
+            sfx_events.append(SfxEvent(
+                t_seconds=float(p.t_start),
+                category="punch",
+                intensity=intensity,
+            ))
+        print(f"  {_PASS}  [A3] derived {len(sfx_events)} sfx events")
+    except Exception as _e:
+        print(f"  ⚠  [A3] sfx derivation failed (non-fatal): {_e}")
+        sfx_events = []
+
     # Use raw audio (no trim_silence) — avatar windows were computed from
     # this duration, so the assembler must use the same timeline.
     editor = VideoEditor(output_dir="output/video")
@@ -629,6 +663,8 @@ def step_assemble(
             crop_to_portrait=False,
             layout=AvatarLayout.BROLL_BODY,
             thumbnail_path=topic.get("thumbnail_path"),
+            keyword_punches=keyword_punches,
+            sfx_events=sfx_events,
         )
     except subprocess.CalledProcessError as e:
         print(f"  {_FAIL}  FFmpeg failed (exit {e.returncode}):")

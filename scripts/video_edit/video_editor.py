@@ -1,12 +1,122 @@
 import logging
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Any, Iterable, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _prepend_silent_leader(audio_path: str, leader_s: float) -> str:
+    """Prepend ``leader_s`` seconds of silence to ``audio_path``.
+
+    Returns a new tempfile path (WAV). Caller owns the file — must
+    ``unlink`` when done. Used by the A3 engagement pass to align the
+    SFX-mixed audio with the thumbnail-hold shift.
+    """
+    fd, out_path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    Path(out_path).unlink(missing_ok=True)
+    # Build via ffmpeg: concat (anullsrc of leader_s) + audio_path.
+    # anullsrc gives us a clean silent prefix at 44.1kHz stereo.
+    filter_complex = (
+        f"anullsrc=r=44100:cl=stereo,atrim=0:{leader_s:.3f}[sil];"
+        f"[sil][1:a]concat=n=2:v=0:a=1[aout]"
+    )
+    cmd = [
+        FFMPEG, "-y",
+        "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo",
+        "-i", audio_path,
+        "-filter_complex", filter_complex,
+        "-map", "[aout]",
+        out_path,
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return out_path
+
+
+def _shift_keyword_punches(punches: Iterable[Any], offset_s: float) -> list:
+    """Shift each ``KeywordPunch``-shaped tuple by ``offset_s`` seconds.
+
+    We use ``getattr`` + ``_replace`` so the helper works with the
+    NamedTuple from ``scripts.content_gen.keyword_extractor`` without
+    introducing a hard import dependency here.
+    """
+    if not punches or offset_s == 0.0:
+        return list(punches)
+    shifted: list = []
+    for p in punches:
+        t_start = getattr(p, "t_start", None)
+        t_end = getattr(p, "t_end", None)
+        if t_start is None or t_end is None:
+            shifted.append(p)
+            continue
+        if hasattr(p, "_replace"):
+            shifted.append(p._replace(
+                t_start=t_start + offset_s,
+                t_end=t_end + offset_s,
+            ))
+        else:
+            shifted.append(p)
+    return shifted
+
+
+def _shift_sfx_events(events: Iterable[Any], offset_s: float) -> list:
+    """Shift each ``SfxEvent``-shaped tuple by ``offset_s`` seconds."""
+    if not events or offset_s == 0.0:
+        return list(events)
+    shifted: list = []
+    for e in events:
+        t = getattr(e, "t_seconds", None)
+        if t is None:
+            shifted.append(e)
+            continue
+        if hasattr(e, "_replace"):
+            shifted.append(e._replace(t_seconds=t + offset_s))
+        else:
+            shifted.append(e)
+    return shifted
+
+
+def _build_zoom_expression(
+    keyword_punches: Iterable[Any],
+    punch_duration_s: float = 0.2,
+) -> str:
+    """Build the ffmpeg scale ``w``/``h`` zoom expression for keyword punches.
+
+    Each punch contributes a quadratic-ish bell curve peaking at
+    ``1 + delta`` over ``punch_duration_s`` seconds, where ``delta`` is a
+    function of intensity (light=0.10, medium=0.15, heavy=0.20).
+
+    Using a scalar ``sin(PI*(t-t0)/dur)`` bell: starts at 0, peaks at 1
+    at ``t0 + dur/2``, back to 0 at ``t0 + dur``. With 4–7 well-separated
+    punches in a 60 s short, the sum is well-behaved (overlap is rare and
+    capped by the bell shape).
+
+    Returns an ffmpeg-expression string that evaluates to a zoom factor
+    ``Z(t) ≥ 1.0``. When there are no punches, returns the literal
+    ``"1.0"`` so the filter graph stays valid.
+    """
+    intensities = {
+        "light": 0.10,
+        "medium": 0.15,
+        "heavy": 0.20,
+    }
+    parts: list[str] = ["1.0"]
+    for p in keyword_punches:
+        t0 = float(getattr(p, "t_start", 0.0))
+        intensity = getattr(p, "intensity", "medium")
+        delta = intensities.get(intensity, intensities["medium"])
+        t1 = t0 + punch_duration_s
+        # sin bell: nonzero only on [t0, t1], peak at the midpoint.
+        parts.append(
+            f"{delta}*if(between(t\\,{t0:.3f}\\,{t1:.3f})\\,"
+            f"sin(PI*(t-{t0:.3f})/{punch_duration_s:.3f})\\,0)"
+        )
+    return "+".join(parts)
 
 
 def _detect_face_center_y(frame) -> Optional[int]:
@@ -137,6 +247,8 @@ class VideoEditor:
         crop_to_portrait: bool = False,
         layout=None,  # AvatarLayout | None — import kept lazy to avoid circular deps
         thumbnail_path: "Path | str | None" = None,
+        keyword_punches: Optional[list] = None,
+        sfx_events: Optional[list] = None,
     ) -> str:
         """
         Assemble a 9:16 vertical short (1080x1920).
@@ -150,6 +262,16 @@ class VideoEditor:
         caption_segments: list of {word, start, end} dicts from faster-whisper.
         crop_to_portrait: set True when avatar is 16:9 landscape (HeyGen output) —
             center-crops to 9:16 before compositing. Native 9:16 providers leave this False.
+
+        Unit A3 engagement-layer arguments (currently honoured only by
+        ``BROLL_BODY``; other layouts ignore them gracefully):
+          keyword_punches: list of ``KeywordPunch`` (or compatible tuples with
+              ``t_start``/``t_end``/``intensity`` attributes). Each drives a
+              ~200 ms zoom bell curve at its timestamp.
+          sfx_events: list of ``SfxEvent`` to pre-mix into the voiceover
+              track via ``scripts.audio.sfx.mix_sfx_into_audio`` before the
+              combined final pass.
+
         Returns output_path.
         """
         # Import here to avoid requiring avatar_gen as a hard dep for video_edit tests
@@ -173,6 +295,8 @@ class VideoEditor:
             return self._assemble_broll_body(
                 avatar_path, broll_path, audio_path, caption_segments, output_path, crop_to_portrait,
                 thumbnail_path=thumbnail_path,
+                keyword_punches=keyword_punches or [],
+                sfx_events=sfx_events or [],
             )
         # HALF_SCREEN (default)
         return self._assemble_half_screen(
@@ -273,6 +397,8 @@ class VideoEditor:
         output_path: str,
         crop_to_portrait: bool = False,
         thumbnail_path: "Path | str | None" = None,
+        keyword_punches: Optional[list] = None,
+        sfx_events: Optional[list] = None,
     ) -> str:
         """BROLL_BODY layout: mixed body with full-screen b-roll, half-and-half,
         and one full-avatar moment mid-body for visual variety.
@@ -540,11 +666,33 @@ class VideoEditor:
 
             final_clip = VideoClip(wrapped_make_frame, duration=final_total_duration).with_fps(24)
             final = final_clip.with_audio(full_audio)
-            return self._write_with_captions(final, shifted_captions, output_path)
+            # Shift engagement-layer event timestamps by the thumbnail hold so
+            # zoom-punches + SFX stay aligned with the shifted caption track.
+            shifted_punches = _shift_keyword_punches(
+                keyword_punches or [], _THUMBNAIL_HOLD_S,
+            )
+            shifted_sfx = _shift_sfx_events(sfx_events or [], _THUMBNAIL_HOLD_S)
+            return self._finalize(
+                final,
+                shifted_captions,
+                output_path,
+                audio_path=audio_path,
+                thumbnail_hold_s=_THUMBNAIL_HOLD_S,
+                keyword_punches=shifted_punches,
+                sfx_events=shifted_sfx,
+            )
 
         final_clip = VideoClip(final_make_frame, duration=total_duration).with_fps(24)
         final = final_clip.with_audio(audio)
-        return self._write_with_captions(final, caption_segments, output_path)
+        return self._finalize(
+            final,
+            caption_segments,
+            output_path,
+            audio_path=audio_path,
+            thumbnail_hold_s=0.0,
+            keyword_punches=keyword_punches or [],
+            sfx_events=sfx_events or [],
+        )
 
     def _assemble_broll_only(
         self,
@@ -627,6 +775,183 @@ class VideoEditor:
                 stderr=result.stderr,
             )
         return output_path
+
+    # ── Unit A3: engagement-layer final pass ─────────────────────────────
+    def _finalize(
+        self,
+        clip,
+        caption_segments: list[dict],
+        output_path: str,
+        audio_path: str,
+        thumbnail_hold_s: float = 0.0,
+        keyword_punches: Optional[list] = None,
+        sfx_events: Optional[list] = None,
+    ) -> str:
+        """Route to the combined engagement pass when A3 inputs are present.
+
+        Legacy callers with no ``keyword_punches`` / ``sfx_events`` stay on
+        the two-pass ``_write_with_captions`` flow so this change is
+        additive-only at the call-site level. When either input is
+        non-empty we route to :meth:`_apply_engagement_pass`, which folds
+        the MoviePy render + ass burn + zoompan + SFX mix into a single
+        combined ffmpeg final pass.
+        """
+        has_engagement = bool(keyword_punches) or bool(sfx_events)
+        if not has_engagement:
+            return self._write_with_captions(clip, caption_segments, output_path)
+
+        # Render the base video to a tmp mp4 (same as _write_with_captions),
+        # then hand off to the combined A3 pass.
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            tmp_video = tmp.name
+        clip.write_videofile(
+            tmp_video, codec="libx264", audio_codec="aac", fps=24, logger=None,
+        )
+
+        # Build the ASS subtitle file (empty if no captions).
+        if caption_segments:
+            with tempfile.NamedTemporaryFile(
+                suffix=".ass", delete=False, mode="w", encoding="utf-8",
+            ) as ass_tmp:
+                ass_path = ass_tmp.name
+                ass_tmp.write(self._build_ass_captions(caption_segments))
+        else:
+            ass_path = ""
+
+        try:
+            return self._apply_engagement_pass(
+                video_path=tmp_video,
+                voiceover_path=audio_path,
+                ass_path=ass_path,
+                keyword_punches=keyword_punches or [],
+                sfx_events=sfx_events or [],
+                output_path=output_path,
+                thumbnail_hold_s=thumbnail_hold_s,
+            )
+        finally:
+            Path(tmp_video).unlink(missing_ok=True)
+            if ass_path:
+                Path(ass_path).unlink(missing_ok=True)
+
+    def _apply_engagement_pass(
+        self,
+        video_path: str,
+        voiceover_path: str,
+        ass_path: str,
+        keyword_punches: list,
+        sfx_events: list,
+        output_path: str,
+        thumbnail_hold_s: float = 0.0,
+    ) -> str:
+        """Unit A3 — combined zoompan + ASS burn + SFX-mix final pass.
+
+        Design: the base video has already been rendered to ``video_path``
+        by the unified ``final_make_frame`` pipeline. This method runs
+        **after** that render — it does not mutate the make_frame — so the
+        Tier 0 invariant (one unified timeline, one make_frame per second)
+        is preserved.
+
+        Steps:
+
+        1. Pre-render the SFX-enhanced audio track via Unit 0.3's
+           ``mix_sfx_into_audio``. With ``thumbnail_hold_s`` we prepend a
+           silent leader to keep the voiceover aligned with the held
+           thumbnail frame.
+        2. Run ONE ffmpeg invocation with a single filter_complex that:
+             - applies a time-varying scale+crop for the zoom-punches,
+             - burns the ASS captions on top,
+             - produces a fresh re-encoded AAC audio track from the
+               pre-mixed SFX track.
+           This is effectively one re-encode (the Unit 0.3 step prerenders
+           the SFX track but the SFX prerender is an amix-only pass, not
+           a video pass, so only the video is re-encoded once).
+
+        SFX-track lifecycle: ``tempfile.mkstemp(suffix=".wav")`` managed
+        via a ``try/finally`` — the file is unlinked after ffmpeg exits
+        regardless of outcome. Chosen over a persistent path so the
+        engagement pass leaves no footprint on disk on either success or
+        failure.
+        """
+        # 1. Pre-render SFX track (voice + sfx mixed).
+        sfx_fd, sfx_track_path = tempfile.mkstemp(suffix=".wav")
+        os.close(sfx_fd)
+        Path(sfx_track_path).unlink(missing_ok=True)  # mkstemp creates it; rm so ffmpeg can write
+
+        prepared_audio_path = voiceover_path
+        silent_leader_path: Optional[str] = None
+        try:
+            if thumbnail_hold_s > 0.0:
+                # Prepend a silent leader to the voiceover so the
+                # mixed-sfx timeline (which uses absolute seconds) lines
+                # up with the shifted caption/zoom timeline.
+                silent_leader_path = _prepend_silent_leader(
+                    voiceover_path, thumbnail_hold_s,
+                )
+                prepared_audio_path = silent_leader_path
+
+            # Use Unit 0.3 to build the final audio track (voice + sfx).
+            try:
+                from audio.sfx import mix_sfx_into_audio
+            except ImportError:  # pragma: no cover
+                from scripts.audio.sfx import mix_sfx_into_audio
+
+            if sfx_events:
+                mix_sfx_into_audio(
+                    audio_path=prepared_audio_path,
+                    sfx_events=sfx_events,
+                    output_path=sfx_track_path,
+                    seed=0,
+                )
+                audio_input_path = sfx_track_path
+            else:
+                # No SFX → feed the prepared voiceover directly.
+                audio_input_path = prepared_audio_path
+
+            # 2. Build the combined filter_complex.
+            zoom_expr = _build_zoom_expression(keyword_punches)
+            w = self.OUTPUT_WIDTH
+            h = self.OUTPUT_HEIGHT
+            # scale first (up to Z*w x Z*h), then crop back to (w, h)
+            # centred. Using eval=frame so the expression is evaluated
+            # on every frame rather than only once at graph init.
+            v_filters = [
+                f"scale=w='iw*({zoom_expr})':h='ih*({zoom_expr})':eval=frame",
+                f"crop={w}:{h}",
+            ]
+            if ass_path:
+                v_filters.append(f"ass={ass_path}")
+            video_chain = f"[0:v]{','.join(v_filters)}[vout]"
+            filter_complex = video_chain
+
+            cmd = [
+                FFMPEG, "-y",
+                "-i", video_path,
+                "-i", audio_input_path,
+                "-filter_complex", filter_complex,
+                "-map", "[vout]",
+                "-map", "1:a",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest",
+                output_path,
+            ]
+            logger.info(
+                "engagement pass: %d punches, %d sfx events, zoom_expr=%s",
+                len(keyword_punches), len(sfx_events),
+                zoom_expr if len(zoom_expr) < 120 else zoom_expr[:117] + "...",
+            )
+            result = subprocess.run(cmd, capture_output=True)
+            if result.returncode != 0:
+                raise subprocess.CalledProcessError(
+                    result.returncode, result.args,
+                    output=result.stdout,
+                    stderr=result.stderr,
+                )
+            return output_path
+        finally:
+            Path(sfx_track_path).unlink(missing_ok=True)
+            if silent_leader_path:
+                Path(silent_leader_path).unlink(missing_ok=True)
 
     def _build_ass_captions(self, segments: list[dict]) -> str:
         """Build an ASS subtitle file with per-word animated captions (Unit A2).
