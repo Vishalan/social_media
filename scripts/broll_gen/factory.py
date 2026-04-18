@@ -25,6 +25,7 @@ from broll_gen.code_walkthrough import CodeWalkthroughGenerator
 from broll_gen.headline_burst import HeadlineBurstGenerator
 from broll_gen.image_montage import ImageMontageGenerator
 from broll_gen.phone_highlight import PhoneHighlightGenerator
+from broll_gen.split_screen import SplitScreenGenerator
 from broll_gen.stats_card import StatsCardGenerator
 from broll_gen.stock_video import StockVideoGenerator
 
@@ -68,6 +69,7 @@ def make_broll_generator(type_name: str, **kwargs) -> BrollBase:
         logger.info("B-roll generator: BrowserVisitGenerator")
         return BrowserVisitGenerator(
             anthropic_client=kwargs.get("anthropic_client"),
+            width_override=kwargs.get("width_override"),
         )
 
     if type_name == "image_montage":
@@ -75,6 +77,7 @@ def make_broll_generator(type_name: str, **kwargs) -> BrollBase:
         return ImageMontageGenerator(
             pexels_api_key=kwargs.get("pexels_api_key", ""),
             bing_api_key=kwargs.get("bing_api_key", ""),
+            width_override=kwargs.get("width_override"),
         )
 
     if type_name == "code_walkthrough":
@@ -87,12 +90,14 @@ def make_broll_generator(type_name: str, **kwargs) -> BrollBase:
         logger.info("B-roll generator: StatsCardGenerator")
         return StatsCardGenerator(
             anthropic_client=kwargs["anthropic_client"],
+            width_override=kwargs.get("width_override"),
         )
 
     if type_name == "headline_burst":
         logger.info("B-roll generator: HeadlineBurstGenerator")
         return HeadlineBurstGenerator(
             anthropic_client=kwargs["anthropic_client"],
+            width_override=kwargs.get("width_override"),
         )
 
     if type_name == "ai_video":
@@ -121,9 +126,8 @@ def make_broll_generator(type_name: str, **kwargs) -> BrollBase:
         )
 
     if type_name == "split_screen":
-        raise NotImplementedError(
-            "split_screen not yet wired — lands in Unit B2"
-        )
+        logger.info("B-roll generator: SplitScreenGenerator")
+        return SplitScreenGenerator()
 
     if type_name == "cinematic_chart":
         raise NotImplementedError(

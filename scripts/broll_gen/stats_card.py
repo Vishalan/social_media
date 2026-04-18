@@ -126,10 +126,11 @@ def _draw_gradient(img: Image.Image) -> None:
     draw = ImageDraw.Draw(img)
     r0, g0, b0 = _BG_TOP
     r1, g1, b1 = _BG_BOT
-    for y in range(_H):
-        t = y / (_H - 1)
+    w, h = img.size
+    for y in range(h):
+        t = y / max(h - 1, 1)
         draw.line(
-            [(0, y), (_W, y)],
+            [(0, y), (w, y)],
             fill=(
                 int(r0 + (r1 - r0) * t),
                 int(g0 + (g1 - g0) * t),
@@ -138,13 +139,20 @@ def _draw_gradient(img: Image.Image) -> None:
         )
 
 
-def _draw_ring(draw: ImageDraw.ImageDraw, progress: float) -> None:
+def _draw_ring(
+    draw: ImageDraw.ImageDraw,
+    progress: float,
+    cx: int | None = None,
+    cy: int | None = None,
+) -> None:
     """Draw the background track ring and the filled progress arc."""
+    rcx = _RING_CX if cx is None else cx
+    rcy = _RING_CY if cy is None else cy
     bbox = [
-        _RING_CX - _RING_R,
-        _RING_CY - _RING_R,
-        _RING_CX + _RING_R,
-        _RING_CY + _RING_R,
+        rcx - _RING_R,
+        rcy - _RING_R,
+        rcx + _RING_R,
+        rcy + _RING_R,
     ]
     # Track (full ring, dim)
     draw.arc(bbox, start=0, end=360, fill=_RING_BG, width=_RING_THICK)
@@ -156,8 +164,8 @@ def _draw_ring(draw: ImageDraw.ImageDraw, progress: float) -> None:
 
         # Bright dot at the arc tip
         tip_rad = math.radians(end_angle)
-        tx = int(_RING_CX + _RING_R * math.cos(tip_rad))
-        ty = int(_RING_CY + _RING_R * math.sin(tip_rad))
+        tx = int(rcx + _RING_R * math.cos(tip_rad))
+        ty = int(rcy + _RING_R * math.sin(tip_rad))
         r = _RING_THICK // 2 + 2
         draw.ellipse([tx - r, ty - r, tx + r, ty + r], fill=_ACCENT)
 
@@ -177,11 +185,25 @@ def _render_stat_frame(
     frame_idx: int,          # 0 … _FRAMES_PER_STAT-1
     stat_idx: int,
     total_stats: int,
+    canvas_w: int | None = None,
 ) -> Image.Image:
-    """Render one animation frame for one stat."""
-    img = Image.new("RGB", (_W, _H))
+    """Render one animation frame for one stat.
+
+    ``canvas_w`` overrides the default card width (``_W``). Height is held at
+    ``_H`` — the card is designed as a half-screen slot so vertical layout is
+    the invariant. When ``canvas_w`` is <=0 or ``None`` the default width is
+    used. At narrow widths (e.g. 540) the ring geometry (``_RING_R=290``)
+    does not auto-scale; that is flagged as a follow-up per Unit B2 spec.
+    """
+    w = int(canvas_w) if canvas_w else _W
+    img = Image.new("RGB", (w, _H))
     _draw_gradient(img)
     draw = ImageDraw.Draw(img)
+    # Horizontal anchors derived from the actual canvas width. Ring geometry
+    # (radius/thickness) is held at module defaults per the "no relayout"
+    # constraint — a narrow canvas may visually clip the ring and text.
+    ring_cx = w // 2
+    ring_cy = _RING_CY
 
     # Progress (0→1 during count phase, stays 1 during hold)
     if frame_idx < _COUNT_FRAMES:
@@ -190,7 +212,7 @@ def _render_stat_frame(
     else:
         progress = 1.0
 
-    _draw_ring(draw, progress)
+    _draw_ring(draw, progress, cx=ring_cx, cy=ring_cy)
 
     numeric: float = float(stat["numeric"])
     unit: str = stat["unit"]
@@ -217,8 +239,8 @@ def _render_stat_frame(
     total_w = val_w + gap + unit_w
 
     # Draw value + unit centred inside the ring
-    left_x = _RING_CX - total_w // 2
-    val_y = _RING_CY - (val_bbox[3] - val_bbox[1]) // 2
+    left_x = ring_cx - total_w // 2
+    val_y = ring_cy - (val_bbox[3] - val_bbox[1]) // 2
 
     # Subtle glow behind number (slightly larger text in a dim colour)
     draw.text(
@@ -234,14 +256,14 @@ def _render_stat_frame(
     draw.text((unit_x, unit_y), unit, fill=_UNIT_COLOR, font=unit_font)
 
     # Label below the ring
-    label_y = _RING_CY + _RING_R + 40
-    draw.text((_W // 2, label_y), label.upper(), fill=_LABEL_COLOR,
+    label_y = ring_cy + _RING_R + 40
+    draw.text((w // 2, label_y), label.upper(), fill=_LABEL_COLOR,
               font=label_font, anchor="mt")
 
     # Dot indicators at the bottom
     dot_spacing = 24
     total_dots_w = total_stats * dot_spacing
-    dot_x0 = (_W - total_dots_w) // 2 + dot_spacing // 2
+    dot_x0 = (w - total_dots_w) // 2 + dot_spacing // 2
     dot_y = _H - 50
     for d in range(total_stats):
         cx = dot_x0 + d * dot_spacing
@@ -250,7 +272,7 @@ def _render_stat_frame(
         draw.ellipse([cx - r, dot_y - r, cx + r, dot_y + r], fill=fill)
 
     # Thin top accent line
-    draw.rectangle([0, 0, _W, 4], fill=_ACCENT)
+    draw.rectangle([0, 0, w, 4], fill=_ACCENT)
 
     return img
 
@@ -312,8 +334,20 @@ class StatsCardGenerator(BrollBase):
         BrollError: If Claude returns fewer than 2 stats, or if FFmpeg fails.
     """
 
-    def __init__(self, anthropic_client: AsyncAnthropic) -> None:
+    def __init__(
+        self,
+        anthropic_client: AsyncAnthropic,
+        width_override: int | None = None,
+    ) -> None:
+        """
+        Args:
+            anthropic_client: AsyncAnthropic client for extracting stats.
+            width_override: If provided, overrides the default card width
+                (``_W`` = 1080). At narrow widths (e.g. 540) the ring
+                geometry does not auto-scale; flagged as a follow-up.
+        """
         self._client = anthropic_client
+        self._canvas_w = int(width_override) if width_override else _W
 
     async def generate(
         self,
@@ -368,7 +402,10 @@ class StatsCardGenerator(BrollBase):
             frame_paths: list[Path] = []
             for s_idx, stat in enumerate(stats):
                 for f_idx in range(_FRAMES_PER_STAT):
-                    img = _render_stat_frame(stat, f_idx, s_idx, len(stats))
+                    img = _render_stat_frame(
+                        stat, f_idx, s_idx, len(stats),
+                        canvas_w=self._canvas_w,
+                    )
                     p = tmp_dir / f"f_{s_idx:02d}_{f_idx:03d}.png"
                     img.save(p, optimize=False)
                     frame_paths.append(p)

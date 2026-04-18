@@ -155,9 +155,17 @@ def _render_line_frame(
     line_idx: int,
     total_lines: int,
     flat_color: tuple,
+    canvas_w: int | None = None,
 ) -> Image.Image:
-    """Render one animation frame for one headline line."""
-    img = Image.new("RGB", (_W, _H), flat_color)
+    """Render one animation frame for one headline line.
+
+    ``canvas_w`` overrides the default card width (``_W`` = 1080). Height is
+    held at ``_H``. Per Unit B2's "no relayout" constraint, font-size
+    auto-scaling already happens via ``_auto_font_size`` so text always fits
+    the narrower canvas.
+    """
+    w = int(canvas_w) if canvas_w else _W
+    img = Image.new("RGB", (w, _H), flat_color)
     draw = ImageDraw.Draw(img)
 
     # Alpha / scale based on fade-in progress
@@ -169,7 +177,7 @@ def _render_line_frame(
         alpha = 1.0
         scale = 1.0
 
-    max_text_w = int(_W * 0.88)
+    max_text_w = int(w * 0.88)
     font, fsize = _auto_font_size(line, max_text_w, _BOLD_CANDIDATES, max_size=220, min_size=80)
 
     # Render text to a temp surface so we can scale it for the pop-in effect
@@ -188,7 +196,7 @@ def _render_line_frame(
         _text_fill = (text_r, text_g, text_b)
         _shadow_fill = (0, 0, 0)
 
-    cx = _W // 2
+    cx = w // 2
     cy = _H // 2
 
     # Shadow
@@ -215,14 +223,14 @@ def _render_line_frame(
 
     # Top + bottom accent bars
     bar_alpha = int(255 * alpha)
-    draw.rectangle([0, 0, _W, 5], fill=_ACCENT)
-    draw.rectangle([0, _H - 5, _W, _H], fill=_ACCENT)
+    draw.rectangle([0, 0, w, 5], fill=_ACCENT)
+    draw.rectangle([0, _H - 5, w, _H], fill=_ACCENT)
 
     # Thin horizontal rule above text (decorative)
     rule_y = cy - int(fsize * scale * 0.75)
     rule_alpha = int(80 * alpha)
     draw.line(
-        [(_W // 4, rule_y), (3 * _W // 4, rule_y)],
+        [(w // 4, rule_y), (3 * w // 4, rule_y)],
         fill=(rule_alpha, rule_alpha, int(rule_alpha * 1.5)),
         width=1,
     )
@@ -292,8 +300,20 @@ class HeadlineBurstGenerator(BrollBase):
         BrollError: If Claude returns fewer than 3 lines or FFmpeg fails.
     """
 
-    def __init__(self, anthropic_client: AsyncAnthropic) -> None:
+    def __init__(
+        self,
+        anthropic_client: AsyncAnthropic,
+        width_override: int | None = None,
+    ) -> None:
+        """
+        Args:
+            anthropic_client: AsyncAnthropic client for extracting punchy lines.
+            width_override: If provided, overrides the default card width
+                (``_W`` = 1080). Font size auto-scales via ``_auto_font_size``
+                so text fits the narrower canvas (e.g. 540).
+        """
         self._client = anthropic_client
+        self._canvas_w = int(width_override) if width_override else _W
 
     async def generate(
         self,
@@ -350,7 +370,8 @@ class HeadlineBurstGenerator(BrollBase):
                 flat_color = _FLAT_COLORS[l_idx % len(_FLAT_COLORS)]
                 for f_idx in range(_FRAMES_PER_LINE):
                     img = _render_line_frame(
-                        line, f_idx, l_idx, len(lines), flat_color
+                        line, f_idx, l_idx, len(lines), flat_color,
+                        canvas_w=self._canvas_w,
                     )
                     p = tmp_dir / f"f_{l_idx:02d}_{f_idx:03d}.png"
                     img.save(p)

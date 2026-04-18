@@ -54,9 +54,20 @@ class ImageMontageGenerator(BrollBase):
         self,
         pexels_api_key: str = "",
         bing_api_key: str = "",
+        width_override: int | None = None,
     ) -> None:
+        """
+        Args:
+            pexels_api_key: Pexels API key (optional).
+            bing_api_key: Bing Image Search key (optional).
+            width_override: If provided, overrides the output canvas width
+                from the default ``1080``. Height scales implicitly from the
+                canvas math. Used by ``SplitScreenGenerator`` to render
+                540-wide half-montage clips for hstack composition.
+        """
         self._pexels_key = pexels_api_key
         self._bing_key = bing_api_key
+        self._canvas_w = int(width_override) if width_override else 1080
 
     # ─── Public interface ──────────────────────────────────────────────────
 
@@ -266,6 +277,7 @@ class ImageMontageGenerator(BrollBase):
         per_clip_s = max(3.0, target_duration_s / len(images))
 
         # Build per-image filter chains
+        cw = self._canvas_w
         filter_parts: list[str] = []
         for idx in range(len(images)):
             zoompan_d = int(fps * per_clip_s)
@@ -275,8 +287,8 @@ class ImageMontageGenerator(BrollBase):
                 "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,"
                 f"zoompan=z='zoom+0.001':d={zoompan_d}:s=1920x1080,"
                 "setpts=PTS-STARTPTS,"
-                "scale=1080:960:force_original_aspect_ratio=decrease,"
-                "pad=1080:960:(ow-iw)/2:(oh-ih)/2:black"
+                f"scale={cw}:960:force_original_aspect_ratio=decrease,"
+                f"pad={cw}:960:(ow-iw)/2:(oh-ih)/2:black"
                 f"[v{idx}]"
             )
             filter_parts.append(filt)

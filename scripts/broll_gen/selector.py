@@ -41,8 +41,44 @@ headline_burst beats image_montage for high-impact announcements.
 stock_video beats image_montage for topics with strong cinematic real-world visual potential.
 
 Primary: pick the highest-engagement type for this specific topic.
-Fallback: pick a different type if primary fails (never pick the same type twice).\
+Fallback: pick a different type if primary fails (never pick the same type twice).
+
+Split-screen detection (optional — emit only when the topic is fundamentally \
+an A-vs-B comparison between two named entities):
+If, and only if, the topic is fundamentally a comparison between two named entities, \
+also populate ``split_screen_pair`` with one generator per side.
+Detection signals: " vs ", "X versus Y", two named models/products in the title, \
+"before vs after", "A beats B", or side-by-side benchmark comparisons.
+Generator types for each side are restricted to {browser_visit, image_montage, stats_card}.
+If the topic is not a comparison, omit ``split_screen_pair`` entirely (leave it null).\
 """
+
+# Side-generator enum for ``split_screen_pair`` — restricted per Unit B2
+# spec to the generators that support ``width_override``.
+_SPLIT_SIDE_GEN_ENUM = ["browser_visit", "image_montage", "stats_card"]
+
+# Sub-schema for one side of a split_screen_pair. Each side names a generator
+# and carries free-form ``params`` (Haiku fills these with topic/script
+# overrides so each side can narrate its own entity).
+_SPLIT_SIDE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "generator_type": {
+            "type": "string",
+            "enum": _SPLIT_SIDE_GEN_ENUM,
+        },
+        "params": {
+            "type": "object",
+            "description": (
+                "Optional per-side overrides: topic (dict with title/url) "
+                "and script (dict with script text). Other keys are ignored."
+            ),
+            "additionalProperties": True,
+        },
+    },
+    "required": ["generator_type"],
+    "additionalProperties": False,
+}
 
 _RESPONSE_SCHEMA = {
     "type": "object",
@@ -79,6 +115,24 @@ _RESPONSE_SCHEMA = {
                 "cinematic_chart",
             ],
         },
+        # Unit B2 — optional: populated only when the topic is an A-vs-B
+        # comparison between two named entities. Callers lift this onto
+        # VideoJob.split_screen_pair so the split_screen generator is gated
+        # by the presence of this field.
+        "split_screen_pair": {
+            "oneOf": [
+                {"type": "null"},
+                {
+                    "type": "object",
+                    "properties": {
+                        "left": _SPLIT_SIDE_SCHEMA,
+                        "right": _SPLIT_SIDE_SCHEMA,
+                    },
+                    "required": ["left", "right"],
+                    "additionalProperties": False,
+                },
+            ],
+        },
     },
     "required": ["primary", "fallback"],
     "additionalProperties": False,
@@ -92,6 +146,11 @@ class BrollSelector:
 
     def __init__(self, anthropic_client: AsyncAnthropic) -> None:
         self._client = anthropic_client
+        # Unit B2: most-recent Haiku-emitted ``split_screen_pair`` (or None).
+        # Populated as a side-effect of ``select()`` so callers can lift it
+        # onto ``VideoJob.split_screen_pair`` without changing the public
+        # return type of ``select()``.
+        self.last_split_screen_pair: dict | None = None
 
     @staticmethod
     def _compute_forced_primary_candidates(
@@ -175,6 +234,10 @@ class BrollSelector:
             )
             raw = response.content[0].text
             data = json.loads(raw)
+            # Lift Haiku's optional ``split_screen_pair`` onto the selector
+            # instance so downstream orchestration (commoncreed_pipeline) can
+            # copy it onto VideoJob without changing the return contract.
+            self.last_split_screen_pair = data.get("split_screen_pair") or None
             return [data["primary"], data["fallback"]]
         except Exception as exc:
             logger.warning(
@@ -182,4 +245,5 @@ class BrollSelector:
                 exc,
                 _SAFE_DEFAULT,
             )
+            self.last_split_screen_pair = None
             return list(_SAFE_DEFAULT)

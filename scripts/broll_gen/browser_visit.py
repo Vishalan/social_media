@@ -333,8 +333,22 @@ class BrowserVisitGenerator(BrollBase):
         BrollError: For non-article URLs, paywalls, or FFmpeg failure.
     """
 
-    def __init__(self, anthropic_client=None) -> None:
+    def __init__(
+        self,
+        anthropic_client=None,
+        width_override: int | None = None,
+    ) -> None:
+        """
+        Args:
+            anthropic_client: Optional AsyncAnthropic client used by the
+                mixed-timeline planner.
+            width_override: If provided, overrides the Playwright viewport
+                width (and all downstream canvas width math) from the default
+                ``_VIEWPORT_W``. Used by ``SplitScreenGenerator`` to render
+                540 × 1920 half-width clips for hstack composition.
+        """
         self._client = anthropic_client
+        self._viewport_w = int(width_override) if width_override else _VIEWPORT_W
 
     async def generate(
         self,
@@ -426,7 +440,7 @@ class BrowserVisitGenerator(BrollBase):
                 browser = await p.chromium.launch(headless=True)
                 try:
                     page = await browser.new_page(
-                        viewport={"width": _VIEWPORT_W, "height": _VIEWPORT_H}
+                        viewport={"width": self._viewport_w, "height": _VIEWPORT_H}
                     )
                     await page.goto(url, wait_until="domcontentloaded", timeout=18000)
 
@@ -468,8 +482,8 @@ class BrowserVisitGenerator(BrollBase):
                             }
                             return Math.round(maxW || article.getBoundingClientRect().width);
                         }""")
-                        if max_content_w > 100 and max_content_w < _VIEWPORT_W * 0.90:
-                            zoom_factor = (_VIEWPORT_W * 0.95) / max_content_w
+                        if max_content_w > 100 and max_content_w < self._viewport_w * 0.90:
+                            zoom_factor = (self._viewport_w * 0.95) / max_content_w
                             zoom_factor = min(zoom_factor, 1.4)  # nothing gets cut off
                             await page.evaluate(
                                 f"document.documentElement.style.zoom = '{zoom_factor:.2f}'"
@@ -551,7 +565,7 @@ class BrowserVisitGenerator(BrollBase):
                                 clip={
                                     "x": max(0, bx - 20),
                                     "y": clip_y,
-                                    "width": min(bw + 40, _VIEWPORT_W),
+                                    "width": min(bw + 40, self._viewport_w),
                                     "height": min(bh + 200, _VIEWPORT_H),
                                 },
                             )
@@ -823,11 +837,12 @@ class BrowserVisitGenerator(BrollBase):
         pan_x = anim["x"]
         pan_y = anim["y"]
 
+        vw = self._viewport_w
         filt = (
-            f"scale={_VIEWPORT_W}:{_VIEWPORT_H}:force_original_aspect_ratio=increase,"
-            f"crop={_VIEWPORT_W}:{_VIEWPORT_H},"
+            f"scale={vw}:{_VIEWPORT_H}:force_original_aspect_ratio=increase,"
+            f"crop={vw}:{_VIEWPORT_H},"
             f"zoompan=z='{zoom_expr}':x='{pan_x}':y='{pan_y}'"
-            f":d={n_frames}:s={_VIEWPORT_W}x{_VIEWPORT_H}:fps={fps},"
+            f":d={n_frames}:s={vw}x{_VIEWPORT_H}:fps={fps},"
             f"setpts=PTS-STARTPTS"
         )
 
