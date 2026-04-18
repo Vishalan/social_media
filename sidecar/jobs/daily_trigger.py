@@ -97,7 +97,14 @@ def run_daily_trigger() -> dict:
 
         # --- Score the merged candidate set ------------------------------
         try:
-            top = score_topics(all_items, top_n=2)
+            top = score_topics(
+                all_items,
+                top_n=2,
+                provider=getattr(settings, "TOPIC_RANKING_PROVIDER", "anthropic"),
+                model=getattr(settings, "TOPIC_RANKING_MODEL", "") or "claude-sonnet-4-6",
+                ollama_base_url=getattr(settings, "OLLAMA_BASE_URL", ""),
+                anthropic_api_key=getattr(settings, "ANTHROPIC_API_KEY", ""),
+            )
         except Exception as exc:
             logger.error(
                 "daily_trigger: score_topics failed: %s", exc, exc_info=True

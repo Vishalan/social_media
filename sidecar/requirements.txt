@@ -19,3 +19,4 @@ requests==2.*
 python-dotenv==1.*
 pytest==8.*
 trafilatura>=1.6.0
+yt-dlp

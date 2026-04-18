@@ -339,11 +339,14 @@ class PostizClient:
         #   still goes out immediately.
         target = scheduled_slot or datetime.utcnow()
         if target.tzinfo is None:
-            # Treat naive datetimes as UTC for the wire format. Sidecar
-            # internal slot picker uses local time, but Postiz expects ISO
-            # 8601 with explicit Z; the host runs in the owner's TZ so this
-            # round-trip is safe as long as we're consistent.
-            target_utc = target
+            # Container runs in IST (TZ=Asia/Kolkata). Naive datetimes from
+            # compute_next_slot() are IST wall-clock. Convert to UTC for
+            # the Postiz wire format (ISO 8601 + Z suffix).
+            import os
+            tz_offset_s = -(
+                datetime.utcnow() - datetime.now()
+            ).total_seconds()
+            target_utc = target - timedelta(seconds=tz_offset_s)
         else:
             target_utc = target.astimezone(tz=None).replace(tzinfo=None)
         now_utc = datetime.utcnow()

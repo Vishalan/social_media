@@ -32,6 +32,7 @@ from ..config import settings_manager
 from ..meme_pipeline import (
     MemePipelineError,
     apply_credit_overlay,
+    mux_video_audio as _mux_audio,
     normalize_media,
     safe_fetch,
 )
@@ -41,6 +42,148 @@ logger = logging.getLogger(__name__)
 
 
 _MEDIA_WORK_DIR = Path("/app/output/memes")
+
+
+def _prepare_video_preview(cand: dict, candidate_id: int) -> Path | None:
+    """Fetch video + audio, mux, return path to a file with sound.
+
+    Runs in a thread (blocking). Returns None if audio merge isn't possible
+    (no audio_url, fetch fails, etc.) — caller falls back to the raw URL.
+    """
+    preview_dir = _MEDIA_WORK_DIR / f"cand_{candidate_id}"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    preview_path = preview_dir / "preview.mp4"
+    if preview_path.exists():
+        return preview_path
+
+    audio_url = cand.get("audio_url") or ""
+
+    try:
+        if _is_youtube_url(cand["media_url"]):
+            # YouTube: download via yt-dlp (includes audio)
+            _download_youtube(cand["media_url"], preview_path)
+            return preview_path
+
+        # Reddit DASH: fetch video + audio separately, mux
+        if not audio_url:
+            # No audio URL and not YouTube — can't prepare a good preview
+            return None
+        raw_video = preview_dir / "preview_video.mp4"
+        raw_audio = preview_dir / "preview_audio.mp4"
+        safe_fetch(cand["media_url"], raw_video)
+        safe_fetch(audio_url, raw_audio)
+        _mux_audio(raw_video, raw_audio, preview_path)
+        return preview_path
+    except Exception as exc:
+        logger.info(
+            "prepare_video_preview(%s): failed: %s — will send without audio",
+            candidate_id,
+            exc,
+        )
+        return None
+
+
+# ---------------------------------------------------------------------------
+# humor scoring — uses Claude Haiku to rate candidates for comedic value
+# ---------------------------------------------------------------------------
+
+
+def _score_candidates_batch(
+    candidates: list[dict], settings: Any
+) -> dict[str, dict]:
+    """Rate candidates for humor AND niche relevance.
+
+    Uses the configured LLM provider (Ollama local or Anthropic API) with
+    automatic fallback. Returns a dict mapping source_url ->
+    {"humor": float, "relevance": float}. Candidates that can't be scored
+    get neutral 5.0.
+    """
+    if not candidates:
+        return {}
+
+    items_text = []
+    for i, c in enumerate(candidates):
+        eng = c.get("engagement") or {}
+        sub = eng.get("subreddit", "?")
+        items_text.append(
+            f"{i+1}. [{c.get('media_type','?')}] r/{sub}: {c.get('title','')[:120]}"
+        )
+
+    prompt = (
+        "You are scoring meme candidates for @commoncreed, an Instagram page "
+        "about AI, tech, software engineering, and developer culture.\n\n"
+        "For each candidate below, provide TWO scores (0-10):\n"
+        "1. HUMOR — Is it genuinely funny? Would it get laughs? Score 0 for "
+        "wholesome, inspirational, sad, political, or not-funny content.\n"
+        "2. RELEVANCE — Is it related to: programming, software engineering, "
+        "AI/ML, tech industry, developer life, CS memes, gadgets, startups, "
+        "tech culture? Score 10 for directly about coding/tech. Score 5 for "
+        "tangentially related (science, gaming tech, clever engineering). "
+        "Score 0-2 for completely unrelated (animals, sports, cooking, nature, "
+        "random viral clips).\n\n"
+        + "\n".join(items_text)
+        + "\n\nRespond with ONLY a JSON array of [humor, relevance] pairs, "
+        "e.g. [[7, 9], [3, 1], [9, 8], ...]. No explanation."
+    )
+
+    # Hardcoded to Anthropic Haiku — Qwen 3 8B produces binary 10/5 scores
+    # that defeat quality filtering. Haiku gives nuanced gradients (3,5,7,8,9)
+    # for ~$0.001/batch. Quality-critical path, not cost-optimizable.
+    api_key = getattr(settings, "ANTHROPIC_API_KEY", "") or ""
+    if not api_key:
+        logger.warning("score_candidates: no ANTHROPIC_API_KEY, skipping")
+        return {}
+
+    try:
+        import re
+        import httpx
+
+        resp = httpx.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 1000,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=30.0,
+        )
+        if resp.status_code != 200:
+            logger.warning("score_candidates: API %d", resp.status_code)
+            return {}
+
+        text = resp.json()["content"][0]["text"].strip()
+
+        # Parse nested JSON array [[h,r], [h,r], ...]
+        m = re.search(r"\[[\s\S]*\]", text)
+        if not m:
+            logger.warning("score_candidates: no array in response: %s", text[:200])
+            return {}
+
+        pairs = json.loads(m.group())
+        result: dict[str, dict] = {}
+        for i, c in enumerate(candidates):
+            if i < len(pairs) and isinstance(pairs[i], list) and len(pairs[i]) >= 2:
+                result[c["source_url"]] = {
+                    "humor": float(pairs[i][0]),
+                    "relevance": float(pairs[i][1]),
+                }
+            else:
+                result[c["source_url"]] = {"humor": 5.0, "relevance": 5.0}
+        logger.info(
+            "score_candidates: haiku scored %d (avg humor=%.1f, avg relevance=%.1f)",
+            len(result),
+            sum(v["humor"] for v in result.values()) / max(len(result), 1),
+            sum(v["relevance"] for v in result.values()) / max(len(result), 1),
+        )
+        return result
+    except Exception as exc:
+        logger.warning("score_candidates: failed: %s", exc)
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +211,8 @@ async def run_meme_trigger() -> dict:
 
     per_source: dict[str, int] = {}
     all_candidates: list[dict] = []
+    import time as _time
+
     for src in sources:
         try:
             items = src.fetch_candidates(settings)
@@ -78,6 +223,10 @@ async def run_meme_trigger() -> dict:
             items = []
         per_source[src.name] = len(items)
         all_candidates.extend(items)
+        # Brief pause between Reddit fetches to avoid rate-limiting (10 req/min
+        # unauthenticated). Mastodon sources don't need this but the delay is
+        # harmless for them.
+        _time.sleep(2)
 
     if not all_candidates:
         return {
@@ -87,16 +236,64 @@ async def run_meme_trigger() -> dict:
             "per_source": per_source,
         }
 
-    # Limit how many we surface per run so Telegram doesn't get flooded.
-    surface_limit = int(
+    # --- Humor + relevance scoring via Claude Haiku ---
+    # Score all candidates for humor AND niche relevance before ranking so
+    # we surface genuinely funny tech/AI content, filtering out inspirational
+    # clips, nature videos, and off-brand viral content.
+    candidate_scores: dict[str, dict] = {}
+    candidate_scores = await asyncio.to_thread(
+        _score_candidates_batch, all_candidates, settings
+    )
+    # Attach scores to each candidate dict for DB storage + ranking
+    for c in all_candidates:
+        scores = candidate_scores.get(c["source_url"], {})
+        c["humor_score"] = scores.get("humor", 5.0)
+        c["relevance_score"] = scores.get("relevance", 5.0)
+
+    # Per-type surface limits so images and videos each get dedicated slots
+    # in the Telegram preview stream — otherwise high-score image subreddits
+    # would crowd out every video candidate.
+    image_surface_limit = int(
         getattr(settings, "MEME_DAILY_SURFACE_LIMIT", 5) or 5
     )
+    video_surface_limit = int(
+        getattr(settings, "MEME_VIDEO_DAILY_SURFACE_LIMIT", 4) or 4
+    )
 
-    # Sort by score descending for deterministic top-N picking
     def _score(c: dict) -> int:
         return int((c.get("engagement") or {}).get("score") or 0)
 
-    all_candidates.sort(key=_score, reverse=True)
+    def _is_video(c: dict) -> bool:
+        return (c.get("media_type") or "").lower() in ("video", "gif")
+
+    # Combined ranking: Reddit score weighted by humor AND relevance.
+    # Both scores are 0-10. Relevance is weighted more heavily — off-niche
+    # content should not appear regardless of how funny or viral it is.
+    def _ranked_score(c: dict) -> float:
+        reddit_score = _score(c)
+        humor = c.get("humor_score", 5.0)
+        relevance = c.get("relevance_score", 5.0)
+        # humor multiplier: 0.1x to 1.5x
+        humor_mult = max(0.1, min(1.5, humor / 5.0 * 0.75 + 0.25))
+        # relevance multiplier: 0.05x to 2.0x (heavier weight than humor)
+        relevance_mult = max(0.05, min(2.0, relevance / 5.0))
+        return reddit_score * humor_mult * relevance_mult
+
+    # Hard filter: only genuinely funny + on-brand content survives
+    min_humor = int(getattr(settings, "MEME_MIN_HUMOR_SCORE", 7) or 7)
+    min_relevance = int(getattr(settings, "MEME_MIN_RELEVANCE_SCORE", 7) or 7)
+    before_filter = len(all_candidates)
+    all_candidates = [
+        c for c in all_candidates
+        if c.get("humor_score", 0) >= min_humor and c.get("relevance_score", 0) >= min_relevance
+    ]
+    logger.info(
+        "meme_trigger: filtered %d -> %d candidates (humor+relevance >= 3)",
+        before_filter,
+        len(all_candidates),
+    )
+
+    all_candidates.sort(key=_ranked_score, reverse=True)
 
     inserted_ids: list[int] = []
     surfaced_ids: list[int] = []
@@ -106,6 +303,36 @@ async def run_meme_trigger() -> dict:
         logger.error("meme_trigger: db connect failed: %s", exc)
         return {"ok": False, "error": f"db: {exc}", "per_source": per_source}
 
+    # Pre-load recently surfaced titles for cross-run dedup (48h lookback)
+    _recent_surfaced_titles: list[str] = []
+    try:
+        _recent_rows = conn.execute(
+            """SELECT title FROM meme_candidates
+               WHERE telegram_message_id IS NOT NULL
+                 AND created_at >= datetime('now', '-2 days')"""
+        ).fetchall()
+        _recent_surfaced_titles = [r["title"] for r in _recent_rows if r["title"]]
+    except Exception:
+        pass
+
+    def _is_cross_run_dup(title: str) -> bool:
+        """Check if title is too similar to a recently surfaced candidate."""
+        import re as _re
+        new_tokens = set(_re.findall(r"[a-z0-9]+", (title or "").lower()))
+        if not new_tokens:
+            return False
+        for recent_title in _recent_surfaced_titles:
+            recent_tokens = set(_re.findall(r"[a-z0-9]+", (recent_title or "").lower()))
+            if not recent_tokens:
+                continue
+            inter = len(new_tokens & recent_tokens)
+            union = len(new_tokens | recent_tokens)
+            if union > 0 and (inter / union) >= 0.7:
+                return True
+        return False
+
+    video_surfaced = 0
+    image_surfaced = 0
     try:
         for cand in all_candidates:
             # Creator denylist short-circuit
@@ -125,6 +352,13 @@ async def run_meme_trigger() -> dict:
                 logger.warning("meme_trigger: insert failed: %s", exc)
                 continue
 
+            if row_id == -1:
+                logger.info(
+                    "meme_trigger: content duplicate skipped: %s",
+                    cand.get("title", "")[:80],
+                )
+                continue
+
             # Was this NEW or a re-surface of an existing row?
             existing = db_module.get_meme_candidate(conn, row_id) or {}
             if existing.get("status") != "pending_review":
@@ -132,8 +366,25 @@ async def run_meme_trigger() -> dict:
                 continue
 
             inserted_ids.append(row_id)
-            if len(surfaced_ids) < surface_limit:
-                surfaced_ids.append(row_id)
+
+            # Cross-run dedup: skip if similar to something surfaced in last 48h
+            if _is_cross_run_dup(cand.get("title", "")):
+                logger.info(
+                    "meme_trigger: cross-run dup skipped: %s",
+                    cand.get("title", "")[:80],
+                )
+                continue
+
+            # Surface up to per-type quotas; skip the rest (they stay
+            # pending_review in the DB and remain eligible for autopilot).
+            if _is_video(cand):
+                if video_surfaced < video_surface_limit:
+                    surfaced_ids.append(row_id)
+                    video_surfaced += 1
+            else:
+                if image_surfaced < image_surface_limit:
+                    surfaced_ids.append(row_id)
+                    image_surfaced += 1
     finally:
         conn.close()
 
@@ -162,6 +413,8 @@ async def run_meme_trigger() -> dict:
         "total_fetched": len(all_candidates),
         "inserted": len(inserted_ids),
         "surfaced": len(surfaced_ids),
+        "surfaced_images": image_surfaced,
+        "surfaced_videos": video_surfaced,
         "telegram_sent": len(sent),
         "inserted_ids": inserted_ids,
         "surfaced_ids": surfaced_ids,
@@ -209,12 +462,38 @@ async def _send_meme_preview(candidate_id: int) -> int | None:
     engagement = json.loads(cand.get("engagement_json") or "{}")
     score = engagement.get("score", 0)
     comments = engagement.get("comments", 0)
-    subreddit = engagement.get("subreddit", "?")
+    humor = cand.get("humor_score")
+    relevance = cand.get("relevance_score")
+    ai_str = ""
+    if humor is not None:
+        ai_str += f" · 😂 {humor:.0f}"
+    if relevance is not None:
+        ai_str += f" · 🎯 {relevance:.0f}"
+    if ai_str:
+        ai_str += "/10"
+
+    # Source-aware label: Reddit shows r/subreddit, YouTube shows channel, Mastodon shows instance
+    source_name = cand.get("source", "")
+    if source_name.startswith("reddit_"):
+        source_label = f"r/{engagement.get('subreddit', '?')}"
+        engagement_label = f"👍 {score:,} · 💬 {comments:,}"
+    elif source_name == "youtube_shorts":
+        channel = engagement.get("channel", "YouTube")
+        views = engagement.get("views", score)
+        source_label = f"YouTube · {channel}"
+        engagement_label = f"👀 {views:,} views"
+    elif source_name.startswith("mastodon"):
+        instance = engagement.get("instance", "mastodon")
+        source_label = f"Mastodon · {instance}"
+        engagement_label = f"⭐ {score:,} engagement"
+    else:
+        source_label = source_name
+        engagement_label = f"👍 {score:,}"
 
     caption = (
         f"🎯 Meme candidate — {cand['media_type']}\n"
-        f"@{cand['author_handle']} · r/{subreddit}\n"
-        f"👍 {score:,} score · 💬 {comments:,} comments\n\n"
+        f"@{cand['author_handle']} · {source_label}\n"
+        f"{engagement_label}{ai_str}\n\n"
         f"Title: {cand['title'][:180]}\n"
         f"Source: {cand['source_url']}"
     )
@@ -248,12 +527,26 @@ async def _send_meme_preview(candidate_id: int) -> int | None:
                 reply_markup=keyboard,
             )
         else:
-            msg = await tg_app.bot.send_video(
-                chat_id=chat_id,
-                video=cand["media_url"],
-                caption=caption,
-                reply_markup=keyboard,
+            # Reddit DASH videos are silent at the fallback URL. Fetch + mux
+            # audio locally so the Telegram preview has sound.
+            preview_path = await asyncio.to_thread(
+                _prepare_video_preview, cand, candidate_id
             )
+            if preview_path and preview_path.exists():
+                with open(preview_path, "rb") as vf:
+                    msg = await tg_app.bot.send_video(
+                        chat_id=chat_id,
+                        video=vf,
+                        caption=caption,
+                        reply_markup=keyboard,
+                    )
+            else:
+                msg = await tg_app.bot.send_video(
+                    chat_id=chat_id,
+                    video=cand["media_url"],
+                    caption=caption,
+                    reply_markup=keyboard,
+                )
     except Exception as exc:
         logger.warning(
             "send_meme_preview(%s): send failed: %s — falling back to text",
@@ -353,12 +646,69 @@ async def publish_meme_candidate(candidate_id: int) -> dict:
     return {"ok": True, "id": candidate_id}
 
 
+def _is_youtube_url(url: str) -> bool:
+    return "youtube.com/" in url or "youtu.be/" in url
+
+
+def _download_youtube(url: str, out_path: Path) -> None:
+    """Download a YouTube video via yt-dlp. Raises MemePipelineError on failure."""
+    import subprocess
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            [
+                "yt-dlp",
+                "-f", "best[height<=1080]",
+                "-o", str(out_path),
+                "--no-playlist",
+                "--quiet",
+                url,
+            ],
+            capture_output=True,
+            timeout=120,
+            check=True,
+        )
+    except FileNotFoundError:
+        raise MemePipelineError("yt-dlp not installed")
+    except subprocess.TimeoutExpired:
+        raise MemePipelineError("yt-dlp timed out downloading YouTube video")
+    except subprocess.CalledProcessError as exc:
+        raise MemePipelineError(
+            f"yt-dlp failed: {exc.stderr.decode('utf-8', 'replace')[-500:]}"
+        )
+    if not out_path.exists() or out_path.stat().st_size == 0:
+        raise MemePipelineError(f"yt-dlp produced no output for {url}")
+
+
 def _publish_blocking(
     cand: dict, candidate_id: int, run_dir: Path, raw_path: Path, settings
 ) -> None:
     """Blocking publish chain: fetch, normalize, overlay, upload to Postiz."""
-    # 1) safe-fetch
-    safe_fetch(cand["media_url"], raw_path)
+    # 1) fetch — YouTube via yt-dlp, everything else via safe_fetch
+    if _is_youtube_url(cand["media_url"]):
+        raw_path = run_dir / "raw.mp4"
+        _download_youtube(cand["media_url"], raw_path)
+    else:
+        safe_fetch(cand["media_url"], raw_path)
+
+    # 1b) For Reddit DASH videos: fetch separate audio stream and mux
+    #     into the raw file so normalize_media gets video+audio together.
+    audio_url = cand.get("audio_url") or ""
+    if cand["media_type"] == "video" and audio_url:
+        raw_audio = run_dir / "raw_audio.mp4"
+        try:
+            safe_fetch(audio_url, raw_audio)
+            muxed = run_dir / "raw_muxed.mp4"
+            _mux_audio(raw_path, raw_audio, muxed)
+            raw_path = muxed
+        except MemePipelineError:
+            # Audio fetch failed (some posts are silent) — proceed with
+            # video-only; normalize_media handles missing audio gracefully.
+            logger.info(
+                "publish_meme(%s): audio fetch failed, using video-only",
+                candidate_id,
+            )
 
     # 2) normalize
     if cand["media_type"] == "image":
@@ -400,21 +750,53 @@ def _publish_blocking(
 
     client = make_client_from_settings(settings)
 
-    # Build caption: our intro + explicit credit + hashtags
+    # Build caption: source-aware intro + credit + hashtags
     eng = json.loads(cand.get("engagement_json") or "{}")
-    subreddit = eng.get("subreddit", "ProgrammerHumor")
-    caption_ig = (
-        f"Spotted on r/{subreddit} today 👀\n\n"
-        f"🎥 via {cand['author_handle']} on Reddit\n"
-        f"🔗 {cand['source_url']}\n\n"
-        f"#commoncreed #techhumor #programmermemes #coding #devlife"
-    )
-    yt_title = f"[{subreddit}] {cand['title'][:60]}"[:100]
-    yt_description = (
-        f"Shared from r/{subreddit}. Full credit to {cand['author_handle']}.\n"
-        f"Original post: {cand['source_url']}\n\n"
-        f"Posted via CommonCreed."
-    )
+    source_name = cand.get("source", "")
+
+    if source_name == "youtube_shorts":
+        channel = eng.get("channel", cand["author_handle"])
+        caption_ig = (
+            f"🔥 {cand['title'][:100]}\n\n"
+            f"🎥 via {channel} on YouTube\n"
+            f"🔗 {cand['source_url']}\n\n"
+            f"#commoncreed #techhumor #programmermemes #coding #devlife"
+        )
+        yt_title = f"{cand['title'][:80]}"[:100]
+        yt_description = (
+            f"Original by {channel} on YouTube.\n"
+            f"Source: {cand['source_url']}\n\n"
+            f"Posted via CommonCreed."
+        )
+    elif source_name.startswith("mastodon"):
+        instance = eng.get("instance", "mastodon")
+        caption_ig = (
+            f"🔥 {cand['title'][:100]}\n\n"
+            f"🎥 via {cand['author_handle']} on {instance}\n"
+            f"🔗 {cand['source_url']}\n\n"
+            f"#commoncreed #techhumor #programmermemes #coding #devlife"
+        )
+        yt_title = f"{cand['title'][:80]}"[:100]
+        yt_description = (
+            f"Shared from {instance}. Credit to {cand['author_handle']}.\n"
+            f"Source: {cand['source_url']}\n\n"
+            f"Posted via CommonCreed."
+        )
+    else:
+        # Reddit
+        subreddit = eng.get("subreddit", "ProgrammerHumor")
+        caption_ig = (
+            f"Spotted on r/{subreddit} today 👀\n\n"
+            f"🎥 via {cand['author_handle']} on Reddit\n"
+            f"🔗 {cand['source_url']}\n\n"
+            f"#commoncreed #techhumor #programmermemes #coding #devlife"
+        )
+        yt_title = f"[{subreddit}] {cand['title'][:60]}"[:100]
+        yt_description = (
+            f"Shared from r/{subreddit}. Full credit to {cand['author_handle']}.\n"
+            f"Original post: {cand['source_url']}\n\n"
+            f"Posted via CommonCreed."
+        )
 
     scheduled_slot = compute_next_slot()
     # The publish_post helper expects a "video_path" and "thumbnail_path".
@@ -527,9 +909,10 @@ async def meme_auto_approve_action() -> dict:
         logger.info("meme_auto_approve_action: disabled, skipping")
         return {"ok": True, "skipped": True, "reason": "disabled"}
 
-    take = int(getattr(settings, "MEME_DAILY_AUTO_APPROVE_COUNT", 1) or 1)
+    image_take = int(getattr(settings, "MEME_DAILY_AUTO_APPROVE_COUNT", 1) or 1)
+    video_take = int(getattr(settings, "MEME_VIDEO_DAILY_AUTO_APPROVE_COUNT", 2) or 2)
 
-    # Find the top N pending_review meme candidates by Reddit score.
+    # Find all pending_review meme candidates.
     try:
         conn = db_module.connect(settings.SIDECAR_DB_PATH)
     except Exception as exc:
@@ -539,7 +922,7 @@ async def meme_auto_approve_action() -> dict:
     try:
         rows = conn.execute(
             """
-            SELECT id, engagement_json
+            SELECT id, engagement_json, media_type, humor_score, relevance_score
               FROM meme_candidates
              WHERE status = 'pending_review'
              ORDER BY id DESC
@@ -552,20 +935,38 @@ async def meme_auto_approve_action() -> dict:
         logger.info("meme_auto_approve_action: no pending candidates")
         return {"ok": True, "picked": 0, "reason": "no pending"}
 
-    def _score(row) -> int:
+    def _score(row) -> float:
         try:
-            return int((json.loads(row["engagement_json"] or "{}")).get("score") or 0)
+            reddit = int((json.loads(row["engagement_json"] or "{}")).get("score") or 0)
         except Exception:
-            return 0
+            reddit = 0
+        humor = float(row["humor_score"] or 5.0) if row["humor_score"] is not None else 5.0
+        relevance = float(row["relevance_score"] or 5.0) if row["relevance_score"] is not None else 5.0
+        humor_mult = max(0.1, min(1.5, humor / 5.0 * 0.75 + 0.25))
+        relevance_mult = max(0.05, min(2.0, relevance / 5.0))
+        return reddit * humor_mult * relevance_mult
 
-    sorted_rows = sorted(rows, key=_score, reverse=True)
-    chosen_ids = [int(r["id"]) for r in sorted_rows[:take]]
-    skipped_ids = [int(r["id"]) for r in sorted_rows[take:]]
+    def _row_is_video(row) -> bool:
+        return (row["media_type"] or "").lower() in ("video", "gif")
+
+    # Partition into image vs video, pick top-N per type
+    image_rows = sorted([r for r in rows if not _row_is_video(r)], key=_score, reverse=True)
+    video_rows = sorted([r for r in rows if _row_is_video(r)], key=_score, reverse=True)
+
+    chosen_ids = (
+        [int(r["id"]) for r in image_rows[:image_take]]
+        + [int(r["id"]) for r in video_rows[:video_take]]
+    )
+    skipped_ids = (
+        [int(r["id"]) for r in image_rows[image_take:]]
+        + [int(r["id"]) for r in video_rows[video_take:]]
+    )
 
     logger.info(
-        "meme_auto_approve_action: picked %d (top score=%d), skipping %d",
+        "meme_auto_approve_action: picked %d (%d img + %d vid), skipping %d",
         len(chosen_ids),
-        _score(sorted_rows[0]) if sorted_rows else 0,
+        min(image_take, len(image_rows)),
+        min(video_take, len(video_rows)),
         len(skipped_ids),
     )
 

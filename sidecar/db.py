@@ -59,7 +59,10 @@ SCHEMA_STATEMENTS = [
         postiz_response_json   TEXT,
         publish_error          TEXT,
         reviewed_at            TEXT,
-        published_at_local     TEXT
+        published_at_local     TEXT,
+        audio_url              TEXT,
+        humor_score            REAL,
+        relevance_score        REAL
     )
     """,
     """
@@ -145,6 +148,14 @@ def _apply_column_migrations(conn: sqlite3.Connection) -> None:
     for name, ddl in _PIPELINE_RUNS_COLUMN_MIGRATIONS:
         try:
             conn.execute(f"ALTER TABLE pipeline_runs ADD COLUMN {name} {ddl}")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e).lower():
+                continue
+            raise
+    # Meme candidates additive column migrations
+    for name, ddl in [("audio_url", "TEXT"), ("humor_score", "REAL"), ("relevance_score", "REAL")]:
+        try:
+            conn.execute(f"ALTER TABLE meme_candidates ADD COLUMN {name} {ddl}")
         except sqlite3.OperationalError as e:
             if "duplicate column name" in str(e).lower():
                 continue
@@ -571,12 +582,24 @@ def cursor(db_path: str) -> Iterator[sqlite3.Cursor]:
 # ---------------------------------------------------------------------------
 
 
-def insert_meme_candidate(conn: sqlite3.Connection, candidate: dict) -> int:
+def insert_meme_candidate(
+    conn: sqlite3.Connection,
+    candidate: dict,
+    title_similarity_threshold: float = 0.8,
+    lookback_days: int = 7,
+) -> int:
     """Insert a MemeCandidate dict from meme_sources, return new id.
 
-    Idempotent on (source, source_url): if a row with the same source_url
-    already exists in any status, we skip and return the existing id.
+    Dedup layers:
+      1. Exact (source, source_url) match — idempotent, any status.
+      2. Title similarity (Jaccard >= 0.8) against recent candidates —
+         catches the same meme reposted by different users or across
+         subreddits. Only checks the last ``lookback_days`` of candidates
+         in non-rejected statuses.
+
+    Returns -1 when the candidate is a content duplicate (layer 2).
     """
+    # Layer 1: exact URL match
     existing = conn.execute(
         "SELECT id FROM meme_candidates WHERE source=? AND source_url=? LIMIT 1",
         (candidate["source"], candidate["source_url"]),
@@ -584,14 +607,41 @@ def insert_meme_candidate(conn: sqlite3.Connection, candidate: dict) -> int:
     if existing:
         return int(existing["id"])
 
+    # Layer 2: title similarity against recent candidates
+    import re as _re
+
+    def _tokenize(text: str) -> set:
+        return set(_re.findall(r"[a-z0-9]+", (text or "").lower()))
+
+    new_tokens = _tokenize(candidate.get("title") or "")
+    if new_tokens:
+        recent = conn.execute(
+            """
+            SELECT id, title FROM meme_candidates
+            WHERE status NOT IN ('rejected', 'rejected_creator_denied')
+              AND created_at >= datetime('now', ?)
+            ORDER BY id DESC
+            """,
+            (f"-{lookback_days} days",),
+        ).fetchall()
+        for row in recent:
+            row_tokens = _tokenize(row["title"])
+            if not row_tokens:
+                continue
+            inter = len(new_tokens & row_tokens)
+            union = len(new_tokens | row_tokens)
+            if union > 0 and (inter / union) >= title_similarity_threshold:
+                return -1  # content duplicate
+
     import json as _json
 
     cur = conn.execute(
         """
         INSERT INTO meme_candidates (
             source, source_url, author_handle, title, media_url, media_type,
-            engagement_json, published_at, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_review')
+            engagement_json, published_at, status, audio_url, humor_score,
+            relevance_score
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_review', ?, ?, ?)
         """,
         (
             candidate["source"],
@@ -602,6 +652,9 @@ def insert_meme_candidate(conn: sqlite3.Connection, candidate: dict) -> int:
             candidate["media_type"],
             _json.dumps(candidate.get("engagement") or {}),
             candidate.get("published_at"),
+            candidate.get("audio_url"),
+            candidate.get("humor_score"),
+            candidate.get("relevance_score"),
         ),
     )
     conn.commit()

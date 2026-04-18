@@ -152,13 +152,22 @@ def _start_scheduler():
     except Exception:
         jobstore_path = ""
 
+    # Use Asia/Kolkata (IST) for scheduler + cron triggers so "09:00" means
+    # 09:00 IST. The container also has TZ=Asia/Kolkata set, which makes
+    # datetime.now() and compute_next_slot() return IST wall-clock time.
+    # Both settings are required — APScheduler CronTrigger defaults to UTC
+    # regardless of the container's TZ env var.
+    from pytz import timezone as _tz
+    sched_timezone = _tz("Asia/Kolkata")
+
     sched = None
     if jobstore_path:
         try:
             sched = AsyncIOScheduler(
                 jobstores={
                     "default": SQLAlchemyJobStore(url=f"sqlite:///{jobstore_path}")
-                }
+                },
+                timezone=sched_timezone,
             )
         except Exception as exc:
             logger.warning(
@@ -168,7 +177,7 @@ def _start_scheduler():
             )
             sched = None
     if sched is None:
-        sched = AsyncIOScheduler()
+        sched = AsyncIOScheduler(timezone=sched_timezone)
 
     sched.add_job(
         process_pending_runs,
@@ -182,7 +191,7 @@ def _start_scheduler():
     try:
         sched.add_job(
             run_retention_job,
-            trigger=CronTrigger(hour=3, minute=0),
+            trigger=CronTrigger(hour=3, minute=0, timezone=sched_timezone),
             id="retention_job",
             replace_existing=True,
             max_instances=1,
@@ -206,7 +215,7 @@ def _start_scheduler():
     try:
         sched.add_job(
             send_weekly_cost_report,
-            trigger=CronTrigger(day_of_week="mon", hour=9, minute=0),
+            trigger=CronTrigger(day_of_week="mon", hour=9, minute=0, timezone=sched_timezone),
             id="weekly_cost_report",
             replace_existing=True,
             max_instances=1,
@@ -228,7 +237,7 @@ def _start_scheduler():
             hh, mm = (int(x) for x in trigger_time.split(":")[:2])
             sched.add_job(
                 run_daily_trigger,
-                trigger=CronTrigger(hour=hh, minute=mm),
+                trigger=CronTrigger(hour=hh, minute=mm, timezone=sched_timezone),
                 id="daily_trigger",
                 replace_existing=True,
                 max_instances=1,
@@ -255,15 +264,16 @@ def _start_scheduler():
     # always has fresh meme candidates ready in Telegram. The trigger itself
     # also self-schedules a meme_auto_approve fallback for the next slot, so
     # if the owner never taps, the highest-scored meme still publishes.
-    # Gated behind the same SIDECAR_DAILY_TRIGGER_ENABLED flag.
-    if (os.environ.get("SIDECAR_DAILY_TRIGGER_ENABLED", "").lower()
-            in ("1", "true", "yes", "on")):
+    # Gated behind SIDECAR_MEME_TRIGGER_ENABLED (defaults to 1 so memes run
+    # even when the generative avatar pipeline is paused).
+    _meme_enabled = os.environ.get("SIDECAR_MEME_TRIGGER_ENABLED", "1").lower()
+    if _meme_enabled in ("1", "true", "yes", "on"):
         try:
             from .jobs.meme_flow import run_meme_trigger
             for slot_name, hh, mm in [("morning", 6, 0), ("afternoon", 16, 0)]:
                 sched.add_job(
                     run_meme_trigger,
-                    trigger=CronTrigger(hour=hh, minute=mm),
+                    trigger=CronTrigger(hour=hh, minute=mm, timezone=sched_timezone),
                     id=f"meme_trigger_{slot_name}",
                     replace_existing=True,
                     max_instances=1,
@@ -285,7 +295,7 @@ def _start_scheduler():
                 pass
         logger.info(
             "sidecar scheduler: meme_trigger DISABLED "
-            "(set SIDECAR_DAILY_TRIGGER_ENABLED=1 to re-enable)"
+            "(set SIDECAR_MEME_TRIGGER_ENABLED=1 to re-enable)"
         )
 
     sched.start()

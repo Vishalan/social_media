@@ -20,6 +20,7 @@ from .base import AvatarClient
 from .heygen_client import HeyGenAvatarClient
 from .kling_client import KlingAvatarClient
 from .veed_client import VeedFabricClient
+from .wan22_s2v_client import Wan22S2VClient
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,18 @@ def make_avatar_client(config: dict) -> AvatarClient:
             output_dir=output_dir,
         )
 
+    if provider == "wan22_s2v":
+        logger.info("Avatar provider: Wan2.2-S2V-14B (local ComfyUI, 768x768)")
+        from scripts.video_gen.comfyui_client import ComfyUIClient
+
+        comfyui_url = config.get("comfyui_url", "http://localhost:8188")
+        comfyui_client = ComfyUIClient(comfyui_url)
+        return Wan22S2VClient(
+            comfyui_client=comfyui_client,
+            reference_image_path=config.get("wan22_reference_image", ""),
+            output_dir=output_dir,
+        )
+
     if provider == "ltx":
         raise NotImplementedError(
             "LTX-2.3 avatar provider is planned but not yet implemented. "
@@ -98,5 +111,5 @@ def make_avatar_client(config: dict) -> AvatarClient:
 
     raise ValueError(
         f"Unknown avatar_provider {provider!r}. "
-        f"Supported values: 'veed', 'kling', 'heygen'."
+        f"Supported values: 'veed', 'kling', 'heygen', 'wan22_s2v'."
     )

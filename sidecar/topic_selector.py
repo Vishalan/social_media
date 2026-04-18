@@ -150,14 +150,38 @@ def _validate_score(items: list) -> bool:
     return True
 
 
-def _call(client: anthropic.Anthropic, model: str, prompt: str, max_tokens: int = 8000) -> str:
-    resp = client.messages.create(
+def _call(
+    client: Optional[anthropic.Anthropic],
+    model: str,
+    prompt: str,
+    max_tokens: int = 8000,
+    *,
+    provider: str = "anthropic",
+    ollama_base_url: str = "",
+    anthropic_api_key: str = "",
+) -> str:
+    """Route an LLM call through either Anthropic SDK or the llm_client abstraction."""
+    if provider == "anthropic" and client is not None:
+        resp = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=0.2,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text
+
+    # Use llm_client for Ollama (or Anthropic without an existing client)
+    from .llm_client import llm_call
+
+    return llm_call(
+        prompt,
+        provider=provider,
         model=model,
+        json_mode=True,  # both extract + score expect JSON output
         max_tokens=max_tokens,
-        temperature=0.2,
-        messages=[{"role": "user", "content": prompt}],
+        anthropic_api_key=anthropic_api_key or os.getenv("ANTHROPIC_API_KEY", ""),
+        ollama_base_url=ollama_base_url,
     )
-    return resp.content[0].text
 
 
 def extract_items(
@@ -202,13 +226,17 @@ def score_topics(
     client: Optional[anthropic.Anthropic] = None,
     top_n: int = 2,
     model: str = DEFAULT_MODEL,
+    *,
+    provider: str = "anthropic",
+    ollama_base_url: str = "",
+    anthropic_api_key: str = "",
 ) -> list:
     """Score items and return the top N in posting order (highest first)."""
     if not items:
         return []
 
-    if client is None:
-        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    if client is None and provider == "anthropic":
+        client = anthropic.Anthropic(api_key=anthropic_api_key or os.getenv("ANTHROPIC_API_KEY"))
 
     items_json = json.dumps(items, ensure_ascii=False)
     prompts = [
@@ -219,7 +247,11 @@ def score_topics(
     last_raw = ""
     scored: Optional[list] = None
     for attempt, prompt in enumerate(prompts):
-        raw = _call(client, model, prompt)
+        raw = _call(
+            client, model, prompt,
+            provider=provider, ollama_base_url=ollama_base_url,
+            anthropic_api_key=anthropic_api_key,
+        )
         last_raw = raw
         parsed = _parse_json_array(raw)
         if parsed is None:

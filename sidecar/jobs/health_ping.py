@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 _LAST_ALERT_AT: dict = {}
 _ALERT_COOLDOWN = timedelta(hours=1)
 
-SERVICES = ("postiz", "telegram", "gmail", "anthropic")
+SERVICES = ("postiz", "telegram", "gmail", "anthropic", "ollama")
 
 
 def _open_conn():
@@ -148,10 +148,30 @@ async def _ping_gmail():
             return "skipped"
         oauth_json = _P(oauth_path).read_text()
         client = GmailClient(oauth_json)
-        profile = client.get_profile()
-        return profile is not None
+        # No get_profile method — just verify the service builds and
+        # the credentials can be constructed. The actual Gmail API call
+        # happens during fetch_latest_newsletter; this is a cheap
+        # connectivity/credential check.
+        return client._service is not None
     except Exception as exc:
         logger.warning("health_ping: gmail ping raised: %s", exc)
+        return False
+
+
+async def _ping_ollama():
+    """Return True/False/'skipped'. Skipped if no OLLAMA_BASE_URL configured."""
+    try:
+        import httpx
+
+        s = settings_manager.settings
+        base = getattr(s, "OLLAMA_BASE_URL", "") if s else ""
+        if not base:
+            return "skipped"
+        with httpx.Client(timeout=5.0) as client:
+            r = client.get(f"{base.rstrip('/')}/api/tags")
+            return 200 <= r.status_code < 300
+    except Exception as exc:
+        logger.warning("health_ping: ollama ping raised: %s", exc)
         return False
 
 
@@ -224,6 +244,20 @@ async def run_health_pings() -> dict:
             await _alert(
                 "gmail",
                 f"service gmail unreachable (last_success: {_last_success('gmail')})",
+                to_telegram=True,
+            )
+
+        # Ollama (skipped if no URL configured)
+        ok = await _ping_ollama()
+        result["ollama"] = ok
+        if ok is True:
+            _record_success("ollama")
+        elif ok == "skipped":
+            logger.info("health_ping: ollama skipped (not configured)")
+        else:
+            await _alert(
+                "ollama",
+                f"service ollama unreachable (last_success: {_last_success('ollama')})",
                 to_telegram=True,
             )
 

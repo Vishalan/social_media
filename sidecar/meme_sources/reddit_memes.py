@@ -21,6 +21,21 @@ logger = logging.getLogger(__name__)
 _DEFAULT_SUBREDDITS = {
     "reddit_programmerhumor": "ProgrammerHumor",
     "reddit_techhumor": "techhumor",
+    "reddit_linuxmemes": "linuxmemes",
+    "reddit_softwaregore": "softwaregore",
+    "reddit_iiiiiiitttttttttttt": "iiiiiiitttttttttttt",
+    "reddit_programminghorror": "programminghorror",
+    "reddit_recruitinghell": "recruitinghell",
+    # Video-heavy tech subs (40%+ video content)
+    "reddit_shittyrobots": "shittyrobots",
+    "reddit_arduino": "arduino",
+    "reddit_robotics": "robotics",
+    "reddit_3dprinting": "3Dprinting",
+    "reddit_pcmasterrace": "pcmasterrace",
+    "reddit_cscareerquestions": "cscareerquestions",
+    "reddit_webdev": "webdev",
+    "reddit_homelab": "homelab",
+    "reddit_mechanicalkeyboards": "MechanicalKeyboards",
 }
 
 
@@ -48,9 +63,9 @@ class RedditMemeSource:
 
     def fetch_candidates(self, settings: Any) -> list[dict]:
         try:
-            import httpx
+            import requests
         except ImportError as exc:
-            logger.warning("reddit meme source: httpx missing: %s", exc)
+            logger.warning("reddit meme source: requests missing: %s", exc)
             return []
 
         subreddit = self._resolve_subreddit(settings)
@@ -65,14 +80,13 @@ class RedditMemeSource:
         headers = {"User-Agent": "CommonCreedBot/0.1 (meme curator)"}
 
         try:
-            with httpx.Client(timeout=15.0, follow_redirects=True) as client:
-                r = client.get(url, headers=headers)
-                if r.status_code != 200:
-                    logger.warning(
-                        "reddit meme source %s: HTTP %d", self.name, r.status_code
-                    )
-                    return []
-                data = r.json()
+            r = requests.get(url, headers=headers, timeout=15)
+            if r.status_code != 200:
+                logger.warning(
+                    "reddit meme source %s: HTTP %d", self.name, r.status_code
+                )
+                return []
+            data = r.json()
         except Exception as exc:
             logger.warning("reddit meme source %s: fetch failed: %s", self.name, exc)
             return []
@@ -122,17 +136,30 @@ class RedditMemeSource:
         # Resolve media_url and media_type
         media_url: str | None = None
         media_type: str | None = None
+        audio_url: str = ""
 
         if post_hint == "image" and url:
             media_url = url
             media_type = "image"
         elif post_hint == "hosted:video" or post.get("is_video"):
-            # Reddit-hosted video
+            # Reddit-hosted video — DASH streams separate audio + video.
+            # fallback_url gives video-only; we also resolve the audio URL
+            # so the pipeline can merge them during normalize.
             reddit_video = ((post.get("media") or {}).get("reddit_video") or {})
             fallback = reddit_video.get("fallback_url") or ""
             if fallback:
                 media_url = fallback
                 media_type = "video"
+                # Audio lives at the same v.redd.it base path.
+                # Old format: .../DASH_720.mp4 -> .../DASH_AUDIO_128.mp4
+                # New format: .../CMAF_720.mp4 -> .../CMAF_AUDIO_128.mp4
+                clean = fallback.split("?")[0]  # strip ?source=fallback
+                if "/DASH_" in clean:
+                    base = clean.rsplit("/DASH_", 1)[0]
+                    audio_url = f"{base}/DASH_AUDIO_128.mp4"
+                elif "/CMAF_" in clean:
+                    base = clean.rsplit("/CMAF_", 1)[0]
+                    audio_url = f"{base}/CMAF_AUDIO_128.mp4"
         elif post_hint == "rich:video":
             # Third-party embeds (gfycat/streamable/imgur). Skip for v0 —
             # those need per-host handling and rights vary.
@@ -146,7 +173,7 @@ class RedditMemeSource:
         if not media_url or not media_type:
             return None
 
-        return {
+        out = {
             "source": self.name,
             "source_url": permalink,
             "author_handle": f"u/{author}",
@@ -162,3 +189,6 @@ class RedditMemeSource:
                 int(post.get("created_utc") or 0)
             ).isoformat() + "Z",
         }
+        if audio_url:
+            out["audio_url"] = audio_url
+        return out

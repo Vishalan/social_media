@@ -84,19 +84,74 @@ class Settings(BaseSettings):
     LOBSTERS_MAX_ITEMS: int = 15
     LOBSTERS_MIN_SCORE: int = 10
     # Meme reposter v0 (Reddit)
-    MEME_SOURCES: str = "reddit_programmerhumor,reddit_techhumor"
-    MEME_SUBREDDIT_MAP: str = (
-        "reddit_programmerhumor:ProgrammerHumor,reddit_techhumor:techhumor"
+    MEME_SOURCES: str = (
+        "reddit_programmerhumor,reddit_techhumor,"
+        "reddit_linuxmemes,reddit_softwaregore,reddit_iiiiiiitttttttttttt,"
+        "reddit_programminghorror,reddit_recruitinghell,"
+        "reddit_shittyrobots,reddit_arduino,reddit_robotics,"
+        "reddit_3dprinting,reddit_pcmasterrace,"
+        "reddit_cscareerquestions,reddit_webdev,reddit_homelab,"
+        "reddit_mechanicalkeyboards,"
+        "youtube_shorts,"
+        "mastodon_techmemes"
     )
-    MEME_DAILY_SURFACE_LIMIT: int = 5
+    MEME_SUBREDDIT_MAP: str = (
+        "reddit_programmerhumor:ProgrammerHumor,"
+        "reddit_techhumor:techhumor,"
+        "reddit_linuxmemes:linuxmemes,"
+        "reddit_softwaregore:softwaregore,"
+        "reddit_iiiiiiitttttttttttt:iiiiiiitttttttttttt,"
+        "reddit_programminghorror:programminghorror,"
+        "reddit_recruitinghell:recruitinghell,"
+        "reddit_shittyrobots:shittyrobots,"
+        "reddit_arduino:arduino,"
+        "reddit_robotics:robotics,"
+        "reddit_3dprinting:3Dprinting,"
+        "reddit_pcmasterrace:pcmasterrace,"
+        "reddit_cscareerquestions:cscareerquestions,"
+        "reddit_webdev:webdev,"
+        "reddit_homelab:homelab,"
+        "reddit_mechanicalkeyboards:MechanicalKeyboards"
+    )
+    # Per-media-type surface limits for Telegram previews
+    MEME_DAILY_SURFACE_LIMIT: int = 2          # images per trigger run
+    MEME_VIDEO_DAILY_SURFACE_LIMIT: int = 2    # videos per trigger run
     REDDIT_MEME_TIME_FILTER: str = "day"
     REDDIT_MEME_MAX_ITEMS: int = 25
-    REDDIT_MEME_MIN_SCORE: int = 500
+    REDDIT_MEME_MIN_SCORE: int = 100
     # Meme autopilot — fires at slot-offset if no human tap landed
+    MEME_MIN_HUMOR_SCORE: int = 7
+    MEME_MIN_RELEVANCE_SCORE: int = 7
     MEME_AUTO_APPROVE_ENABLED: bool = True
     MEME_AUTO_APPROVE_OFFSET_MIN: int = 30
-    MEME_DAILY_AUTO_APPROVE_COUNT: int = 1
+    MEME_DAILY_AUTO_APPROVE_COUNT: int = 1        # images/day
+    MEME_VIDEO_DAILY_AUTO_APPROVE_COUNT: int = 2  # videos/day
+    # Mastodon meme source
+    MASTODON_MEME_INSTANCES: str = "fosstodon.org,hachyderm.io"
+    MASTODON_MEME_HASHTAGS: str = "programmerhumor,devhumor,techmemes"
+    MASTODON_MEME_MIN_ENGAGEMENT: int = 10
+    MASTODON_MEME_MAX_ITEMS: int = 40
+    # YouTube Shorts — curated funny tech channels
+    YOUTUBE_API_KEY: str = ""
+    YOUTUBE_SHORTS_CHANNEL_IDS: str = (
+        "UCXkVkpFJSQstdaGBYx-cn-Q,"  # Educative — daily programmer comedy shorts
+        "UCVG3XjEBnAMdvnwVLSFdheQ,"  # PixlyX — coding POV humor
+        "UCi8C7TNs2ohrc6hnRQ5Sn2w,"  # Kai Lentit — dev culture shorts
+        "UCvD5vcbsjWNv5iv1EGFNBjA,"  # Vast Coding — programming meme shorts
+        "UC0kTaWz6eRTdvA2RUAQ3O2Q,"  # Peter Vestine — tech humor
+        "UCdEHOsX66pI3pO0mM8FtbKA,"  # Code With Nishant — coding meme shorts
+        "UCsBjURrPoezykLs9EqgamOA"   # Fireship — occasional shorts
+    )
+    YOUTUBE_SHORTS_MIN_VIEWS: int = 10000
+    YOUTUBE_SHORTS_MAX_AGE_DAYS: int = 7
     PIPELINE_RETENTION_DAYS: int = 14
+
+    # --- Local LLM (Ollama) ------------------------------------------------
+    OLLAMA_BASE_URL: str = "http://host.docker.internal:11434"
+    MEME_SCORING_PROVIDER: str = "ollama"       # "ollama" or "anthropic"
+    MEME_SCORING_MODEL: str = "qwen3:8b"
+    TOPIC_RANKING_PROVIDER: str = "ollama"      # "ollama" or "anthropic"
+    TOPIC_RANKING_MODEL: str = "qwen3:8b"
 
     # --- Sidecar runtime paths --------------------------------------------
     SIDECAR_DB_PATH: str = "/app/db/sidecar.sqlite3"

@@ -225,6 +225,14 @@ services:
     image: ghcr.io/gitroomhq/postiz-app:${POSTIZ_IMAGE_TAG:-latest}
     container_name: commoncreed_postiz
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      # Route Tailscale DNS to the host's Docker bridge where nginx
+      # terminates TLS and proxies to Postiz. This lets the orchestrator
+      # fetch uploaded media via the public HTTPS URL without leaving
+      # the Docker network. Instagram/YouTube APIs fetch from the real
+      # Tailscale Funnel endpoint externally.
+      - "commoncreed-server.tail47ec78.ts.net:host-gateway"
     networks:
       - commoncreed
       - temporal-network
@@ -285,6 +293,9 @@ services:
 
       # --- Misc -------------------------------------------------------------
       NX_ADD_PLUGINS: "false"
+      # Accept self-signed TLS from the host nginx proxy when the orchestrator
+      # fetches uploaded media via the Tailscale DNS (routed to host-gateway).
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
     volumes:
       - postiz_uploads:/uploads
       - postiz_config:/config
@@ -328,6 +339,8 @@ services:
     image: commoncreed/sidecar:0.1.0
     container_name: commoncreed_sidecar
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - commoncreed
     depends_on:
@@ -339,6 +352,9 @@ services:
         condition: service_healthy
     environment:
       SIDECAR_ENV_PATH: /env/.env
+      # Run the container in IST so APScheduler cron + datetime.now() align
+      # with the owner's posting slots (09:00 / 19:00 IST).
+      TZ: Asia/Kolkata
       POSTIZ_BASE_URL: http://postiz:5000
       POSTIZ_API_KEY: ${POSTIZ_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
@@ -347,6 +363,7 @@ services:
       GMAIL_OAUTH_PATH: ${GMAIL_OAUTH_PATH}
       SIDECAR_ADMIN_PASSWORD: ${SIDECAR_ADMIN_PASSWORD}
       SIDECAR_DAILY_TRIGGER_ENABLED: ${SIDECAR_DAILY_TRIGGER_ENABLED:-0}
+      SIDECAR_MEME_TRIGGER_ENABLED: ${SIDECAR_MEME_TRIGGER_ENABLED:-1}
       PIPELINE_TRIGGER_TIME: ${PIPELINE_TRIGGER_TIME}
       PIPELINE_SLOT_MORNING: ${PIPELINE_SLOT_MORNING}
       PIPELINE_SLOT_EVENING: ${PIPELINE_SLOT_EVENING}

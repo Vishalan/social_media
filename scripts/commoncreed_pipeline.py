@@ -76,7 +76,7 @@ from news_sourcing.news_sourcer import InsufficientTopicsError, NewsSourcer
 from posting.social_poster import SocialPoster
 from video_edit.video_editor import VideoEditor
 from video_gen.comfyui_client import ComfyUIClient
-from voiceover.voice_generator import VoiceGenerator
+from voiceover import make_voice_generator
 
 logger = logging.getLogger(__name__)
 
@@ -167,10 +167,14 @@ class CommonCreedPipeline:
             api_key=config["anthropic_api_key"],
             output_dir="output/scripts",
         )
-        self.voice_gen = VoiceGenerator(
-            api_key=config["elevenlabs_api_key"],
-            voice_id=config["voice_id"],
-        )
+        self.voice_gen = make_voice_generator({
+            "voice_provider": config.get("voice_provider", "chatterbox"),
+            "chatterbox_reference_audio": config.get(
+                "chatterbox_reference_audio",
+                os.environ.get("CHATTERBOX_REFERENCE_AUDIO", ""),
+            ),
+            "elevenlabs_api_key": config.get("elevenlabs_api_key", ""),
+        })
         # ComfyUI client — server_url injected at run time once pod is ready
         self.comfyui = ComfyUIClient(
             server_url=self._static_comfyui_url or "",

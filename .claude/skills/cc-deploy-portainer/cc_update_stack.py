@@ -75,12 +75,18 @@ def regen_prod_compose() -> str:
         .replace("./postiz-nginx.conf", "/opt/commoncreed/deploy/portainer/postiz-nginx.conf")
         .replace("./temporal-dynamicconfig", "/opt/commoncreed/deploy/portainer/temporal-dynamicconfig")
     )
+    # Strip the sidecar's build: block (with optional comment lines between
+    # build: and context:/dockerfile:). Portainer's sandboxed container can't
+    # see the build context anyway — the image is pre-built on the host and
+    # referenced by its `image:` tag instead.
     out = re.sub(
-        r"  commoncreed_sidecar:\n    build:\n      context: [^\n]+\n      dockerfile: [^\n]+\n",
+        r"  commoncreed_sidecar:\n    build:\n(?:      [^\n]*\n)+",
         "  commoncreed_sidecar:\n",
         out,
     )
-    assert "build:" not in out
+    # Assert no UNCOMMENTED build: lines remain (commented Remotion service is OK).
+    uncommented_build = [ln for ln in out.splitlines() if ln.lstrip().startswith("build:")]
+    assert not uncommented_build, f"uncommented build: lines remain: {uncommented_build}"
     assert "image: commoncreed/sidecar:0.1.0" in out
     return out
 

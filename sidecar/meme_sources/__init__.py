@@ -30,9 +30,28 @@ from .reddit_memes import RedditMemeSource
 
 logger = logging.getLogger(__name__)
 
+from .mastodon_memes import MastodonMemeSource
+from .youtube_shorts import YouTubeShortsMemeSource
+
 _REGISTRY: dict[str, type] = {
     "reddit_programmerhumor": RedditMemeSource,
-    "reddit_techhumor": RedditMemeSource,  # same class, subreddit via settings
+    "reddit_techhumor": RedditMemeSource,
+    "reddit_linuxmemes": RedditMemeSource,
+    "reddit_softwaregore": RedditMemeSource,
+    "reddit_iiiiiiitttttttttttt": RedditMemeSource,
+    "reddit_programminghorror": RedditMemeSource,
+    "reddit_recruitinghell": RedditMemeSource,
+    "reddit_shittyrobots": RedditMemeSource,
+    "reddit_arduino": RedditMemeSource,
+    "reddit_robotics": RedditMemeSource,
+    "reddit_3dprinting": RedditMemeSource,
+    "reddit_pcmasterrace": RedditMemeSource,
+    "reddit_cscareerquestions": RedditMemeSource,
+    "reddit_webdev": RedditMemeSource,
+    "reddit_homelab": RedditMemeSource,
+    "reddit_mechanicalkeyboards": RedditMemeSource,
+    "mastodon_techmemes": MastodonMemeSource,
+    "youtube_shorts": YouTubeShortsMemeSource,
 }
 
 
