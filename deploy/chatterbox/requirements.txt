@@ -1,8 +1,10 @@
 # CommonCreed Chatterbox sidecar deps.
 # torch / torchaudio come from the pytorch base image — do NOT pin here,
 # the base provides 2.3.1+cu121 and pinning would trigger a reinstall.
+# chatterbox-tts pulls gradio transitively which wants fastapi>=0.115.2,
+# so the fastapi floor here matches that constraint.
 chatterbox-tts==0.1.7
-fastapi==0.110.0
-uvicorn[standard]==0.29.0
-pydantic==2.6.4
-python-multipart==0.0.9
+fastapi>=0.115.2,<1.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.6.4,<3.0
+python-multipart>=0.0.9
