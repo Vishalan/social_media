@@ -33,7 +33,7 @@ Dashboard for the parallel execution of `docs/plans/2026-04-18-001-feat-engageme
 |------|--------|----------|------------|-------|--------|-----------|
 | 0.1 Brand assets | `feat/engage-v2/0.1-brand-assets` | `.worktrees/engage-v2-0.1/` | — | agent `0.1@engage-v2-swarm` (re-dispatch) | ✅ merged (70e6206) | 2026-04-18 15:55 |
 | 0.2 libass smoke | `feat/engage-v2/0.2-libass-smoke` | `.worktrees/engage-v2-0.2/` | 0.1 | agent `0.2@engage-v2-swarm` | ✅ merged (10cf71e) | 2026-04-18 16:10 |
-| 0.3 SFX library | `feat/engage-v2/0.3-sfx-library` | `.worktrees/engage-v2-0.3/` | — | _unassigned_ | ⏸ deferred — awaiting SFX sourcing decision; only blocks A3 downstream | — |
+| 0.3 SFX library | `feat/engage-v2/0.3-sfx-library` | `.worktrees/engage-v2-0.3/` | — | agent `0.3@engage-v2-swarm` | ✅ merged (b05be5e) | 2026-04-18 21:35 |
 | 0.4 Article extractor | `feat/engage-v2/0.4-article-extractor` | `.worktrees/engage-v2-0.4/` | — | agent `0.4@engage-v2-swarm` | ✅ merged (b20bb36) | 2026-04-18 15:10 |
 | 0.5 Selector extension | `feat/engage-v2/0.5-selector-extension` | `.worktrees/engage-v2-0.5/` | 0.4 | agent `0.5@engage-v2-swarm` | ✅ merged (7b4bba4) | 2026-04-18 15:30 |
 | 0.6 Registration linter | `feat/engage-v2/0.6-registration-linter` | `.worktrees/engage-v2-0.6/` | 0.5 | agent `0.6@engage-v2-swarm` | ✅ merged (a03893c) | 2026-04-18 15:45 |
@@ -57,7 +57,7 @@ Gate 1 (see `...-integration-gates.md`) must be green before any Wave-2 worker i
 |------|--------|----------|------------|-------|--------|-----------|
 | A1 Phone-highlight | `feat/engage-v2/a1-phone-highlight` | `.worktrees/engage-v2-a1/` | 0.1, 0.4, 0.5 | agent `a1@engage-v2-swarm` | ✅ merged (22714c0) | 2026-04-18 18:20 |
 | A2 Word captions | `feat/engage-v2/a2-word-captions` | `.worktrees/engage-v2-a2/` | 0.1, 0.2 | agent `a2@engage-v2-swarm` | ✅ merged (0178bee) | 2026-04-18 18:15 |
-| A3 Zoom-punch + SFX | `feat/engage-v2/a3-zoom-punch-sfx` | `.worktrees/engage-v2-a3/` | 0.3, A2 | _unassigned_ | ⏸ blocked on 0.3 (SFX sourcing decision) | — |
+| A3 Zoom-punch + SFX | `feat/engage-v2/a3-zoom-punch-sfx` | `.worktrees/engage-v2-a3/` | 0.3, A2 | agent `a3@engage-v2-swarm` | in_progress (dispatched) | — |
 | B1 Tweet reveal | `feat/engage-v2/b1-tweet-reveal` | `.worktrees/engage-v2-b1/` | 0.1, 0.5, A1 | agent `b1@engage-v2-swarm` | ✅ merged (6df574b) | 2026-04-18 18:45 |
 | B2 Split-screen | `feat/engage-v2/b2-split-screen` | `.worktrees/engage-v2-b2/` | 0.5 | agent `b2@engage-v2-swarm` | ✅ merged (514fd5f) | 2026-04-18 18:30 |
 | B3 Rhythm rules | `feat/engage-v2/b3-rhythm-rules` | `.worktrees/engage-v2-b3/` | — | agent `b3@engage-v2-swarm` | ✅ merged (ad0b19a) | 2026-04-18 18:10 |
