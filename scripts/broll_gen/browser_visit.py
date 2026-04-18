@@ -259,6 +259,13 @@ Rules:
 - Every segment must be browser type.
 - Vary the scroll_pct across segments — show DIFFERENT parts of the article, not the same section.
 - Match scroll_pct to the section whose visible text is most relevant to the voiceover at that moment.
+
+EDITING RHYTHM RULES (2026 short-form standard):
+- Cut every 2–4 seconds. Long static segments fail retention.
+- Place a cut, image, or text card on every concrete proper-noun or numeric token in the script.
+- Insert a "burst sequence" — 5–10 quick cuts within 3 seconds — approximately every 15 seconds as a retention reset.
+- Use multiple short segments instead of fewer long ones.
+- Target ~{target_duration_s} / 2.5 segments per video (so a 60 s video = ~24 segments).
 """
 
 _TIMELINE_SCHEMA = {
@@ -580,8 +587,21 @@ class BrowserVisitGenerator(BrollBase):
         sections: list[dict],
         n_segments: int,
     ) -> list[dict]:
-        """Call Claude Haiku to plan the mixed b-roll timeline."""
-        from anthropic import AsyncAnthropic
+        """Call Claude Haiku to plan the mixed b-roll timeline.
+
+        Applies a 2026 editing-rhythm segment-count budget:
+          - ``MAX_SEGMENTS_PER_VIDEO = max(8, int(target_duration_s / 1.5))``
+            (e.g. 60 s → 40).
+          - If Haiku returns more than ``MAX * 1.5`` segments, retry ONCE with a
+            compaction prompt asking it to consolidate adjacent same-type segments.
+          - If still over after retry, truncate from the end (the renderer will
+            stop at ``target_duration_s`` anyway — existing behavior).
+        """
+        from anthropic import AsyncAnthropic  # noqa: F401 — import kept for callers
+
+        # 2026 rhythm budget: target ~(target_duration_s / 2.5) segments, hard cap 1.5x that.
+        max_segments_per_video = max(8, int(target_duration_s / 1.5))
+        hard_cap = int(max_segments_per_video * 1.5)
 
         # Build timed script segments
         words = script_text.split()
@@ -603,28 +623,56 @@ class BrowserVisitGenerator(BrollBase):
             for i, s in enumerate(sections)
         )
 
-        user_msg = (
+        base_user_msg = (
             f"Script (estimated timestamps):\n"
             + "\n".join(script_segments)
             + f"\n\nArticle sections:\n{sections_text}"
             + f"\n\nPlan exactly {n_segments} b-roll segments to cover {target_duration_s:.1f} seconds."
         )
 
-        response = await self._client.messages.create(
-            model="claude-haiku-4-5",
-            max_tokens=1024,
-            system=_TIMELINE_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_msg}],
-            output_config={
-                "format": {"type": "json_schema", "schema": _TIMELINE_SCHEMA}
-            },
-        )
+        async def _call_haiku(user_msg: str) -> list[dict]:
+            response = await self._client.messages.create(
+                model="claude-haiku-4-5",
+                max_tokens=1024,
+                system=_TIMELINE_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": user_msg}],
+                output_config={
+                    "format": {"type": "json_schema", "schema": _TIMELINE_SCHEMA}
+                },
+            )
+            data = json.loads(response.content[0].text)
+            return list(data["segments"])
 
-        data = json.loads(response.content[0].text)
-        segments: list[dict] = data["segments"]
+        # First call
+        segments = await _call_haiku(base_user_msg)
+
+        # Segment-count budget enforcement (counts raw len of Haiku's segments list
+        # before validation/padding — that's the knob we can influence via retry).
+        if len(segments) > hard_cap:
+            logger.info(
+                "Timeline planner: %d segments exceeds hard cap %d (max=%d); retrying with compaction prompt",
+                len(segments), hard_cap, max_segments_per_video,
+            )
+            compaction_msg = (
+                base_user_msg
+                + "\n\n"
+                + (
+                    f"The previous plan exceeded the segment budget of "
+                    f"{max_segments_per_video} segments. Consolidate adjacent "
+                    f"same-type segments and return at most {max_segments_per_video}."
+                )
+            )
+            segments = await _call_haiku(compaction_msg)
+
+            if len(segments) > hard_cap:
+                logger.warning(
+                    "Timeline planner: compaction retry still returned %d segments (cap=%d) — truncating",
+                    len(segments), hard_cap,
+                )
+                segments = segments[:hard_cap]
 
         # Validate and fix up segments
-        valid = []
+        valid: list[dict] = []
         for seg in segments:
             t = seg.get("type", "browser")
             if t == "browser":
@@ -663,11 +711,16 @@ class BrowserVisitGenerator(BrollBase):
             else:
                 valid.append({"type": "browser", "scroll_pct": sections[len(valid) % len(sections)]["scroll_pct"]})
 
-        # Pad / trim to exactly n_segments
-        while len(valid) < n_segments:
-            idx = len(valid) % len(sections)
-            valid.append({"type": "browser", "scroll_pct": sections[idx]["scroll_pct"]})
-        return valid[:n_segments]
+        # If Haiku returned fewer segments than the caller-requested ``n_segments``
+        # AND we're still under the rhythm budget, pad out. Otherwise honor
+        # Haiku's higher count (capped by hard_cap, already applied above) so
+        # that the 2026 rhythm rules can produce more cuts than ``n_segments``.
+        if len(valid) < n_segments and len(valid) < max_segments_per_video:
+            while len(valid) < n_segments and len(valid) < max_segments_per_video:
+                idx = len(valid) % len(sections)
+                valid.append({"type": "browser", "scroll_pct": sections[idx]["scroll_pct"]})
+
+        return valid[:hard_cap]
 
     def _closest_section(self, sections: list[dict], scroll_pct: float) -> dict:
         """Return the captured section whose scroll_pct is closest to the target."""
