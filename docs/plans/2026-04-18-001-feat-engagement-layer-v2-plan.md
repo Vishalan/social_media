@@ -1,8 +1,10 @@
 ---
 title: "feat: Engagement Layer v2 — phone-highlight, animated word captions, zoom-punch + SFX, tweet/AB reveals, cinematic charts"
 type: feat
-status: planned
+status: completed
 date: 2026-04-18
+completed_at: 2026-04-18
+rollup_commit: 7d98ec2
 origin: docs/brainstorms/2026-04-18-engagement-layer-v2-requirements.md
 ---
 
