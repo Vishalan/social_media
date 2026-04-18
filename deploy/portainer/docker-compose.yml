@@ -379,7 +379,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
+          # Bumped from 2G → 4G: MoviePy assembly of a 40s 9:16 video with
+          # avatar overlays + caption burns peaks around ~3G and was getting
+          # OOMKilled silently (no stderr, no traceback, just SIGKILL).
+          memory: 4G
         reservations:
           memory: 256M
 
