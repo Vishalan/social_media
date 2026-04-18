@@ -281,6 +281,12 @@ class ImageMontageGenerator(BrollBase):
         filter_parts: list[str] = []
         for idx in range(len(images)):
             zoompan_d = int(fps * per_clip_s)
+            # ffmpeg 7.x's ``xfade`` rejects inputs whose timebase it cannot
+            # resolve to a constant frame rate (error: "current rate of 1/0 is
+            # invalid"). Looped still images (``-loop 1``) produce variable
+            # timestamps even after zoompan, so we pin the rate with an
+            # explicit ``fps`` filter at the end of each per-image chain.
+            # This is a no-op on already-constant streams and makes xfade happy.
             filt = (
                 f"[{idx}:v]"
                 "scale=1920:1080:force_original_aspect_ratio=decrease,"
@@ -288,7 +294,8 @@ class ImageMontageGenerator(BrollBase):
                 f"zoompan=z='zoom+0.001':d={zoompan_d}:s=1920x1080,"
                 "setpts=PTS-STARTPTS,"
                 f"scale={cw}:960:force_original_aspect_ratio=decrease,"
-                f"pad={cw}:960:(ow-iw)/2:(oh-ih)/2:black"
+                f"pad={cw}:960:(ow-iw)/2:(oh-ih)/2:black,"
+                f"fps={fps}"
                 f"[v{idx}]"
             )
             filter_parts.append(filt)
@@ -343,7 +350,12 @@ class ImageMontageGenerator(BrollBase):
                 subprocess.run, cmd, check=True, capture_output=True
             )
         except subprocess.CalledProcessError as exc:
-            stderr_snippet = exc.stderr.decode(errors="replace")[:500]
-            raise BrollError(f"ffmpeg failed: {stderr_snippet}") from exc
+            # ffmpeg prints its build banner first; the real error is at the
+            # tail of stderr. Keep the last ~1500 chars so the raised message
+            # carries the actionable lines (filter graph errors, missing
+            # inputs, codec errors, etc.).
+            stderr_full = exc.stderr.decode(errors="replace")
+            stderr_snippet = stderr_full[-1500:]
+            raise BrollError(f"ffmpeg failed (tail of stderr):\n{stderr_snippet}") from exc
 
         logger.info("ImageMontage: encoded %s (%.1fs)", output_path, target_duration_s)

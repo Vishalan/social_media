@@ -26,3 +26,7 @@ aiohttp==3.13.3
 websockets==16.0
 python-dotenv==1.2.2
 python-dateutil==2.9.0.post0
+# Article extractor used by engage-v2 Unit 0.4 (topic_intel.article_extractor).
+# Without it, phone_highlight b-roll falls back to "no article body" and the
+# selector rules it out before ranking.
+trafilatura==1.12.2

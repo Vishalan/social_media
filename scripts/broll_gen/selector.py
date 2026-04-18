@@ -51,7 +51,7 @@ also populate ``split_screen_pair`` with one generator per side.
 Detection signals: " vs ", "X versus Y", two named models/products in the title, \
 "before vs after", "A beats B", or side-by-side benchmark comparisons.
 Generator types for each side are restricted to {browser_visit, image_montage, stats_card}.
-If the topic is not a comparison, omit ``split_screen_pair`` entirely (leave it null).
+If the topic is not a comparison, OMIT the ``split_screen_pair`` key entirely from your JSON output (do NOT emit ``null``).
 
 Tweet-quote detection (optional — emit only when the source article quotes a \
 named person directly):
@@ -66,8 +66,8 @@ if you are not confident.
 that reads as realistic engagement for that person.
   - ``verified``: ``true`` if the author is a widely-known public figure, \
 else ``false``.
-If no direct quote attributed to a named person is present, omit ``tweet_quote`` \
-entirely (leave it null).\
+If no direct quote attributed to a named person is present, OMIT the \
+``tweet_quote`` key entirely from your JSON output (do NOT emit ``null``).\
 """
 
 # Sub-schema for ``tweet_quote`` — emitted only when the article contains a
@@ -173,30 +173,24 @@ _RESPONSE_SCHEMA = {
         # comparison between two named entities. Callers lift this onto
         # VideoJob.split_screen_pair so the split_screen generator is gated
         # by the presence of this field.
+        # Anthropic's constrained-decoding schema rejects ``oneOf`` — we
+        # express "null or object" by keeping the key out of ``required``
+        # and instructing Haiku to omit it when absent.
         "split_screen_pair": {
-            "oneOf": [
-                {"type": "null"},
-                {
-                    "type": "object",
-                    "properties": {
-                        "left": _SPLIT_SIDE_SCHEMA,
-                        "right": _SPLIT_SIDE_SCHEMA,
-                    },
-                    "required": ["left", "right"],
-                    "additionalProperties": False,
-                },
-            ],
+            "type": "object",
+            "properties": {
+                "left": _SPLIT_SIDE_SCHEMA,
+                "right": _SPLIT_SIDE_SCHEMA,
+            },
+            "required": ["left", "right"],
+            "additionalProperties": False,
         },
         # Unit B1 — optional: populated only when the source article contains
         # a direct quote attributed to a named person. Callers lift this onto
         # VideoJob.tweet_quote so the tweet_reveal generator is gated by the
-        # presence of this field.
-        "tweet_quote": {
-            "oneOf": [
-                {"type": "null"},
-                _TWEET_QUOTE_SCHEMA,
-            ],
-        },
+        # presence of this field. Same omit-when-absent pattern as
+        # split_screen_pair (no ``oneOf``).
+        "tweet_quote": _TWEET_QUOTE_SCHEMA,
     },
     "required": ["primary", "fallback"],
     "additionalProperties": False,
