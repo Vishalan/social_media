@@ -321,8 +321,10 @@ services:
   # ===========================================================================
   commoncreed_sidecar:
     build:
-      context: ../../sidecar
-      dockerfile: Dockerfile
+      # Build context = repo root so `COPY assets/fonts/` (Unit 0.1) resolves.
+      # Dockerfile stays at sidecar/Dockerfile.
+      context: ../..
+      dockerfile: sidecar/Dockerfile
     image: commoncreed/sidecar:0.1.0
     container_name: commoncreed_sidecar
     restart: unless-stopped
