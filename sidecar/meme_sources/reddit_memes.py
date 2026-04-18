@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 _DEFAULT_SUBREDDITS = {
     "reddit_programmerhumor": "ProgrammerHumor",
     "reddit_techhumor": "techhumor",
+    # Unit 4 — widen the top-of-funnel for strict humor+relevance filtering
+    "reddit_cscareerquestions": "cscareerquestions",
+    "reddit_webdev": "webdev",
+    "reddit_dataisbeautiful": "DataIsBeautiful",
+    "reddit_homelab": "homelab",
+    "reddit_mechanicalkeyboards": "MechanicalKeyboards",
 }
 
 

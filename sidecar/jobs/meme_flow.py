@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any
 from pathlib import Path
@@ -41,6 +42,171 @@ logger = logging.getLogger(__name__)
 
 
 _MEDIA_WORK_DIR = Path("/app/output/memes")
+
+
+# ---------------------------------------------------------------------------
+# humor + relevance scoring — uses Claude Haiku to rate candidates (Unit 1)
+# ---------------------------------------------------------------------------
+
+
+def _score_candidates_batch(
+    candidates: list[dict], settings: Any
+) -> dict[str, dict]:
+    """Rate candidates for humor AND niche relevance using Anthropic Haiku.
+
+    Hardcoded to Anthropic Haiku (not routed through a pluggable llm_client):
+    local models produce binary 10/5 scores that defeat quality filtering.
+    Haiku gives nuanced gradients (3,5,7,8,9) for ~$0.001/batch, which is
+    the quality-critical signal the >= 7 threshold depends on.
+
+    Returns a dict mapping source_url -> {"humor": float, "relevance": float}.
+    Candidates that can't be scored get neutral 5.0 to avoid biasing the
+    ranker either way. Never raises — returns {} on any error.
+    """
+    if not candidates:
+        return {}
+
+    items_text = []
+    for i, c in enumerate(candidates):
+        eng = c.get("engagement") or {}
+        sub = eng.get("subreddit", "?")
+        items_text.append(
+            f"{i+1}. [{c.get('media_type','?')}] r/{sub}: {c.get('title','')[:120]}"
+        )
+
+    prompt = (
+        "You are scoring meme candidates for @commoncreed, an Instagram page "
+        "about AI, tech, software engineering, and developer culture.\n\n"
+        "For each candidate below, provide TWO scores (0-10):\n"
+        "1. HUMOR — Is it genuinely funny? Would it get laughs? Score 0 for "
+        "wholesome, inspirational, sad, political, or not-funny content.\n"
+        "2. RELEVANCE — Is it related to: programming, software engineering, "
+        "AI/ML, tech industry, developer life, CS memes, gadgets, startups, "
+        "tech culture? Score 10 for directly about coding/tech. Score 5 for "
+        "tangentially related (science, gaming tech, clever engineering). "
+        "Score 0-2 for completely unrelated (animals, sports, cooking, nature, "
+        "random viral clips).\n\n"
+        + "\n".join(items_text)
+        + "\n\nRespond with ONLY a JSON array of [humor, relevance] pairs, "
+        "e.g. [[7, 9], [3, 1], [9, 8], ...]. No explanation."
+    )
+
+    api_key = getattr(settings, "ANTHROPIC_API_KEY", "") or ""
+    if not api_key:
+        logger.warning("score_candidates: no ANTHROPIC_API_KEY, skipping")
+        return {}
+
+    try:
+        import httpx
+
+        resp = httpx.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 1000,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=30.0,
+        )
+        if resp.status_code != 200:
+            logger.warning("score_candidates: API %d", resp.status_code)
+            return {}
+
+        text = resp.json()["content"][0]["text"].strip()
+
+        # Parse nested JSON array [[h,r], [h,r], ...]
+        m = re.search(r"\[[\s\S]*\]", text)
+        if not m:
+            logger.warning("score_candidates: no array in response: %s", text[:200])
+            return {}
+
+        pairs = json.loads(m.group())
+        result: dict[str, dict] = {}
+        for i, c in enumerate(candidates):
+            if i < len(pairs) and isinstance(pairs[i], list) and len(pairs[i]) >= 2:
+                result[c["source_url"]] = {
+                    "humor": float(pairs[i][0]),
+                    "relevance": float(pairs[i][1]),
+                }
+            else:
+                result[c["source_url"]] = {"humor": 5.0, "relevance": 5.0}
+        logger.info(
+            "score_candidates: haiku scored %d (avg humor=%.1f, avg relevance=%.1f)",
+            len(result),
+            sum(v["humor"] for v in result.values()) / max(len(result), 1),
+            sum(v["relevance"] for v in result.values()) / max(len(result), 1),
+        )
+        return result
+    except Exception as exc:
+        logger.warning("score_candidates: failed: %s", exc)
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# cross-run dedup — 48h title Jaccard lookback (Unit 3)
+# ---------------------------------------------------------------------------
+
+
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def _jaccard_title(a: str, b: str) -> float:
+    """Jaccard similarity on the tokenized title word set.
+
+    Follows the same tokenizer pattern as ``sidecar/duplicate_guard.py``:
+    lowercase alphanumeric word tokens, empty sets return 0.0.
+    """
+    if not a or not b:
+        return 0.0
+    ta = set(_WORD_RE.findall(a.lower()))
+    tb = set(_WORD_RE.findall(b.lower()))
+    if not ta or not tb:
+        return 0.0
+    union = len(ta | tb)
+    if union == 0:
+        return 0.0
+    return len(ta & tb) / union
+
+
+def _fetch_recent_surfaced_titles(conn) -> list[str]:
+    """Return titles of candidates surfaced to Telegram in the last 48h.
+
+    Used by the cross-run dedup check before surfacing a new candidate.
+    Safe-fails to an empty list on any DB error so the trigger still runs.
+    """
+    try:
+        rows = conn.execute(
+            """
+            SELECT title FROM meme_candidates
+             WHERE telegram_message_id IS NOT NULL
+               AND created_at >= datetime('now', '-2 days')
+            """
+        ).fetchall()
+        return [r["title"] for r in rows if r["title"]]
+    except Exception as exc:
+        logger.warning("fetch_recent_surfaced_titles: %s", exc)
+        return []
+
+
+def _is_cross_run_duplicate(
+    title: str, recent_titles: list[str], threshold: float = 0.7
+) -> bool:
+    """True if ``title`` is >= ``threshold`` Jaccard-similar to any recent title.
+
+    Used to prevent surfacing the same meme twice across runs within the 48h
+    lookback window.
+    """
+    if not title or not recent_titles:
+        return False
+    for rt in recent_titles:
+        if _jaccard_title(title, rt) >= threshold:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -87,14 +253,50 @@ async def run_meme_trigger() -> dict:
             "per_source": per_source,
         }
 
-    # Limit how many we surface per run so Telegram doesn't get flooded.
-    surface_limit = int(
-        getattr(settings, "MEME_DAILY_SURFACE_LIMIT", 5) or 5
+    # --- Unit 1: Humor + relevance scoring via Claude Haiku ---
+    # Score all candidates for humor AND niche relevance before ranking so
+    # we surface genuinely funny tech/AI content and hard-filter out
+    # off-brand viral content. Attach scores to each candidate dict so the
+    # ranker + logs can see them.
+    candidate_scores = await asyncio.to_thread(
+        _score_candidates_batch, all_candidates, settings
+    )
+    for c in all_candidates:
+        scores = candidate_scores.get(c["source_url"], {})
+        c["humor_score"] = scores.get("humor", 5.0)
+        c["relevance_score"] = scores.get("relevance", 5.0)
+
+    # --- Unit 1: Hard filter — only humor >= 7 AND relevance >= 7 survive ---
+    min_humor = int(getattr(settings, "MEME_MIN_HUMOR_SCORE", 7) or 7)
+    min_relevance = int(getattr(settings, "MEME_MIN_RELEVANCE_SCORE", 7) or 7)
+    before_filter = len(all_candidates)
+    all_candidates = [
+        c for c in all_candidates
+        if c.get("humor_score", 0) >= min_humor
+        and c.get("relevance_score", 0) >= min_relevance
+    ]
+    logger.info(
+        "meme_trigger: quality filter kept %d/%d (humor>=%d, relevance>=%d)",
+        len(all_candidates),
+        before_filter,
+        min_humor,
+        min_relevance,
     )
 
-    # Sort by score descending for deterministic top-N picking
+    # --- Unit 2: Per-media-type surface limits ---
+    image_surface_limit = int(
+        getattr(settings, "MEME_DAILY_SURFACE_LIMIT", 2) or 2
+    )
+    video_surface_limit = int(
+        getattr(settings, "MEME_VIDEO_DAILY_SURFACE_LIMIT", 2) or 2
+    )
+
+    # Sort by Reddit score descending for deterministic top-N picking
     def _score(c: dict) -> int:
         return int((c.get("engagement") or {}).get("score") or 0)
+
+    def _is_video(c: dict) -> bool:
+        return (c.get("media_type") or "").lower() in ("video", "gif")
 
     all_candidates.sort(key=_score, reverse=True)
 
@@ -106,6 +308,11 @@ async def run_meme_trigger() -> dict:
         logger.error("meme_trigger: db connect failed: %s", exc)
         return {"ok": False, "error": f"db: {exc}", "per_source": per_source}
 
+    # --- Unit 3: Pre-load recently surfaced titles for cross-run dedup ---
+    recent_surfaced_titles = _fetch_recent_surfaced_titles(conn)
+
+    image_surfaced = 0
+    video_surfaced = 0
     try:
         for cand in all_candidates:
             # Creator denylist short-circuit
@@ -132,8 +339,29 @@ async def run_meme_trigger() -> dict:
                 continue
 
             inserted_ids.append(row_id)
-            if len(surfaced_ids) < surface_limit:
-                surfaced_ids.append(row_id)
+
+            # Unit 3 — cross-run dedup: skip surfacing if a similar-title
+            # candidate was surfaced in the last 48h. The row stays in
+            # pending_review so autopilot can still pick it up later.
+            if _is_cross_run_duplicate(
+                cand.get("title", ""), recent_surfaced_titles, threshold=0.7
+            ):
+                logger.info(
+                    "meme_trigger: cross-run dup skipped (48h, J>=0.7): %s",
+                    cand.get("title", "")[:80],
+                )
+                continue
+
+            # Unit 2 — surface up to per-type quotas; skip the rest (they
+            # stay pending_review and remain eligible for autopilot).
+            if _is_video(cand):
+                if video_surfaced < video_surface_limit:
+                    surfaced_ids.append(row_id)
+                    video_surfaced += 1
+            else:
+                if image_surfaced < image_surface_limit:
+                    surfaced_ids.append(row_id)
+                    image_surfaced += 1
     finally:
         conn.close()
 
@@ -162,6 +390,8 @@ async def run_meme_trigger() -> dict:
         "total_fetched": len(all_candidates),
         "inserted": len(inserted_ids),
         "surfaced": len(surfaced_ids),
+        "surfaced_images": image_surfaced,
+        "surfaced_videos": video_surfaced,
         "telegram_sent": len(sent),
         "inserted_ids": inserted_ids,
         "surfaced_ids": surfaced_ids,
