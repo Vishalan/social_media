@@ -191,7 +191,7 @@ def test_videojob_new_fields_default_values() -> None:
         # stable) and the positive-path contract is covered here, alongside
         # the deeper coverage in each unit's dedicated factory-wiring test.
         ("phone_highlight", "A1", True),
-        ("tweet_reveal", "B1", False),
+        ("tweet_reveal", "B1", True),
         ("split_screen", "B2", True),
         ("cinematic_chart", "C2", False),
     ],

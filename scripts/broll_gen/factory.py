@@ -28,6 +28,7 @@ from broll_gen.phone_highlight import PhoneHighlightGenerator
 from broll_gen.split_screen import SplitScreenGenerator
 from broll_gen.stats_card import StatsCardGenerator
 from broll_gen.stock_video import StockVideoGenerator
+from broll_gen.tweet_reveal import TweetRevealGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -121,9 +122,8 @@ def make_broll_generator(type_name: str, **kwargs) -> BrollBase:
         )
 
     if type_name == "tweet_reveal":
-        raise NotImplementedError(
-            "tweet_reveal not yet wired — lands in Unit B1"
-        )
+        logger.info("B-roll generator: TweetRevealGenerator")
+        return TweetRevealGenerator()
 
     if type_name == "split_screen":
         logger.info("B-roll generator: SplitScreenGenerator")

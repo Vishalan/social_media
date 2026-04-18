@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+{#
+  Tweet-reveal card template (Unit B1).
+
+  Renders a CommonCreed-branded tweet card (white card on navy matte) with
+  an animated like-counter. Rendered at 1080x1920 by Playwright per frame;
+  FFmpeg concats the frames into an MP4.
+
+  Context variables:
+    author          str   — full display name.
+    handle          str|None — @handle (displayed without "@"); None → hidden.
+    body            str   — tweet body text (48 px Inter Regular).
+    verified        bool  — when True, render sky-blue checkmark SVG beside name.
+    like_count      int   — counter value to render at this frame.
+    card_translate_y int  — px offset for slide-in (0 when settled; +N while sliding).
+    card_opacity    float — 0.0 → 1.0 fade-in multiplier.
+    avatar_initial  str   — single uppercase letter used for the avatar circle.
+
+    brand_sky_blue  str   — SKY_BLUE hex (#5C9BFF).
+    brand_navy      str   — NAVY hex (#1E3A8A).
+    brand_white     str   — WHITE hex (#FFFFFF).
+#}
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Tweet</title>
+  <style>
+    :root {
+      --sky: {{ brand_sky_blue }};
+      --navy: {{ brand_navy }};
+      --white: {{ brand_white }};
+      --gray: #6B7280;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 1080px;
+      height: 1920px;
+      background: var(--navy);
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+                   Roboto, Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      color: var(--navy);
+      overflow: hidden;
+    }
+    .matte {
+      width: 1080px;
+      height: 1920px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--navy);
+    }
+    .card {
+      width: 80%;
+      background: var(--white);
+      border-radius: 24px;
+      padding: 72px 64px 64px 64px;
+      box-sizing: border-box;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.25);
+      opacity: {{ "%.3f"|format(card_opacity) }};
+      transform: translateY({{ card_translate_y }}px);
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      margin-bottom: 36px;
+    }
+    .avatar {
+      width: 112px;
+      height: 112px;
+      border-radius: 50%;
+      background: var(--navy);
+      color: var(--white);
+      font-size: 56px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .who {
+      margin-left: 24px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .name-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 40px;
+      font-weight: 700;
+      color: var(--navy);
+      line-height: 1.1;
+    }
+    .verified {
+      width: 36px;
+      height: 36px;
+      flex-shrink: 0;
+    }
+    .handle {
+      margin-top: 6px;
+      font-size: 30px;
+      font-weight: 400;
+      color: var(--gray);
+      line-height: 1.1;
+    }
+    .body {
+      font-size: 48px;
+      line-height: 1.35;
+      font-weight: 400;
+      color: var(--navy);
+      margin: 0 0 48px 0;
+      word-wrap: break-word;
+    }
+    .stats {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      color: var(--gray);
+      font-size: 34px;
+      font-weight: 500;
+    }
+    .heart {
+      width: 44px;
+      height: 44px;
+      color: var(--sky);
+      flex-shrink: 0;
+    }
+    .like-count {
+      color: var(--navy);
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="matte">
+    <div class="card">
+      <div class="header">
+        <div class="avatar">{{ avatar_initial | e }}</div>
+        <div class="who">
+          <div class="name-row">
+            <span class="name">{{ author | e }}</span>
+            {% if verified %}
+            <svg class="verified" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-label="Verified" role="img">
+              <path fill="{{ brand_sky_blue }}" d="M22.5 12.5c0-1.58-.875-2.95-2.148-3.6.154-.435.238-.905.238-1.4 0-2.21-1.71-3.998-3.818-3.998-.47 0-.92.084-1.336.25C14.818 2.415 13.51 1.5 12 1.5s-2.816.917-3.437 2.25c-.415-.165-.866-.25-1.336-.25-2.11 0-3.818 1.79-3.818 4 0 .494.083.964.237 1.4-1.272.65-2.147 2.018-2.147 3.6 0 1.495.782 2.798 1.942 3.486-.02.17-.032.34-.032.514 0 2.21 1.708 4 3.818 4 .47 0 .92-.086 1.335-.25.62 1.334 1.926 2.25 3.437 2.25 1.512 0 2.818-.916 3.437-2.25.415.163.865.248 1.336.248 2.11 0 3.818-1.79 3.818-4 0-.174-.012-.344-.033-.513 1.158-.687 1.943-1.99 1.943-3.484zm-6.616-3.334l-4.334 6.5c-.145.217-.382.334-.625.334-.143 0-.288-.04-.416-.126l-.115-.094-2.415-2.415c-.293-.293-.293-.768 0-1.06.293-.294.768-.294 1.06 0l1.77 1.767 3.825-5.74c.23-.345.696-.436 1.04-.207.346.23.44.696.21 1.04z"/>
+            </svg>
+            {% endif %}
+          </div>
+          {% if handle %}
+          <div class="handle">@{{ handle | e }}</div>
+          {% endif %}
+        </div>
+      </div>
+      <p class="body">{{ body | e }}</p>
+      <div class="stats">
+        <svg class="heart" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path fill="{{ brand_sky_blue }}" d="M12 21s-7-4.35-9.5-8.5C.96 9.92 2.5 6 6 6c2 0 3.5 1 4.5 2.5C11.5 7 13 6 15 6c3.5 0 5.04 3.92 3.5 6.5C19 16.65 12 21 12 21z"/>
+        </svg>
+        <span class="like-count">{{ "{:,}".format(like_count) }}</span>
+        <span class="likes-word">likes</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

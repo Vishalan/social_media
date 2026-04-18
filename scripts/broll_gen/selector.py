@@ -50,8 +50,61 @@ also populate ``split_screen_pair`` with one generator per side.
 Detection signals: " vs ", "X versus Y", two named models/products in the title, \
 "before vs after", "A beats B", or side-by-side benchmark comparisons.
 Generator types for each side are restricted to {browser_visit, image_montage, stats_card}.
-If the topic is not a comparison, omit ``split_screen_pair`` entirely (leave it null).\
+If the topic is not a comparison, omit ``split_screen_pair`` entirely (leave it null).
+
+Tweet-quote detection (optional — emit only when the source article quotes a \
+named person directly):
+If, and only if, the article contains a direct quote attributed to a named \
+person, also populate ``tweet_quote`` with \
+``{author, handle, body, like_count_estimate, verified}``:
+  - ``author``: the full display name of the person being quoted.
+  - ``handle``: best-guess @handle derived from the author's name; ``null`` \
+if you are not confident.
+  - ``body``: the quote itself, trimmed to at most ~240 characters.
+  - ``like_count_estimate``: a tasteful round number in the 100–10000 range \
+that reads as realistic engagement for that person.
+  - ``verified``: ``true`` if the author is a widely-known public figure, \
+else ``false``.
+If no direct quote attributed to a named person is present, omit ``tweet_quote`` \
+entirely (leave it null).\
 """
+
+# Sub-schema for ``tweet_quote`` — emitted only when the article contains a
+# direct quote attributed to a named person (Unit B1). Mirrors the
+# ``split_screen_pair`` additive-only pattern; when no quote is present the
+# field is ``null``.
+_TWEET_QUOTE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "author": {
+            "type": "string",
+            "description": "Full display name of the quoted person.",
+        },
+        "handle": {
+            "type": ["string", "null"],
+            "description": (
+                "Best-guess @handle (without the leading '@') derived from "
+                "the author's name, or null if unknown."
+            ),
+        },
+        "body": {
+            "type": "string",
+            "description": "The quoted text (≤ ~240 chars).",
+        },
+        "like_count_estimate": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 10000,
+            "description": (
+                "Tasteful round number for the animated like counter."
+            ),
+        },
+        "verified": {"type": "boolean"},
+    },
+    "required": ["author", "body", "like_count_estimate", "verified"],
+    "additionalProperties": False,
+}
+
 
 # Side-generator enum for ``split_screen_pair`` — restricted per Unit B2
 # spec to the generators that support ``width_override``.
@@ -133,6 +186,16 @@ _RESPONSE_SCHEMA = {
                 },
             ],
         },
+        # Unit B1 — optional: populated only when the source article contains
+        # a direct quote attributed to a named person. Callers lift this onto
+        # VideoJob.tweet_quote so the tweet_reveal generator is gated by the
+        # presence of this field.
+        "tweet_quote": {
+            "oneOf": [
+                {"type": "null"},
+                _TWEET_QUOTE_SCHEMA,
+            ],
+        },
     },
     "required": ["primary", "fallback"],
     "additionalProperties": False,
@@ -151,6 +214,11 @@ class BrollSelector:
         # onto ``VideoJob.split_screen_pair`` without changing the public
         # return type of ``select()``.
         self.last_split_screen_pair: dict | None = None
+        # Unit B1: most-recent Haiku-emitted ``tweet_quote`` (or None). Same
+        # side-effect pattern as ``last_split_screen_pair`` — callers lift it
+        # onto ``VideoJob.tweet_quote`` without changing ``select()``'s
+        # return type.
+        self.last_tweet_quote: dict | None = None
 
     @staticmethod
     def _compute_forced_primary_candidates(
@@ -238,6 +306,8 @@ class BrollSelector:
             # instance so downstream orchestration (commoncreed_pipeline) can
             # copy it onto VideoJob without changing the return contract.
             self.last_split_screen_pair = data.get("split_screen_pair") or None
+            # Same pattern for Unit B1's ``tweet_quote``.
+            self.last_tweet_quote = data.get("tweet_quote") or None
             return [data["primary"], data["fallback"]]
         except Exception as exc:
             logger.warning(
@@ -246,4 +316,5 @@ class BrollSelector:
                 _SAFE_DEFAULT,
             )
             self.last_split_screen_pair = None
+            self.last_tweet_quote = None
             return list(_SAFE_DEFAULT)
