@@ -13,58 +13,47 @@
 import React from "react";
 import { registerRoot, Composition } from "remotion";
 
-import {
-  BarChart,
-  barChartDefaultProps,
-  type BarChartProps,
-} from "./templates/BarChart.js";
-import {
-  LineChart,
-  lineChartDefaultProps,
-  type LineChartProps,
-} from "./templates/LineChart.js";
+import { BarChart, barChartDefaultProps } from "./templates/BarChart.js";
+import { LineChart, lineChartDefaultProps } from "./templates/LineChart.js";
 import {
   NumberTicker,
   numberTickerDefaultProps,
-  type NumberTickerProps,
 } from "./templates/NumberTicker.js";
 
-/** Vertical 9:16 canvas shared by every template. */
 const WIDTH = 1080;
 const HEIGHT = 1920;
 const FPS = 30;
-/** Placeholder; server overrides per-request. */
 const DEFAULT_DURATION_FRAMES = 150;
 
 export const RemotionRoot: React.FC = () => {
   return (
     <>
-      <Composition<typeof barChartDefaultProps, BarChartProps>
+      <Composition
         id="bar_chart"
-        component={BarChart}
+        component={BarChart as unknown as React.ComponentType<Record<string, unknown>>}
         durationInFrames={DEFAULT_DURATION_FRAMES}
         fps={FPS}
         width={WIDTH}
         height={HEIGHT}
-        defaultProps={barChartDefaultProps}
+        defaultProps={barChartDefaultProps as unknown as Record<string, unknown>}
       />
-      <Composition<typeof numberTickerDefaultProps, NumberTickerProps>
+      <Composition
         id="number_ticker"
-        component={NumberTicker}
+        component={NumberTicker as unknown as React.ComponentType<Record<string, unknown>>}
         durationInFrames={DEFAULT_DURATION_FRAMES}
         fps={FPS}
         width={WIDTH}
         height={HEIGHT}
-        defaultProps={numberTickerDefaultProps}
+        defaultProps={numberTickerDefaultProps as unknown as Record<string, unknown>}
       />
-      <Composition<typeof lineChartDefaultProps, LineChartProps>
+      <Composition
         id="line_chart"
-        component={LineChart}
+        component={LineChart as unknown as React.ComponentType<Record<string, unknown>>}
         durationInFrames={DEFAULT_DURATION_FRAMES}
         fps={FPS}
         width={WIDTH}
         height={HEIGHT}
-        defaultProps={lineChartDefaultProps}
+        defaultProps={lineChartDefaultProps as unknown as Record<string, unknown>}
       />
     </>
   );

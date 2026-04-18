@@ -24,6 +24,6 @@
     "isolatedModules": true,
     "allowImportingTsExtensions": false
   },
-  "include": ["src/**/*", "remotion.config.ts"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }
