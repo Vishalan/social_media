@@ -71,7 +71,16 @@ export async function getBundle(): Promise<string> {
     const entry = path.join(projectRoot(), "src", "index.tsx");
     cachedBundlePromise = bundle({
       entryPoint: entry,
-      webpackOverride: (config) => config,
+      webpackOverride: (config) => ({
+        ...config,
+        resolve: {
+          ...config.resolve,
+          extensionAlias: {
+            ...(config.resolve?.extensionAlias ?? {}),
+            ".js": [".ts", ".tsx", ".js"],
+          },
+        },
+      }),
     });
   }
   return cachedBundlePromise;
