@@ -55,14 +55,14 @@ Gate 1 (see `...-integration-gates.md`) must be green before any Wave-2 worker i
 
 | Unit | Branch | Worktree | Depends on | Owner | Status | Merged-at |
 |------|--------|----------|------------|-------|--------|-----------|
-| A1 Phone-highlight | `feat/engage-v2/a1-phone-highlight` | `.worktrees/engage-v2-a1/` | 0.1, 0.4, 0.5 | _unassigned_ | pending | — |
-| A2 Word captions | `feat/engage-v2/a2-word-captions` | `.worktrees/engage-v2-a2/` | 0.1, 0.2 | _unassigned_ | pending | — |
-| A3 Zoom-punch + SFX | `feat/engage-v2/a3-zoom-punch-sfx` | `.worktrees/engage-v2-a3/` | 0.3, A2 | _unassigned_ | pending | — |
-| B1 Tweet reveal | `feat/engage-v2/b1-tweet-reveal` | `.worktrees/engage-v2-b1/` | 0.1, 0.5, A1 | _unassigned_ | pending | — |
-| B2 Split-screen | `feat/engage-v2/b2-split-screen` | `.worktrees/engage-v2-b2/` | 0.5 | _unassigned_ | pending | — |
-| B3 Rhythm rules | `feat/engage-v2/b3-rhythm-rules` | `.worktrees/engage-v2-b3/` | — | _unassigned_ | pending | — |
-| C1 Remotion sidecar | `feat/engage-v2/c1-remotion-sidecar` | `.worktrees/engage-v2-c1/` | — | _unassigned_ | pending | — |
-| C2 Cinematic chart | `feat/engage-v2/c2-cinematic-chart` | `.worktrees/engage-v2-c2/` | C1, 0.5 | _unassigned_ | pending | — |
+| A1 Phone-highlight | `feat/engage-v2/a1-phone-highlight` | `.worktrees/engage-v2-a1/` | 0.1, 0.4, 0.5 | agent `a1@engage-v2-swarm` | ✅ merged (22714c0) | 2026-04-18 18:20 |
+| A2 Word captions | `feat/engage-v2/a2-word-captions` | `.worktrees/engage-v2-a2/` | 0.1, 0.2 | agent `a2@engage-v2-swarm` | ✅ merged (0178bee) | 2026-04-18 18:15 |
+| A3 Zoom-punch + SFX | `feat/engage-v2/a3-zoom-punch-sfx` | `.worktrees/engage-v2-a3/` | 0.3, A2 | _unassigned_ | ⏸ blocked on 0.3 (SFX sourcing decision) | — |
+| B1 Tweet reveal | `feat/engage-v2/b1-tweet-reveal` | `.worktrees/engage-v2-b1/` | 0.1, 0.5, A1 | agent `b1@engage-v2-swarm` | ✅ merged (6df574b) | 2026-04-18 18:45 |
+| B2 Split-screen | `feat/engage-v2/b2-split-screen` | `.worktrees/engage-v2-b2/` | 0.5 | agent `b2@engage-v2-swarm` | ✅ merged (514fd5f) | 2026-04-18 18:30 |
+| B3 Rhythm rules | `feat/engage-v2/b3-rhythm-rules` | `.worktrees/engage-v2-b3/` | — | agent `b3@engage-v2-swarm` | ✅ merged (ad0b19a) | 2026-04-18 18:10 |
+| C1 Remotion sidecar | `feat/engage-v2/c1-remotion-sidecar` | `.worktrees/engage-v2-c1/` | — | agent `c1@engage-v2-swarm` | ✅ merged (6875688) | 2026-04-18 18:25 |
+| C2 Cinematic chart | `feat/engage-v2/c2-cinematic-chart` | `.worktrees/engage-v2-c2/` | C1, 0.5 | agent `c2@engage-v2-swarm` | ✅ merged (c689753) | 2026-04-18 18:50 |
 
 ## Gate 2 — post-Wave-2
 
