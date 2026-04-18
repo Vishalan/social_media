@@ -1,0 +1,385 @@
+# Engagement Layer v2 — Stream Manifest
+#
+# One entry per origin-plan unit. The orchestrator reads this to dispatch
+# the per-branch worker loop: team task creation, worktree path, branch name,
+# dependencies, file scope, test paths, and reviewer-specialist selection.
+#
+# Source of truth: docs/plans/2026-04-18-001-feat-engagement-layer-v2-plan.md
+# Companion: docs/plans/2026-04-18-002-feat-engage-v2-agent-team-execution-plan.md
+#
+# Conflict rules for shared files live in docs/plans/2026-04-18-002-engage-v2-conflict-register.md.
+
+version: 1
+origin_plan: docs/plans/2026-04-18-001-feat-engagement-layer-v2-plan.md
+origin_plan_sha: 74072ebf354b31f2d2df1137d7e4d1e8f4e12089
+integration_branch: feat/engagement-layer-v2
+worktree_root: .worktrees/
+
+streams:
+
+  # -------------------- Wave 1: Tier 0 (shared substrate) --------------------
+
+  - unit_id: "0.1"
+    origin_plan_ref: "Unit 0.1 — Brand assets module + brand fonts"
+    title: Brand assets module + brand fonts
+    wave: 1
+    tier: "0"
+    branch: feat/engage-v2/0.1-brand-assets
+    worktree: .worktrees/engage-v2-0.1
+    depends_on: []
+    touched_files:
+      create:
+        - scripts/branding.py
+        - assets/fonts/Inter-Bold.ttf
+        - assets/fonts/Inter-Regular.ttf
+        - assets/fonts/Inter-SemiBold.ttf
+      modify:
+        - scripts/broll_gen/headline_burst.py
+        - sidecar/Dockerfile
+    shared_files:
+      - sidecar/Dockerfile           # also touched by 0.2
+      - scripts/broll_gen/headline_burst.py  # also touched by B2
+    test_paths:
+      - scripts/tests/test_branding.py
+      - scripts/broll_gen/tests/test_headline_burst.py
+    code_quality_reviewer: compound-engineering:review:kieran-python-reviewer
+    execution_note: null
+
+  - unit_id: "0.2"
+    origin_plan_ref: "Unit 0.2 — libass + fontconfig + caption-render smoke gate"
+    title: libass + fontconfig + caption-render smoke gate
+    wave: 1
+    tier: "0"
+    branch: feat/engage-v2/0.2-libass-smoke
+    worktree: .worktrees/engage-v2-0.2
+    depends_on: ["0.1"]
+    touched_files:
+      create:
+        - scripts/video_edit/tests/test_caption_render_smoke.py
+      modify:
+        - sidecar/Dockerfile
+    shared_files:
+      - sidecar/Dockerfile           # also touched by 0.1 (land after 0.1)
+    test_paths:
+      - scripts/video_edit/tests/test_caption_render_smoke.py
+    code_quality_reviewer: compound-engineering:review:kieran-python-reviewer
+    execution_note: null
+
+  - unit_id: "0.3"
+    origin_plan_ref: "Unit 0.3 — SFX library bundle + audio mix helper"
+    title: SFX library + audio mix helper
+    wave: 1
+    tier: "0"
+    branch: feat/engage-v2/0.3-sfx-library
+    worktree: .worktrees/engage-v2-0.3
+    depends_on: []
+    touched_files:
+      create:
+        - assets/sfx/cut_whoosh.wav
+        - assets/sfx/cut_swoop.wav
+        - assets/sfx/cut_swish.wav
+        - assets/sfx/pop_short.wav
+        - assets/sfx/pop_high.wav
+        - assets/sfx/pop_low.wav
+        - assets/sfx/ding_clean.wav
+        - assets/sfx/ding_chime.wav
+        - assets/sfx/tick_soft.wav
+        - assets/sfx/tick_hard.wav
+        - assets/sfx/thud_soft.wav
+        - assets/sfx/thud_dramatic.wav
+        - assets/sfx/whoosh_long.wav
+        - assets/sfx/swipe_in.wav
+        - assets/sfx/swipe_out.wav
+        - assets/sfx/LICENSE.md
+        - scripts/audio/__init__.py
+        - scripts/audio/sfx.py
+        - scripts/audio/tests/test_sfx.py
+      modify:
+        - deploy/portainer/docker-compose.yml   # verify-only; no write expected
+    shared_files: []
+    test_paths:
+      - scripts/audio/tests/test_sfx.py
+    code_quality_reviewer: compound-engineering:review:kieran-python-reviewer
+    execution_note: null
+
+  - unit_id: "0.4"
+    origin_plan_ref: "Unit 0.4 — Article text extractor (Trafilatura)"
+    title: Article text extractor (Trafilatura)
+    wave: 1
+    tier: "0"
+    branch: feat/engage-v2/0.4-article-extractor
+    worktree: .worktrees/engage-v2-0.4
+    depends_on: []
+    touched_files:
+      create:
+        - scripts/topic_intel/__init__.py
+        - scripts/topic_intel/article_extractor.py
+        - scripts/topic_intel/tests/test_article_extractor.py
+      modify:
+        - sidecar/requirements.txt
+        - requirements.txt
+        - scripts/commoncreed_pipeline.py
+        - scripts/smoke_e2e.py
+    shared_files:
+      - scripts/commoncreed_pipeline.py   # also touched by 0.5 and A3
+      - scripts/smoke_e2e.py              # also touched by 0.5 and A3
+    test_paths:
+      - scripts/topic_intel/tests/test_article_extractor.py
+    code_quality_reviewer: compound-engineering:review:kieran-python-reviewer
+    execution_note: null
+
+  - unit_id: "0.5"
+    origin_plan_ref: "Unit 0.5 — VideoJob + BrollSelector extension (with short-circuit fix)"
+    title: VideoJob + BrollSelector extension
+    wave: 1
+    tier: "0"
+    branch: feat/engage-v2/0.5-selector-extension
+    worktree: .worktrees/engage-v2-0.5
+    depends_on: ["0.4"]
+    touched_files:
+      create:
+        - scripts/broll_gen/registry.py
+        - scripts/broll_gen/tests/test_selector_extension.py
+      modify:
+        - scripts/broll_gen/selector.py
+        - scripts/broll_gen/factory.py
+        - scripts/commoncreed_pipeline.py
+        - scripts/smoke_e2e.py
+    shared_files:
+      - scripts/broll_gen/factory.py      # also touched by A1, B1, B2, C2
+      - scripts/commoncreed_pipeline.py   # also touched by 0.4, A3
+      - scripts/smoke_e2e.py              # also touched by 0.4, A3
+      - scripts/broll_gen/selector.py     # also touched by C2 (different region)
+    test_paths:
+      - scripts/broll_gen/tests/test_selector_extension.py
+    code_quality_reviewer: compound-engineering:review:architecture-strategist
+    execution_note: "Cross-boundary change — selector/factory/registry + pipeline plumbing. Architecture reviewer selected to validate boundaries."
+
+  - unit_id: "0.6"
+    origin_plan_ref: "Unit 0.6 — Three-file registration consistency linter"
+    title: Three-file registration consistency linter
+    wave: 1
+    tier: "0"
+    branch: feat/engage-v2/0.6-registration-linter
+    worktree: .worktrees/engage-v2-0.6
+    depends_on: ["0.5"]
+    touched_files:
+      create:
+        - scripts/broll_gen/tests/test_registration_consistency.py
+    shared_files: []
+    test_paths:
+      - scripts/broll_gen/tests/test_registration_consistency.py
+    code_quality_reviewer: compound-engineering:review:kieran-python-reviewer
+    execution_note: null
+
+  # -------------------- Wave 2: Tier A (engagement floor) --------------------
+
+  - unit_id: a1
+    origin_plan_ref: "Unit A1 — Phone-highlight generator (phone_highlight)"
+    title: Phone-highlight generator
+    wave: 2
+    tier: A
+    branch: feat/engage-v2/a1-phone-highlight
+    worktree: .worktrees/engage-v2-a1
+    depends_on: ["0.1", "0.4", "0.5"]
+    touched_files:
+      create:
+        - scripts/broll_gen/phone_highlight.py
+        - assets/templates/phone_article.html.j2
+        - assets/templates/iphone_chrome.png
+        - scripts/broll_gen/tests/test_phone_highlight.py
+      modify:
+        - scripts/broll_gen/factory.py
+    shared_files:
+      - scripts/broll_gen/factory.py      # also touched by 0.5, B1, B2, C2
+    test_paths:
+      - scripts/broll_gen/tests/test_phone_highlight.py
+    code_quality_reviewer: compound-engineering:review:kieran-python-reviewer
+    execution_note: null
+
+  - unit_id: a2
+    origin_plan_ref: "Unit A2 — Animated word-level ASS captions"
+    title: Animated word-level ASS captions
+    wave: 2
+    tier: A
+    branch: feat/engage-v2/a2-word-captions
+    worktree: .worktrees/engage-v2-a2
+    depends_on: ["0.1", "0.2"]
+    touched_files:
+      create:
+        - scripts/video_edit/tests/test_ass_captions_word_level.py
+      modify:
+        - scripts/video_edit/video_editor.py
+    shared_files:
+      - scripts/video_edit/video_editor.py  # also touched by A3 (different function)
+    test_paths:
+      - scripts/video_edit/tests/test_ass_captions_word_level.py
+    code_quality_reviewer: compound-engineering:review:kieran-python-reviewer
+    execution_note: "Test-first: origin plan's Verification is test-heavy (synthetic-segments test + mismatched-word skip test + render smoke). Write failing tests for the per-word Dialogue generation before changing _build_ass_captions."
+
+  - unit_id: a3
+    origin_plan_ref: "Unit A3 — Zoom-punch + SFX combined final-pass"
+    title: Zoom-punch + SFX combined final-pass
+    wave: 2
+    tier: A
+    branch: feat/engage-v2/a3-zoom-punch-sfx
+    worktree: .worktrees/engage-v2-a3
+    depends_on: ["0.3", a2]
+    touched_files:
+      create:
+        - scripts/content_gen/keyword_extractor.py
+        - scripts/content_gen/tests/test_keyword_extractor.py
+      modify:
+        - scripts/video_edit/video_editor.py
+        - scripts/commoncreed_pipeline.py
+        - scripts/smoke_e2e.py
+    shared_files:
+      - scripts/video_edit/video_editor.py  # also touched by A2 (different function; land after A2)
+      - scripts/commoncreed_pipeline.py     # also touched by 0.4, 0.5
+      - scripts/smoke_e2e.py                # also touched by 0.4, 0.5
+    test_paths:
+      - scripts/content_gen/tests/test_keyword_extractor.py
+    code_quality_reviewer: compound-engineering:review:architecture-strategist
+    execution_note: "Test-first for keyword_extractor (Haiku drift guard is the high-risk path). Replaces two-pass flow with single ffmpeg final-pass — architecture reviewer selected."
+
+  # -------------------- Wave 2: Tier B (differentiator formats) --------------------
+
+  - unit_id: b1
+    origin_plan_ref: "Unit B1 — Tweet-reveal generator (tweet_reveal)"
+    title: Tweet-reveal generator
+    wave: 2
+    tier: B
+    branch: feat/engage-v2/b1-tweet-reveal
+    worktree: .worktrees/engage-v2-b1
+    depends_on: ["0.1", "0.5", a1]
+    touched_files:
+      create:
+        - scripts/broll_gen/tweet_reveal.py
+        - assets/templates/tweet_card.html.j2
+        - scripts/broll_gen/tests/test_tweet_reveal.py
+      modify:
+        - scripts/broll_gen/factory.py
+        - scripts/news_sourcer.py
+    shared_files:
+      - scripts/broll_gen/factory.py      # also touched by 0.5, A1, B2, C2
+      - scripts/news_sourcer.py           # also touched by B2
+    test_paths:
+      - scripts/broll_gen/tests/test_tweet_reveal.py
+    code_quality_reviewer: compound-engineering:review:kieran-python-reviewer
+    execution_note: "A1 is a pattern dependency (Playwright + concat structure), not a code dependency. B1 can start as soon as 0.1 + 0.5 merge, but A1's merged implementation is the reference pattern."
+
+  - unit_id: b2
+    origin_plan_ref: "Unit B2 — A/B split-screen composer (split_screen)"
+    title: A/B split-screen composer
+    wave: 2
+    tier: B
+    branch: feat/engage-v2/b2-split-screen
+    worktree: .worktrees/engage-v2-b2
+    depends_on: ["0.5"]
+    touched_files:
+      create:
+        - scripts/broll_gen/split_screen.py
+        - scripts/broll_gen/tests/test_split_screen.py
+      modify:
+        - scripts/broll_gen/browser_visit.py
+        - scripts/broll_gen/image_montage.py
+        - scripts/broll_gen/stats_card.py
+        - scripts/broll_gen/headline_burst.py
+        - scripts/broll_gen/factory.py
+        - scripts/news_sourcer.py
+    shared_files:
+      - scripts/broll_gen/factory.py            # also touched by 0.5, A1, B1, C2
+      - scripts/broll_gen/browser_visit.py      # also touched by B3 (different region)
+      - scripts/broll_gen/headline_burst.py     # also touched by 0.1 (land after 0.1)
+      - scripts/news_sourcer.py                 # also touched by B1
+    test_paths:
+      - scripts/broll_gen/tests/test_split_screen.py
+    code_quality_reviewer: compound-engineering:review:kieran-python-reviewer
+    execution_note: "Touches width_override on 4 generators — 540px layout may break stats_card. Verify layout at implementation time; flag font auto-scaling as a follow-up if needed (origin plan flags this)."
+
+  - unit_id: b3
+    origin_plan_ref: "Unit B3 — Editing-rhythm rules in timeline planner"
+    title: Editing-rhythm rules in timeline planner
+    wave: 2
+    tier: B
+    branch: feat/engage-v2/b3-rhythm-rules
+    worktree: .worktrees/engage-v2-b3
+    depends_on: []
+    touched_files:
+      modify:
+        - scripts/broll_gen/browser_visit.py
+      create:
+        - scripts/broll_gen/tests/test_timeline_rhythm.py
+    shared_files:
+      - scripts/broll_gen/browser_visit.py      # also touched by B2 (different function)
+    test_paths:
+      - scripts/broll_gen/tests/test_timeline_rhythm.py
+    code_quality_reviewer: compound-engineering:review:kieran-python-reviewer
+    execution_note: "Pure prompt + light planner-plumbing change. No Wave-1 dependency — can start on the post-Wave-1 integration branch immediately."
+
+  # -------------------- Wave 2: Tier C (cinematic data viz) --------------------
+
+  - unit_id: c1
+    origin_plan_ref: "Unit C1 — Remotion sidecar container"
+    title: Remotion sidecar container
+    wave: 2
+    tier: C
+    branch: feat/engage-v2/c1-remotion-sidecar
+    worktree: .worktrees/engage-v2-c1
+    depends_on: []
+    touched_files:
+      create:
+        - deploy/remotion/Dockerfile
+        - deploy/remotion/package.json
+        - deploy/remotion/package-lock.json
+        - deploy/remotion/tsconfig.json
+        - deploy/remotion/remotion.config.ts
+        - deploy/remotion/src/server.ts
+        - deploy/remotion/src/render.ts
+        - deploy/remotion/src/templates/BarChart.tsx
+        - deploy/remotion/src/templates/NumberTicker.tsx
+        - deploy/remotion/src/templates/LineChart.tsx
+      modify:
+        - deploy/portainer/docker-compose.yml
+    shared_files:
+      - deploy/portainer/docker-compose.yml   # C1 only; 0.3 verify-only
+    test_paths:
+      - "# standalone HTTP smoke: curl -X POST http://commoncreed_remotion:3030/render"
+      - "# image build + size check: docker images | grep commoncreed_remotion (<= 1.8 GB)"
+    code_quality_reviewer: compound-engineering:review:kieran-typescript-reviewer
+    execution_note: "TypeScript unit — reviewer switched to kieran-typescript-reviewer. Independent of Wave-1; can start in parallel with Tier-0 fan-out if compute + operator attention allows."
+
+  - unit_id: c2
+    origin_plan_ref: "Unit C2 — cinematic_chart b-roll type"
+    title: cinematic_chart b-roll type
+    wave: 2
+    tier: C
+    branch: feat/engage-v2/c2-cinematic-chart
+    worktree: .worktrees/engage-v2-c2
+    depends_on: [c1, "0.5"]
+    touched_files:
+      create:
+        - scripts/broll_gen/cinematic_chart.py
+        - scripts/broll_gen/tests/test_cinematic_chart.py
+      modify:
+        - scripts/broll_gen/factory.py
+        - scripts/broll_gen/selector.py
+    shared_files:
+      - scripts/broll_gen/factory.py    # also touched by 0.5, A1, B1, B2
+      - scripts/broll_gen/selector.py   # also touched by 0.5 (different region — gating logic)
+    test_paths:
+      - scripts/broll_gen/tests/test_cinematic_chart.py
+    code_quality_reviewer: compound-engineering:review:kieran-python-reviewer
+    execution_note: "Test-first on the httpx client + BrollError handling. Behind env flag CINEMATIC_CHART_ENABLED (opt-in for first 2 weeks per origin plan)."
+
+# ------------------------------ Integrity ------------------------------
+#
+# Expected cardinalities:
+#   total_streams: 14
+#   wave_1: 6   (0.1, 0.2, 0.3, 0.4, 0.5, 0.6)
+#   wave_2: 8   (a1, a2, a3, b1, b2, b3, c1, c2)
+#
+# Dependency graph invariants:
+#   - Every value in `depends_on` MUST appear as a `unit_id` elsewhere in this file.
+#   - Every entry in `shared_files` MUST appear in the conflict register.
+#   - Every file listed under `touched_files.modify` MUST already exist in the repo; under `create` MUST NOT.
