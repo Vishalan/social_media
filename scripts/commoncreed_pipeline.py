@@ -27,9 +27,11 @@ Usage:
     python commoncreed_pipeline.py
 
 Required environment variables (see .env.example):
-    ANTHROPIC_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID,
-    AYRSHARE_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_OWNER_USER_ID,
-    RUNPOD_API_KEY,
+    ANTHROPIC_API_KEY, AYRSHARE_API_KEY, TELEGRAM_BOT_TOKEN,
+    TELEGRAM_OWNER_USER_ID, RUNPOD_API_KEY,
+    VOICE_PROVIDER (default: elevenlabs; also: chatterbox)
+    ELEVENLABS_API_KEY + ELEVENLABS_VOICE_ID  (when VOICE_PROVIDER=elevenlabs)
+    CHATTERBOX_REFERENCE_AUDIO                (when VOICE_PROVIDER=chatterbox)
     AVATAR_PROVIDER (default: kling),
     FAL_API_KEY + KLING_AVATAR_IMAGE_URL  (when AVATAR_PROVIDER=kling)
     HEYGEN_API_KEY + HEYGEN_AVATAR_ID     (when AVATAR_PROVIDER=heygen)
@@ -76,7 +78,7 @@ from news_sourcing.news_sourcer import InsufficientTopicsError, NewsSourcer
 from posting.social_poster import SocialPoster
 from video_edit.video_editor import VideoEditor
 from video_gen.comfyui_client import ComfyUIClient
-from voiceover.voice_generator import VoiceGenerator
+from voiceover import make_voice_generator
 
 logger = logging.getLogger(__name__)
 
@@ -167,10 +169,7 @@ class CommonCreedPipeline:
             api_key=config["anthropic_api_key"],
             output_dir="output/scripts",
         )
-        self.voice_gen = VoiceGenerator(
-            api_key=config["elevenlabs_api_key"],
-            voice_id=config["voice_id"],
-        )
+        self.voice_gen = make_voice_generator(config)
         # ComfyUI client — server_url injected at run time once pod is ready
         self.comfyui = ComfyUIClient(
             server_url=self._static_comfyui_url or "",
@@ -806,8 +805,6 @@ if __name__ == "__main__":
 
     required_keys = [
         "ANTHROPIC_API_KEY",
-        "ELEVENLABS_API_KEY",
-        "ELEVENLABS_VOICE_ID",
         "AYRSHARE_API_KEY",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_OWNER_USER_ID",
@@ -816,6 +813,17 @@ if __name__ == "__main__":
         required_keys.append("RUNPOD_API_KEY")
     else:
         required_keys.append("COMFYUI_URL")
+
+    # Voice provider validation — elevenlabs default (backward-compatible),
+    # chatterbox runs on a local GPU and needs a reference audio clip.
+    voice_provider = os.environ.get("VOICE_PROVIDER", "elevenlabs").lower()
+    if voice_provider == "chatterbox":
+        required_keys += ["CHATTERBOX_REFERENCE_AUDIO"]
+    elif voice_provider == "elevenlabs":
+        required_keys += ["ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID"]
+    else:
+        logger.error("Unknown VOICE_PROVIDER: %s (expected elevenlabs|chatterbox)", voice_provider)
+        sys.exit(1)
 
     # Avatar provider validation
     avatar_provider = os.environ.get("AVATAR_PROVIDER", "veed").lower()
@@ -833,8 +841,12 @@ if __name__ == "__main__":
 
     config = {
         "anthropic_api_key": os.environ["ANTHROPIC_API_KEY"],
-        "elevenlabs_api_key": os.environ["ELEVENLABS_API_KEY"],
-        "voice_id": os.environ["ELEVENLABS_VOICE_ID"],
+        # Voice provider switch + provider-specific config
+        "voice_provider": voice_provider,
+        "elevenlabs_api_key": os.environ.get("ELEVENLABS_API_KEY", ""),
+        "voice_id": os.environ.get("ELEVENLABS_VOICE_ID", ""),
+        "chatterbox_reference_audio": os.environ.get("CHATTERBOX_REFERENCE_AUDIO", ""),
+        "chatterbox_device": os.environ.get("CHATTERBOX_DEVICE", "cuda"),
         "comfyui_url": os.environ.get("COMFYUI_URL", ""),  # empty = use RunPod
         "comfyui_api_key": os.environ.get("COMFYUI_API_KEY", ""),
         "ayrshare_api_key": os.environ["AYRSHARE_API_KEY"],

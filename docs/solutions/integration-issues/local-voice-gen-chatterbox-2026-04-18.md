@@ -49,11 +49,19 @@ The CommonCreed pipeline used ElevenLabs API ($5-22/month) for voice-over genera
 3. Trim to 30 seconds, convert to mono 24kHz: saved as `/opt/commoncreed/assets/vishalan_voice_ref.wav`
 
 ### Pipeline integration
-- Created `scripts/voiceover/chatterbox_generator.py` — `ChatterboxVoiceGenerator` class matching `VoiceGenerator` interface
-- Created factory function `make_voice_generator(config)` in `scripts/voiceover/__init__.py`
-- Updated `scripts/commoncreed_pipeline.py` to use factory instead of direct `VoiceGenerator()`
-- Config via `.env`: `VOICE_PROVIDER=chatterbox` (default), `CHATTERBOX_REFERENCE_AUDIO=/opt/commoncreed/assets/vishalan_voice_ref.wav`
-- Switch to ElevenLabs anytime: `VOICE_PROVIDER=elevenlabs`
+- `scripts/voiceover/chatterbox_generator.py` — `ChatterboxVoiceGenerator` class matching `VoiceGenerator` interface
+- Factory function `make_voice_generator(config)` in `scripts/voiceover/__init__.py` picks the provider based on the `voice_provider` config key
+- `scripts/commoncreed_pipeline.py` calls the factory (not `VoiceGenerator` directly)
+- Config via `.env`: `VOICE_PROVIDER=elevenlabs` is the default for backward compatibility; flip to `chatterbox` + set `CHATTERBOX_REFERENCE_AUDIO=/opt/commoncreed/assets/vishalan_voice_ref.wav` when the local GPU + reference clip are in place
+- Runtime deps for chatterbox (`chatterbox-tts`, `torchaudio`) are imported lazily inside `_load_model`, so the factory + class construct cleanly in environments where those packages aren't installed (e.g. CI, production sidecar without GPU passthrough)
+
+### Deployment state (2026-04-19)
+Code wired end-to-end and tested, but **chatterbox is NOT the default in production** yet. Two prerequisites remain:
+
+1. **GPU passthrough to the sidecar container** — current `deploy/portainer/docker-compose.yml` does not grant the sidecar GPU access. Either add `deploy.resources.reservations.devices` for NVIDIA, or run chatterbox as a separate HTTP sidecar (like Remotion) so the GPU-less sidecar can call it over the compose network.
+2. **Reference audio upload** — `/opt/commoncreed/assets/vishalan_voice_ref.wav` must exist on the Ubuntu host.
+
+Once both are in place: set `VOICE_PROVIDER=chatterbox` + `CHATTERBOX_REFERENCE_AUDIO=/opt/commoncreed/assets/vishalan_voice_ref.wav` in `/opt/commoncreed/.env` and redeploy.
 
 ## Why This Works
 
