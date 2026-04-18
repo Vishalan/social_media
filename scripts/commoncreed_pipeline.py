@@ -101,6 +101,8 @@ class VideoJob:
     tweet_quote: Optional[dict] = None                 # {author, handle, body, like_count_estimate, verified}
     split_screen_pair: Optional[dict] = None           # {left: {type, params}, right: {type, params}}
     keyword_punches: list = field(default_factory=list)  # [{word, t_start, t_end, intensity}]
+    # ── Unit C2: numeric-density signal for cinematic_chart ────────────────
+    chart_spec: Optional[dict] = None                  # {template, props, target_duration_s}
 
     @property
     def broll_only(self) -> bool:

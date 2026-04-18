@@ -21,6 +21,7 @@ import logging
 from broll_gen.ai_video import AiVideoGenerator
 from broll_gen.base import BrollBase
 from broll_gen.browser_visit import BrowserVisitGenerator
+from broll_gen.cinematic_chart import CinematicChartGenerator
 from broll_gen.code_walkthrough import CodeWalkthroughGenerator
 from broll_gen.headline_burst import HeadlineBurstGenerator
 from broll_gen.image_montage import ImageMontageGenerator
@@ -130,8 +131,9 @@ def make_broll_generator(type_name: str, **kwargs) -> BrollBase:
         return SplitScreenGenerator()
 
     if type_name == "cinematic_chart":
-        raise NotImplementedError(
-            "cinematic_chart not yet wired — lands in Unit C2"
+        logger.info("B-roll generator: CinematicChartGenerator (Remotion sidecar)")
+        return CinematicChartGenerator(
+            base_url=kwargs.get("remotion_base_url"),
         )
 
     raise ValueError(

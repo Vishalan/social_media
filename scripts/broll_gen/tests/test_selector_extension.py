@@ -185,15 +185,16 @@ def test_videojob_new_fields_default_values() -> None:
 @pytest.mark.parametrize(
     ("type_name", "expected_unit", "wired"),
     [
-        # Units A1 and B2 are wired — factory returns a real generator instead
-        # of raising NotImplementedError. The `wired` flag flips this test's
-        # assertion so the parametrize row still runs (keeping the count
-        # stable) and the positive-path contract is covered here, alongside
-        # the deeper coverage in each unit's dedicated factory-wiring test.
+        # Units A1, B2 and C2 are wired — factory returns a real generator
+        # instead of raising NotImplementedError. The `wired` flag flips this
+        # test's assertion so the parametrize row still runs (keeping the
+        # count stable) and the positive-path contract is covered here,
+        # alongside the deeper coverage in each unit's dedicated
+        # factory-wiring test.
         ("phone_highlight", "A1", True),
         ("tweet_reveal", "B1", True),
         ("split_screen", "B2", True),
-        ("cinematic_chart", "C2", False),
+        ("cinematic_chart", "C2", True),
     ],
 )
 def test_factory_raises_notimplemented_for_new_types(

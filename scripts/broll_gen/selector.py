@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import TYPE_CHECKING
 
 from anthropic import AsyncAnthropic
@@ -243,12 +244,38 @@ class BrollSelector:
             return ["phone_highlight", "browser_visit"]
         return ["browser_visit"]
 
+    # ── Unit C2 — cinematic_chart numeric-density gating ──────────────────
+    #
+    # Distinct region from ``_compute_forced_primary_candidates`` (owned by
+    # Unit 0.5 + A1 short-circuit) and from B1's upcoming tweet_quote
+    # detection / B2's already-merged split_screen_pair detection. Each
+    # region is a standalone helper so parallel Wave-2 workers don't
+    # collide inside a single function body.
+    @staticmethod
+    def _compute_chart_forced_candidates(
+        chart_spec: dict | None,
+    ) -> list[str] | None:
+        """Return the forced primary-candidate list when a chart_spec is available.
+
+        When ``job.chart_spec`` is populated AND the ``CINEMATIC_CHART_ENABLED``
+        env flag is truthy, the selector prefers ``cinematic_chart`` as primary
+        with ``stats_card`` as a graceful numeric fallback. Either condition
+        missing → returns ``None`` so the selector falls through to the other
+        gating regions (article URL, tweet quote, split screen pair).
+        """
+        if not chart_spec:
+            return None
+        if os.environ.get("CINEMATIC_CHART_ENABLED", "false").lower() != "true":
+            return None
+        return ["cinematic_chart", "stats_card"]
+
     async def select(
         self,
         topic_title: str,
         topic_url: str,
         script_text: str,
         extracted_article: dict | None = None,
+        chart_spec: dict | None = None,
     ) -> list[str]:
         """Analyze the topic and script to choose primary and fallback b-roll types.
 
@@ -260,6 +287,12 @@ class BrollSelector:
                 (see ``scripts/topic_intel/article_extractor.py``). When
                 present with ≥2 ``body_paragraphs``, enables the
                 ``phone_highlight`` candidate for article URLs.
+            chart_spec: Optional ``{template, props, target_duration_s}`` dict
+                (see ``broll_gen/cinematic_chart.py::extract_chart_spec``).
+                When present AND ``CINEMATIC_CHART_ENABLED=true`` in the env,
+                biases primary toward ``cinematic_chart`` with ``stats_card``
+                fallback (Unit C2 gating region — distinct from the article /
+                tweet / split_screen gating regions above).
 
         Returns:
             A 2-element list ``[primary_type, fallback_type]`` where each element
@@ -274,6 +307,18 @@ class BrollSelector:
                 "BrollSelector: article URL detected — forced_primary_candidates=%s",
                 forced_primary_candidates,
             )
+
+        # Unit C2: numeric-density gate — takes precedence over the article
+        # short-circuit when a chart_spec is present and the env flag is on.
+        # Placed additively so B1 (tweet_quote) can own its own gating region
+        # below without touching this block.
+        chart_forced = self._compute_chart_forced_candidates(chart_spec)
+        if chart_forced is not None:
+            logger.info(
+                "BrollSelector: chart_spec + %s=true — forced_primary_candidates=%s",
+                "CINEMATIC_CHART_ENABLED", chart_forced,
+            )
+            forced_primary_candidates = chart_forced
 
         user_prompt = (
             f"Topic: {topic_title}\n"
