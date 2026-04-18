@@ -717,6 +717,34 @@ async def main() -> None:
     print(f"  Topic:  {topic['title']}")
     print(f"  URL:    {topic['url']}")
 
+    # Article body extraction (fully isolated — never raises).
+    # Unit 0.4: stash the clean extract on the topic dict so downstream b-roll
+    # generators (phone-highlight, tweet quote) can use real article text.
+    try:
+        try:
+            from topic_intel.article_extractor import extract_article_text
+        except ImportError:
+            from scripts.topic_intel.article_extractor import extract_article_text
+        topic_url = topic.get("url", "")
+        if topic_url:
+            article = extract_article_text(topic_url)
+            if article is None:
+                logger.warning(
+                    "WARN: no article body — phone_highlight unavailable (url=%s)",
+                    topic_url,
+                )
+            else:
+                topic["extracted_article"] = article.to_dict()
+                print(
+                    f"  {_PASS}  extracted_article: {len(article.body_paragraphs)} paragraphs, "
+                    f"lead {len(article.lead_paragraph)} chars"
+                )
+    except Exception as _ae_exc:
+        logger.warning(
+            "WARN: article extraction crashed: %s — phone_highlight unavailable",
+            _ae_exc,
+        )
+
     t_total = time.monotonic()
 
     # SMOKE_REUSE_AVATAR=1: skip the expensive API steps (script/voice/upload/VEED).

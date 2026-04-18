@@ -246,6 +246,37 @@ class CommonCreedPipeline:
         """
         logger.info("[Phase 1] Generating script/voice/avatar for: %s", topic["title"])
 
+        # Article body extraction (fully isolated — never raises).
+        # Unit 0.4: populates topic["extracted_article"] for downstream b-roll
+        # generators (e.g. phone-highlight). On failure we log a WARN and
+        # continue without the article extract.
+        try:
+            try:
+                from topic_intel.article_extractor import extract_article_text
+            except ImportError:
+                from scripts.topic_intel.article_extractor import (
+                    extract_article_text,
+                )
+            topic_url = topic.get("url", "")
+            if topic_url:
+                article = await asyncio.to_thread(extract_article_text, topic_url)
+                if article is None:
+                    logger.warning(
+                        "WARN: no article body — phone_highlight unavailable (url=%s)",
+                        topic_url,
+                    )
+                else:
+                    topic["extracted_article"] = article.to_dict()
+                    logger.info(
+                        "extracted_article: %d paragraphs, lead %d chars",
+                        len(article.body_paragraphs), len(article.lead_paragraph),
+                    )
+        except Exception as exc:
+            logger.warning(
+                "WARN: article extraction crashed for '%s': %s — phone_highlight unavailable",
+                topic.get("url", ""), exc,
+            )
+
         # Script (Anthropic API)
         script = self.script_gen.generate_short_form(topic["title"])
 
