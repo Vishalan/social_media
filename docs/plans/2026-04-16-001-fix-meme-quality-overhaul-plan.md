@@ -1,7 +1,9 @@
 ---
 title: "fix: Meme quality overhaul — strict scoring, cross-run dedup, reduced surface"
 type: fix
-status: active
+status: completed
+completed_at: 2026-04-19
+completion_evidence: "Merged to main via commit 4953a9b; all 4 units implemented with 13 tests passing in sidecar/tests/test_meme_quality_overhaul.py. Shipped via agent-team execution pattern."
 date: 2026-04-16
 origin: docs/brainstorms/2026-04-16-meme-quality-overhaul-requirements.md
 ---
@@ -29,7 +31,7 @@ Fix low-quality meme surfacing by: (1) reverting scoring to Haiku API for nuance
 
 ## Implementation Units
 
-- [ ] **Unit 1: Revert meme scoring to Haiku + raise thresholds**
+- [x] **Unit 1: Revert meme scoring to Haiku + raise thresholds**
 
 **Goal:** `_score_candidates_batch` uses Anthropic Haiku directly (not llm_client), and filter thresholds raised to >= 7.
 
@@ -49,7 +51,7 @@ Fix low-quality meme surfacing by: (1) reverting scoring to Haiku API for nuance
 
 ---
 
-- [ ] **Unit 2: Reduce surface limits**
+- [x] **Unit 2: Reduce surface limits**
 
 **Goal:** Fewer, higher-quality previews per trigger run.
 
@@ -65,7 +67,7 @@ Fix low-quality meme surfacing by: (1) reverting scoring to Haiku API for nuance
 
 ---
 
-- [ ] **Unit 3: Cross-run dedup before surfacing**
+- [x] **Unit 3: Cross-run dedup before surfacing**
 
 **Goal:** Don't send a Telegram preview if a similar candidate was surfaced in the last 48 hours.
 
@@ -87,7 +89,7 @@ Fix low-quality meme surfacing by: (1) reverting scoring to Haiku API for nuance
 
 ---
 
-- [ ] **Unit 4: Add more Reddit sources**
+- [x] **Unit 4: Add more Reddit sources**
 
 **Goal:** Widen the top-of-funnel so strict filtering still yields enough candidates.
 
