@@ -587,7 +587,7 @@ async def step_broll(topic: dict, script: dict, audio_duration: float) -> tuple[
     sys.exit(1)
 
 
-def step_assemble(
+async def step_assemble(
     topic: dict,
     avatar_paths: list[str],
     broll_path: str,
@@ -630,11 +630,11 @@ def step_assemble(
         from anthropic import AsyncAnthropic
         from content_gen.keyword_extractor import extract_keyword_punches
         anthropic_client = AsyncAnthropic(api_key=_env("ANTHROPIC_API_KEY"))
-        punches = asyncio.run(extract_keyword_punches(
+        punches = await extract_keyword_punches(
             script_text=script_text or topic.get("title", ""),
             caption_segments=caption_segments,
             anthropic_client=anthropic_client,
-        ))
+        )
         keyword_punches = list(punches)
         print(f"  {_PASS}  [A3] extracted {len(keyword_punches)} keyword punches")
     except Exception as _e:
@@ -879,7 +879,7 @@ async def main() -> None:
         _script_text = script.get("script", "")
     elif "script" in topic:
         _script_text = topic.get("script", "")
-    final_path = step_assemble(topic, avatar_paths, broll_path, audio_path, script_text=_script_text)
+    final_path = await step_assemble(topic, avatar_paths, broll_path, audio_path, script_text=_script_text)
 
     total_elapsed = time.monotonic() - t_total
 

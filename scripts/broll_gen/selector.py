@@ -94,10 +94,12 @@ _TWEET_QUOTE_SCHEMA = {
         },
         "like_count_estimate": {
             "type": "integer",
-            "minimum": 100,
-            "maximum": 10000,
+            # Anthropic's constrained decoding rejects integer minimum/maximum.
+            # The 100..10000 range is enforced in the system-prompt instructions
+            # + clamped at use-site, not in the JSON schema.
             "description": (
-                "Tasteful round number for the animated like counter."
+                "Tasteful round number for the animated like counter "
+                "(aim for 100..10000)."
             ),
         },
         "verified": {"type": "boolean"},
@@ -121,13 +123,35 @@ _SPLIT_SIDE_SCHEMA = {
             "type": "string",
             "enum": _SPLIT_SIDE_GEN_ENUM,
         },
+        # Anthropic's constrained-decoding rejects additionalProperties: true,
+        # so we declare the two known optional sub-objects explicitly and set
+        # additionalProperties: false. Haiku can still emit topic/script with
+        # their own free-form contents — we just can't accept *arbitrary*
+        # sibling keys here.
         "params": {
             "type": "object",
             "description": (
                 "Optional per-side overrides: topic (dict with title/url) "
-                "and script (dict with script text). Other keys are ignored."
+                "and script (dict with script text)."
             ),
-            "additionalProperties": True,
+            "properties": {
+                "topic": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "url": {"type": "string"},
+                    },
+                    "additionalProperties": False,
+                },
+                "script": {
+                    "type": "object",
+                    "properties": {
+                        "script": {"type": "string"},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+            "additionalProperties": False,
         },
     },
     "required": ["generator_type"],
