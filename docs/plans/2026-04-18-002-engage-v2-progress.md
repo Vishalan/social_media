@@ -32,8 +32,8 @@ Dashboard for the parallel execution of `docs/plans/2026-04-18-001-feat-engageme
 | Unit | Branch | Worktree | Depends on | Owner | Status | Merged-at |
 |------|--------|----------|------------|-------|--------|-----------|
 | 0.1 Brand assets | `feat/engage-v2/0.1-brand-assets` | `.worktrees/engage-v2-0.1/` | — | agent `0.1@engage-v2-swarm` (re-dispatch) | ✅ merged (70e6206) | 2026-04-18 15:55 |
-| 0.2 libass smoke | `feat/engage-v2/0.2-libass-smoke` | `.worktrees/engage-v2-0.2/` | 0.1 | _unassigned_ | pending | — |
-| 0.3 SFX library | `feat/engage-v2/0.3-sfx-library` | `.worktrees/engage-v2-0.3/` | — | _unassigned_ | pending | — |
+| 0.2 libass smoke | `feat/engage-v2/0.2-libass-smoke` | `.worktrees/engage-v2-0.2/` | 0.1 | agent `0.2@engage-v2-swarm` | ✅ merged (10cf71e) | 2026-04-18 16:10 |
+| 0.3 SFX library | `feat/engage-v2/0.3-sfx-library` | `.worktrees/engage-v2-0.3/` | — | _unassigned_ | ⏸ deferred — awaiting SFX sourcing decision; only blocks A3 downstream | — |
 | 0.4 Article extractor | `feat/engage-v2/0.4-article-extractor` | `.worktrees/engage-v2-0.4/` | — | agent `0.4@engage-v2-swarm` | ✅ merged (b20bb36) | 2026-04-18 15:10 |
 | 0.5 Selector extension | `feat/engage-v2/0.5-selector-extension` | `.worktrees/engage-v2-0.5/` | 0.4 | agent `0.5@engage-v2-swarm` | ✅ merged (7b4bba4) | 2026-04-18 15:30 |
 | 0.6 Registration linter | `feat/engage-v2/0.6-registration-linter` | `.worktrees/engage-v2-0.6/` | 0.5 | agent `0.6@engage-v2-swarm` | ✅ merged (a03893c) | 2026-04-18 15:45 |
@@ -106,6 +106,9 @@ Gate 1 (see `...-integration-gates.md`) must be green before any Wave-2 worker i
 | 2026-04-18 15:47 | Discovered pytest single-file invocation fails deterministically on broll_gen tests (scripts/broll_gen/__init__.py uses bare `from broll_gen.base import …` — needs scripts/ on sys.path). Existing scripts/pytest.ini's rootdir behavior only works when first positional arg is inside the scripts tree. Added `pythonpath = .` to scripts/pytest.ini as `81e626c`. Verified: 5/5 + 72/72 green regardless of invocation order. |
 | 2026-04-18 15:55 | Unit 0.1 DONE_WITH_CONCERNS — 9 tests + 76/76 regression. Inter v4.0 TTFs downloaded via urllib (curl sandbox-blocked), branding.py + find_font + to_ass_color + BGR/alpha hex converter exports. Worker flagged Dockerfile `COPY assets/fonts/` won't work with compose context `../../sidecar`. Committed on worker's behalf + rebased onto integration tip (branch cut point was stale) as `70e6206`. |
 | 2026-04-18 15:58 | Applied compose-context fix as `a0f3e33`: build.context changed to repo root (`../..`), dockerfile path to `sidecar/Dockerfile`, existing COPY paths rebased to repo-relative. Unblocks Unit 0.2's container build assertion. |
+| 2026-04-18 16:05 | Unit 0.2 dispatched — tiny: one Dockerfile `RUN ffmpeg -filters \| grep -qE "^ . ass "` assertion + one pytest smoke (burns karaoke ASS onto blank 1080×1920 video). Skipped on macOS (container/Linux assertion); 1 passed on CI expected. |
+| 2026-04-18 16:10 | Unit 0.2 DONE — 1 skipped (macOS) + 81 passed + 1 skipped = 82 total. Dockerfile assertion placed between apt-install block and Inter-font COPY block (keeps system-packages-verified story contiguous). Committed + FF-merged as `10cf71e`. Clean unstash; in-flight work intact. |
+| 2026-04-18 16:12 | **Wave 1 effectively complete** — 5/6 units merged (0.1, 0.2, 0.4, 0.5, 0.6). Unit 0.3 deferred (SFX sourcing decision outstanding). Only downstream blocker: A3 needs 0.3. Other 7 Wave-2 units (A1, A2, B1, B2, B3, C1, C2) ready to dispatch on user go. |
 
 ## Upstream dependency note
 
