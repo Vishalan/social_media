@@ -33,6 +33,12 @@ logger = logging.getLogger(__name__)
 _REGISTRY: dict[str, type] = {
     "reddit_programmerhumor": RedditMemeSource,
     "reddit_techhumor": RedditMemeSource,  # same class, subreddit via settings
+    # Unit 4 — additional Reddit sources
+    "reddit_cscareerquestions": RedditMemeSource,
+    "reddit_webdev": RedditMemeSource,
+    "reddit_dataisbeautiful": RedditMemeSource,
+    "reddit_homelab": RedditMemeSource,
+    "reddit_mechanicalkeyboards": RedditMemeSource,
 }
 
 

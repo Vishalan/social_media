@@ -84,14 +84,31 @@ class Settings(BaseSettings):
     LOBSTERS_MAX_ITEMS: int = 15
     LOBSTERS_MIN_SCORE: int = 10
     # Meme reposter v0 (Reddit)
-    MEME_SOURCES: str = "reddit_programmerhumor,reddit_techhumor"
-    MEME_SUBREDDIT_MAP: str = (
-        "reddit_programmerhumor:ProgrammerHumor,reddit_techhumor:techhumor"
+    MEME_SOURCES: str = (
+        "reddit_programmerhumor,reddit_techhumor,"
+        "reddit_cscareerquestions,reddit_webdev,"
+        "reddit_dataisbeautiful,reddit_homelab,"
+        "reddit_mechanicalkeyboards"
     )
-    MEME_DAILY_SURFACE_LIMIT: int = 5
+    MEME_SUBREDDIT_MAP: str = (
+        "reddit_programmerhumor:ProgrammerHumor,"
+        "reddit_techhumor:techhumor,"
+        "reddit_cscareerquestions:cscareerquestions,"
+        "reddit_webdev:webdev,"
+        "reddit_dataisbeautiful:DataIsBeautiful,"
+        "reddit_homelab:homelab,"
+        "reddit_mechanicalkeyboards:MechanicalKeyboards"
+    )
+    # Per-media-type surface limits for Telegram previews (Unit 2)
+    MEME_DAILY_SURFACE_LIMIT: int = 2          # images per trigger run
+    MEME_VIDEO_DAILY_SURFACE_LIMIT: int = 2    # videos per trigger run
     REDDIT_MEME_TIME_FILTER: str = "day"
     REDDIT_MEME_MAX_ITEMS: int = 25
     REDDIT_MEME_MIN_SCORE: int = 500
+    # Quality thresholds for Haiku scoring (Unit 1) — both humor and
+    # relevance must be >= 7/10 for a candidate to surface.
+    MEME_MIN_HUMOR_SCORE: int = 7
+    MEME_MIN_RELEVANCE_SCORE: int = 7
     # Meme autopilot — fires at slot-offset if no human tap landed
     MEME_AUTO_APPROVE_ENABLED: bool = True
     MEME_AUTO_APPROVE_OFFSET_MIN: int = 30
