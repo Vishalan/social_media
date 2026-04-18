@@ -44,7 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # libass must be present for ASS karaoke subtitles (Unit A2 caption rendering).
 # ffmpeg wraps libass via the 'ass' filter — assert its presence at build time so
 # a broken ffmpeg image fails early rather than silently falling back.
-RUN ffmpeg -filters 2>&1 | grep -qE "^[TSC.]{2,4} ass " \
+RUN ffmpeg -filters 2>&1 | grep -qw ass \
     || (echo "FAIL: ffmpeg in this image does not include libass" && exit 1)
 
 # CommonCreed brand fonts (Inter, SIL OFL) — shipped in-repo under assets/fonts.
