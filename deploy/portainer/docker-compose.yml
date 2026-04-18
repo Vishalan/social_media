@@ -380,35 +380,44 @@ services:
 
   # ===========================================================================
   # CommonCreed Remotion sidecar — cinematic chart renderer (Engagement Layer
-  # v2, Unit C1). Node 20 + headless Chromium + ffmpeg. Peers with the FastAPI
-  # sidecar on the commoncreed network; the Python pipeline POSTs render
-  # specs to this service and picks up the resulting MP4 off the shared
-  # commoncreed_output volume.
+  # v2, Unit C1). Node 20 + headless Chromium + ffmpeg.
+  #
+  # DISABLED FOR THIS DEPLOY — deploy/remotion/package-lock.json was never
+  # generated (the scaffolding agent's sandbox blocked `npm install`). Without
+  # it, `RUN npm ci --omit=dev` in the Dockerfile fails at build time.
+  #
+  # To re-enable:
+  #   1. cd deploy/remotion && npm install           # generates package-lock.json
+  #   2. git add deploy/remotion/package-lock.json
+  #   3. Uncomment the commoncreed_remotion block below
+  #   4. Redeploy via cc-deploy-portainer
+  #
+  # Until then, cinematic_chart b-roll type (Unit C2) stays gated off via
+  # CINEMATIC_CHART_ENABLED=false in the NAS .env — Unit 0.5's selector falls
+  # back to stats_card when the flag is off, so the pipeline runs unaffected.
   # ===========================================================================
-  commoncreed_remotion:
-    build:
-      # Build context = repo root so `COPY assets/fonts/` resolves, matching
-      # the pattern Unit 0.1 introduced for the Python sidecar.
-      context: ../..
-      dockerfile: deploy/remotion/Dockerfile
-    image: commoncreed/remotion:0.1.0
-    container_name: commoncreed_remotion
-    restart: unless-stopped
-    networks:
-      - commoncreed
-    volumes:
-      # Shared with the Python sidecar so it can read rendered MP4s by path.
-      - commoncreed_output:/app/output
-    expose:
-      - "3030"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:3030/healthz || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    deploy:
-      resources:
-        limits:
-          memory: 1024M
-        reservations:
-          memory: 256M
+  #
+  # commoncreed_remotion:
+  #   build:
+  #     context: ../..
+  #     dockerfile: deploy/remotion/Dockerfile
+  #   image: commoncreed/remotion:0.1.0
+  #   container_name: commoncreed_remotion
+  #   restart: unless-stopped
+  #   networks:
+  #     - commoncreed
+  #   volumes:
+  #     - commoncreed_output:/app/output
+  #   expose:
+  #     - "3030"
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl -f http://localhost:3030/healthz || exit 1"]
+  #     interval: 30s
+  #     timeout: 5s
+  #     retries: 3
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 1024M
+  #       reservations:
+  #         memory: 256M
