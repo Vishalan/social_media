@@ -288,20 +288,32 @@ def step_script(topic: dict) -> dict:
 
 
 def step_voice(topic: dict, script_text: str) -> str:
-    _section("2. Voiceover (ElevenLabs)")
-    from voiceover.voice_generator import VoiceGenerator
+    provider = os.environ.get("VOICE_PROVIDER", "elevenlabs").lower()
+    _section(f"2. Voiceover ({provider})")
+    from voiceover import make_voice_generator
 
     safe = re.sub(r"[^a-z0-9_]", "_", topic["title"].lower())[:40]
-    output_path = f"output/audio/{safe}_voice.mp3"
+    # Chatterbox returns WAV; keep the extension flexible.
+    ext = "wav" if provider == "chatterbox" else "mp3"
+    output_path = f"output/audio/{safe}_voice.{ext}"
     os.makedirs("output/audio", exist_ok=True)
 
-    gen = VoiceGenerator(api_key=_env("ELEVENLABS_API_KEY"))
+    gen_config = {
+        "voice_provider": provider,
+        "elevenlabs_api_key": os.environ.get("ELEVENLABS_API_KEY", ""),
+        "chatterbox_reference_audio": os.environ.get("CHATTERBOX_REFERENCE_AUDIO", ""),
+        "chatterbox_endpoint": os.environ.get("CHATTERBOX_ENDPOINT", ""),
+        "chatterbox_device": os.environ.get("CHATTERBOX_DEVICE", "cuda"),
+    }
+    gen = make_voice_generator(gen_config)
     t0 = time.monotonic()
-    path = gen.generate(script_text, output_path, voice_id=_env("ELEVENLABS_VOICE_ID"))
+    # voice_id only matters for ElevenLabs; chatterbox ignores it.
+    path = gen.generate(script_text, output_path, voice_id=os.environ.get("ELEVENLABS_VOICE_ID", ""))
     elapsed = time.monotonic() - t0
 
     n_chars = len(script_text)
-    _tracker.record_el(n_chars)
+    if provider == "elevenlabs":
+        _tracker.record_el(n_chars)
     size_kb = Path(path).stat().st_size // 1024
     print(f"  {_PASS}  Voice generated in {elapsed:.1f}s  ({n_chars} chars → {size_kb} KB → {path})")
     return path
