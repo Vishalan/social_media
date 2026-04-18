@@ -23,7 +23,7 @@ Dashboard for the parallel execution of `docs/plans/2026-04-18-001-feat-engageme
 | 3 | Conflict register | `docs/plans/2026-04-18-002-engage-v2-conflict-register.md` | ✅ completed |
 | 4 | Worker prompt template | `docs/plans/2026-04-18-002-engage-v2-worker-prompt.md` | ✅ completed |
 | 5 | Reviewer prompt templates | `docs/plans/2026-04-18-002-engage-v2-spec-reviewer-prompt.md` + `...-code-quality-reviewer-prompt.md` | ✅ completed |
-| 6 | Orchestrator runbook | `docs/plans/2026-04-18-002-engage-v2-orchestrator-runbook.md` | pending |
+| 6 | Orchestrator runbook | `docs/plans/2026-04-18-002-engage-v2-orchestrator-runbook.md` | ✅ completed |
 | 7 | Integration-gate checklist | `docs/plans/2026-04-18-002-engage-v2-integration-gates.md` | pending |
 | 8 | Rollout + cleanup runbook | `docs/plans/2026-04-18-002-engage-v2-rollout-runbook.md` | pending |
 
