@@ -28,11 +28,11 @@ Engagement Layer v2 shipped to production on 2026-04-19 (commit `8a7e7ea`). Side
 ## Tracks (execute in order)
 
 - [x] **Track 1 — Server migration close-out** (already effectively done; just status flip + archive)
-- [ ] **Track 2 — In-flight triage → 5 topic branches on origin**
-- [ ] **Track 3 — Remotion wrap-up** (`npm install` → lockfile → uncomment → redeploy)
-- [ ] **Track 4 — Compound retrospective** (docs/solutions/ — parallel agent-team execution)
-- [ ] **Track 5 — Feature-plan readiness matrix** (ranked queue for future runs)
-- [ ] **Track 6 — Dispatch top-priority plan** (parallel execution in background)
+- [x] **Track 2 — In-flight triage → 5 topic branches on origin**
+- [x] **Track 3 — Remotion wrap-up** (`npm install` → lockfile → uncomment → redeploy) — shipped commit `e18cf99`; internal `/healthz` returns `{"ok":true}`
+- [x] **Track 4 — Compound retrospective** (`docs/solutions/workflow-issues/agent-team-parallel-execution-2026-04-19.md`)
+- [x] **Track 5 — Feature-plan readiness matrix** (see table in Track 5 section below)
+- [ ] **Track 6 — Dispatch top-priority plan** (meme-quality-overhaul — plan 2026-04-16-001)
 
 ## Track details
 
