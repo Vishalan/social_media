@@ -85,4 +85,20 @@ Gate 1 (see `...-integration-gates.md`) must be green before any Wave-2 worker i
 
 | Timestamp | Event |
 |-----------|-------|
-| 2026-04-18 | Integration branch `feat/engagement-layer-v2` cut from `feat/end-to-end-pipeline@74072eb`. `.worktrees/` added to `.gitignore`. Progress tracker created. |
+| 2026-04-18 14:20 | Integration branch `feat/engagement-layer-v2` cut from `feat/end-to-end-pipeline@74072eb`. `.worktrees/` added to `.gitignore`. Progress tracker created. (Unit 1: `fc21345`) |
+| 2026-04-18 14:36 | Stream manifest YAML — 14 streams, depends_on invariants resolved. (Unit 2: `6584219`) |
+| 2026-04-18 14:37 | Conflict register — shared-file serialization + region scopes. (Unit 3: `2946b42`) |
+| 2026-04-18 14:39 | Worker prompt template — four blocks rendered from manifest. (Unit 4: `9c97e80`) |
+| 2026-04-18 14:42 | Reviewer prompt templates — spec (Stage 1) + code quality (Stage 2). (Unit 5: `4289ce7`) |
+| 2026-04-18 14:44 | Orchestrator runbook — phases 0-8 executable playbook. (Unit 6: `a0868f2`) |
+| 2026-04-18 14:49 | Integration gates (Gate 1/2/3) + rollout runbook. (Units 7+8: `f599d42`) |
+| 2026-04-18 14:49 | **Scaffolding complete.** Ready for Wave 1 dispatch per orchestrator runbook Phase 1. |
+
+## Upstream dependency note
+
+Integration branch was cut from `feat/end-to-end-pipeline@74072eb`, not from `main`. This means `main..feat/engagement-layer-v2` currently includes feat/end-to-end-pipeline's in-flight work. Before rollup to main, either:
+
+1. Land `feat/end-to-end-pipeline` on main first via its own PR; or
+2. Rebase `feat/engagement-layer-v2` onto `main` at rollup time (will be a larger rebase).
+
+Recommended: option 1. Orchestrator should confirm with human before opening the rollup PR.
