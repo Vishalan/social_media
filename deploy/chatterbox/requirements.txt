@@ -1,16 +1,14 @@
-# CommonCreed Chatterbox sidecar deps.
-# torch / torchaudio come from the pytorch base image — do NOT pin here,
-# the base provides 2.3.1+cu121 and pinning would trigger a reinstall.
 # chatterbox-tts pulls gradio transitively which wants fastapi>=0.115.2,
 # so the fastapi floor here matches that constraint.
 chatterbox-tts==0.1.7
-# transformers 5.x moved LlamaModel to a different import path —
-# chatterbox-tts 0.1.7 was built against 4.x and errors out on 5.x
-# with "Could not import module 'LlamaModel'". Pin the 4.x major.
-transformers>=4.40.0,<5.0
-# sentencepiece is a transitive dep of the Llama tokenizer path; without
-# it, `from transformers import LlamaModel` still works but tokenization
-# silently fails. Explicit floor keeps us safe.
+# chatterbox-tts upgrades torch to 2.6 but the pytorch base image's
+# torchvision stays at 0.18.1 (built for torch 2.3.x), which makes the
+# `torchvision::nms` op silently miss from the dispatcher and blocks
+# `from transformers import LlamaModel`. Pin torchvision to the 0.21.x
+# line that matches torch 2.6.x.
+torchvision==0.21.0
+# sentencepiece is a soft dep of transformers' Llama tokenizer path that
+# pip doesn't always pull; explicit floor keeps us safe.
 sentencepiece>=0.2.0
 fastapi>=0.115.2,<1.0
 uvicorn[standard]>=0.29.0
