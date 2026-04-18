@@ -49,3 +49,6 @@ logs/launchd_*.log
 
 # Local secrets (OAuth client credentials, one-shot tokens, etc.)
 .secrets/
+
+# Git worktrees (used by parallel agent-team execution runs; content lives in branches, not main tree)
+.worktrees/
