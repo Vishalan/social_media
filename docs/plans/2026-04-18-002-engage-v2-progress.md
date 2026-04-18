@@ -31,10 +31,10 @@ Dashboard for the parallel execution of `docs/plans/2026-04-18-001-feat-engageme
 
 | Unit | Branch | Worktree | Depends on | Owner | Status | Merged-at |
 |------|--------|----------|------------|-------|--------|-----------|
-| 0.1 Brand assets | `feat/engage-v2/0.1-brand-assets` | `.worktrees/engage-v2-0.1/` | — | _unassigned_ | pending | — |
+| 0.1 Brand assets | `feat/engage-v2/0.1-brand-assets` | `.worktrees/engage-v2-0.1/` | — | agent `0.1@engage-v2-swarm` (rate-limited) | ⚠️ blocked — rate limit; re-dispatch after 16:30 IST | — |
 | 0.2 libass smoke | `feat/engage-v2/0.2-libass-smoke` | `.worktrees/engage-v2-0.2/` | 0.1 | _unassigned_ | pending | — |
 | 0.3 SFX library | `feat/engage-v2/0.3-sfx-library` | `.worktrees/engage-v2-0.3/` | — | _unassigned_ | pending | — |
-| 0.4 Article extractor | `feat/engage-v2/0.4-article-extractor` | `.worktrees/engage-v2-0.4/` | — | _unassigned_ | pending | — |
+| 0.4 Article extractor | `feat/engage-v2/0.4-article-extractor` | `.worktrees/engage-v2-0.4/` | — | agent `0.4@engage-v2-swarm` | ✅ merged (b20bb36) | 2026-04-18 15:10 |
 | 0.5 Selector extension | `feat/engage-v2/0.5-selector-extension` | `.worktrees/engage-v2-0.5/` | 0.4 | _unassigned_ | pending | — |
 | 0.6 Registration linter | `feat/engage-v2/0.6-registration-linter` | `.worktrees/engage-v2-0.6/` | 0.5 | _unassigned_ | pending | — |
 
@@ -93,6 +93,10 @@ Gate 1 (see `...-integration-gates.md`) must be green before any Wave-2 worker i
 | 2026-04-18 14:44 | Orchestrator runbook — phases 0-8 executable playbook. (Unit 6: `a0868f2`) |
 | 2026-04-18 14:49 | Integration gates (Gate 1/2/3) + rollout runbook. (Units 7+8: `f599d42`) |
 | 2026-04-18 14:49 | **Scaffolding complete.** Ready for Wave 1 dispatch per orchestrator runbook Phase 1. |
+| 2026-04-18 14:57 | Wave 1 kickoff. Dispatched workers for 0.4 (article extractor) and 0.1 (brand assets) in parallel via `Agent` (no Teammate tool available in this env — Agent + TaskCreate covers equivalent parallel-dispatch). Unit 0.3 (SFX) paused pending human decision on sourcing strategy. |
+| 2026-04-18 15:05 | Unit 0.4 agent reported DONE_WITH_CONCERNS — all 6 unit tests + 50 regression tests green; blocked only by sandbox from `git commit`. Parent session spot-checked failure isolation + secrets sweep (clean), committed on behalf of worker as `b20bb36` (message preserves worker's structured rationale + decision log). |
+| 2026-04-18 15:10 | Unit 0.4 **merged** into `feat/engagement-layer-v2` via fast-forward (`32c4842..b20bb36`). Post-merge regression: 56/56 tests green across topic_intel + thumbnail_gen + video_edit + posting. In-flight working-tree changes were stashed before merge; unstash produced one trivial conflict on `sidecar/requirements.txt` (keep both `trafilatura>=1.6.0` and `yt-dlp`). |
+| 2026-04-18 15:12 | Unit 0.1 agent hit rate limit before completion (resets 16:30 Asia/Calcutta). Worktree `.worktrees/engage-v2-0.1/` remains on branch `feat/engage-v2/0.1-brand-assets` — needs re-dispatch after reset. |
 
 ## Upstream dependency note
 
