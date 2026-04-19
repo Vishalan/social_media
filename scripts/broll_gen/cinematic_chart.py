@@ -97,8 +97,9 @@ Return JSON matching the response schema:
     a single dramatic value to count up ("82 tokens/sec"), or a trend across
     time ("throughput grew from 10 to 90 over four quarters") — fill in the
     ``chart_spec`` with the best-fitting template and its props.
-  - Otherwise, set ``chart_spec`` to null. Err on the side of null for purely
-    narrative scripts without concrete numbers.
+  - Otherwise, OMIT the ``chart_spec`` key entirely from your JSON output.
+    Err on the side of omitting for purely narrative scripts without concrete
+    numbers. Do NOT emit ``chart_spec: null``.
 
 Templates:
   - bar_chart     — two or more labelled bars to compare magnitudes.
@@ -115,32 +116,64 @@ of the numbers. Keep titles <= 40 chars and labels <= 18 chars.\
 """
 
 
+# Anthropic's constrained-decoding schema rejects both `oneOf` and
+# `additionalProperties: true`. We express "chart_spec is optional" by keeping
+# it OUT of `required` (Haiku omits the key when no chart is warranted), and
+# we spell out the full union of props fields across the three templates
+# explicitly. Each field is individually optional; the generator only reads
+# the ones that belong to the selected template.
+_BAR_DATUM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "label": {"type": "string"},
+        "value": {"type": "number"},
+        "suffix": {"type": "string"},
+    },
+    "required": ["label", "value"],
+    "additionalProperties": False,
+}
+
+_LINE_POINT_SCHEMA: dict[str, Any] = {
+    "type": "array",
+    "items": {"type": "number"},
+    "minItems": 2,
+    "maxItems": 2,
+}
+
+_CHART_PROPS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "bars": {"type": "array", "items": _BAR_DATUM_SCHEMA},
+        "label": {"type": "string"},
+        "start": {"type": "number"},
+        "end": {"type": "number"},
+        "prefix": {"type": "string"},
+        "suffix": {"type": "string"},
+        "x_label": {"type": "string"},
+        "y_label": {"type": "string"},
+        "points": {"type": "array", "items": _LINE_POINT_SCHEMA},
+    },
+    "additionalProperties": False,
+}
+
 _EXTRACT_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "chart_spec": {
-            "oneOf": [
-                {"type": "null"},
-                {
-                    "type": "object",
-                    "properties": {
-                        "template": {
-                            "type": "string",
-                            "enum": ["bar_chart", "number_ticker", "line_chart"],
-                        },
-                        "props": {
-                            "type": "object",
-                            "additionalProperties": True,
-                        },
-                        "target_duration_s": {"type": "number"},
-                    },
-                    "required": ["template", "props", "target_duration_s"],
-                    "additionalProperties": False,
+            "type": "object",
+            "properties": {
+                "template": {
+                    "type": "string",
+                    "enum": ["bar_chart", "number_ticker", "line_chart"],
                 },
-            ]
-        }
+                "props": _CHART_PROPS_SCHEMA,
+                "target_duration_s": {"type": "number"},
+            },
+            "required": ["template", "props", "target_duration_s"],
+            "additionalProperties": False,
+        },
     },
-    "required": ["chart_spec"],
     "additionalProperties": False,
 }
 

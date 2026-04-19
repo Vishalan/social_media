@@ -557,11 +557,47 @@ async def step_broll(topic: dict, script: dict, audio_duration: float) -> tuple[
 
     script_text = script.get("script", "")
     t0 = time.monotonic()
-    types_ranked = await selector.select(topic["title"], topic.get("url", ""), script_text)
+
+    # Forward the optional gating fields the selector actually cares about.
+    # Without these the selector's phone_highlight / cinematic_chart gates
+    # never fire, and it falls back to the safe-default [image_montage, ai_video]
+    # — which is why engage-v2's marquee types silently never showed up.
+    extracted_article = topic.get("extracted_article")
+    chart_spec: dict | None = None
+    if os.environ.get("CINEMATIC_CHART_ENABLED", "").lower() in ("1", "true", "yes"):
+        try:
+            from broll_gen.cinematic_chart import extract_chart_spec
+            chart_spec = await extract_chart_spec(
+                anthropic_client, script_text, topic=topic,
+            )
+            if chart_spec:
+                print(f"  {_PASS}  chart_spec detected — template={chart_spec.get('template')}")
+        except Exception as _e:
+            print(f"  ⚠  chart_spec extraction failed (non-fatal): {_e}")
+
+    types_ranked = await selector.select(
+        topic["title"], topic.get("url", ""), script_text,
+        extracted_article=extracted_article, chart_spec=chart_spec,
+    )
     print(f"  {_PASS}  Selector chose: primary={types_ranked[0]!r}, fallback={types_ranked[1]!r}")
+    if selector.last_tweet_quote:
+        print(f"  {_PASS}  tweet_quote lifted from selector — author={selector.last_tweet_quote.get('author')}")
+    if selector.last_split_screen_pair:
+        print(f"  {_PASS}  split_screen_pair lifted from selector")
 
     target_duration_s = max(6.0, audio_duration - 6.0)
-    job_stub = types.SimpleNamespace(topic=topic, script=script)
+    job_stub = types.SimpleNamespace(
+        topic=topic,
+        script=script,
+        # Lift the selector's side-effect fields onto the job so the
+        # tweet_reveal / split_screen / cinematic_chart / phone_highlight
+        # generators can read them. The generators access these as
+        # ``job.<field>``.
+        extracted_article=extracted_article,
+        chart_spec=chart_spec,
+        tweet_quote=selector.last_tweet_quote,
+        split_screen_pair=selector.last_split_screen_pair,
+    )
     gen_kwargs = {
         "anthropic_client": anthropic_client,
         "pexels_api_key": os.environ.get("PEXELS_API_KEY", ""),
