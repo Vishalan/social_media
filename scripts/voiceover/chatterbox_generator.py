@@ -22,13 +22,23 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
+import subprocess
+import tempfile
+import uuid
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+# Chatterbox single-shot generation caps around ~40s of audio (~1000 tokens).
+# Scripts longer than that silently truncate. We chunk at sentence boundaries
+# to stay well under that cap. 380 chars ≈ 25-30s of speech at typical pace,
+# leaving headroom for punchier lines.
+_MAX_CHARS_PER_CHUNK = 380
 
 
 class ChatterboxVoiceGenerator:
@@ -72,6 +82,99 @@ class ChatterboxVoiceGenerator:
             "yes" if self.reference_audio else "no",
         )
 
+    @staticmethod
+    def _chunk_text(text: str, max_chars: int = _MAX_CHARS_PER_CHUNK) -> List[str]:
+        """Split text at sentence boundaries into chunks of at most max_chars.
+
+        Chatterbox single-shot TTS caps around ~40s of audio. Long scripts
+        silently truncate if not chunked, which is what was cutting the
+        pipeline's voiceovers to 40s regardless of script length.
+        """
+        text = " ".join(text.split())  # normalize whitespace
+        if not text:
+            return []
+        # Split on sentence-ending punctuation while keeping the punctuation.
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        chunks: List[str] = []
+        current = ""
+        for sent in sentences:
+            if not sent:
+                continue
+            # Single sentence longer than the cap → hard-split on commas, then
+            # as a last resort on word boundaries.
+            if len(sent) > max_chars:
+                pieces = re.split(r"(?<=,)\s+", sent)
+                for piece in pieces:
+                    while len(piece) > max_chars:
+                        # Split at nearest word boundary ≤ max_chars.
+                        cut = piece.rfind(" ", 0, max_chars)
+                        if cut <= 0:
+                            cut = max_chars
+                        chunks.append(piece[:cut].strip())
+                        piece = piece[cut:].strip()
+                    if piece:
+                        if len(current) + 1 + len(piece) <= max_chars:
+                            current = (current + " " + piece).strip()
+                        else:
+                            if current:
+                                chunks.append(current)
+                            current = piece
+                continue
+            # Normal sentence — accumulate into current chunk up to the cap.
+            if len(current) + 1 + len(sent) <= max_chars:
+                current = (current + " " + sent).strip()
+            else:
+                if current:
+                    chunks.append(current)
+                current = sent
+        if current:
+            chunks.append(current)
+        return chunks
+
+    def _post_chunk(self, text: str, exaggeration: float, sidecar_filename: str) -> dict:
+        payload = {
+            "text": text,
+            "reference_audio_path": self.reference_audio or None,
+            "exaggeration": float(exaggeration),
+            "output_filename": sidecar_filename,
+        }
+        url = f"{self.endpoint}/tts"
+        resp = requests.post(url, json=payload, timeout=self.request_timeout_s)
+        if resp.status_code >= 400:
+            raise RuntimeError(
+                f"chatterbox TTS failed (HTTP {resp.status_code}): {resp.text[:500]}"
+            )
+        return resp.json()
+
+    @staticmethod
+    def _concat_wavs(wav_paths: List[Path], output_path: Path) -> None:
+        """Concatenate WAVs with ffmpeg's concat demuxer (no re-encode)."""
+        # Build a concat list file. ffmpeg's concat demuxer needs one
+        # "file <path>" line per input.
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False
+        ) as lst:
+            for p in wav_paths:
+                lst.write(f"file '{p.resolve()}'\n")
+            list_path = lst.name
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-f", "concat", "-safe", "0",
+                    "-i", list_path,
+                    "-c", "copy",
+                    str(output_path),
+                ],
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            stderr = exc.stderr.decode(errors="replace")[-1500:]
+            raise RuntimeError(f"wav concat failed: {stderr}") from exc
+        finally:
+            Path(list_path).unlink(missing_ok=True)
+
     def generate(
         self,
         text: str,
@@ -89,60 +192,82 @@ class ChatterboxVoiceGenerator:
         accepted for signature parity with ElevenLabs but ignored — Chatterbox
         uses the reference audio for voice identity and has its own parameter
         model (exaggeration only).
+
+        Long scripts are split into sentence-boundary chunks (~380 chars each)
+        to stay under Chatterbox's ~40s single-shot cap, then concatenated
+        with ffmpeg.
         """
         if not text.strip():
             raise ValueError("text is empty")
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-
-        # The sidecar writes to its own /app/output filesystem and returns the
-        # path of that file. We hand it a deterministic filename so we know
-        # where to pick it up, then copy it to the caller's output_path.
-        # Path.name strips any directory traversal, so this is safe to forward.
-        sidecar_filename = Path(output_path).name
-
-        payload = {
-            "text": text,
-            "reference_audio_path": self.reference_audio or None,
-            "exaggeration": float(exaggeration),
-            "output_filename": sidecar_filename,
-        }
-        url = f"{self.endpoint}/tts"
-        logger.info(
-            "POST %s chars=%d exag=%.1f timeout=%ds",
-            url,
-            len(text),
-            exaggeration,
-            self.request_timeout_s,
-        )
-
-        resp = requests.post(url, json=payload, timeout=self.request_timeout_s)
-        if resp.status_code >= 400:
-            raise RuntimeError(
-                f"chatterbox TTS failed (HTTP {resp.status_code}): {resp.text[:500]}"
-            )
-        data = resp.json()
-
-        # The sidecar's output dir and the caller's are both mounted on the
-        # commoncreed_output volume, so the path the sidecar reports is the
-        # same file the caller sees. If the mounts differ, copy explicitly.
-        generated = Path(data["output_path"])
         target = Path(output_path)
-        if generated.resolve() != target.resolve():
-            if generated.exists():
-                shutil.copyfile(generated, target)
-            else:
-                raise RuntimeError(
-                    f"chatterbox produced {generated} but it is not visible to the client"
-                )
+
+        chunks = self._chunk_text(text)
+        if not chunks:
+            raise ValueError("text is empty after chunking")
 
         logger.info(
-            "chatterbox OK — wrote %s (gen %.1fs, sr=%d)",
-            target,
-            data.get("duration_ms", 0) / 1000.0,
-            data.get("sample_rate", 0),
+            "chatterbox: %d chunks (total %d chars, max chunk %d chars)",
+            len(chunks),
+            sum(len(c) for c in chunks),
+            max(len(c) for c in chunks),
         )
-        return str(target)
+
+        # Single chunk → simple path, writes directly to target filename.
+        if len(chunks) == 1:
+            sidecar_filename = target.name
+            logger.info(
+                "POST %s/tts chars=%d exag=%.1f timeout=%ds",
+                self.endpoint, len(chunks[0]), exaggeration, self.request_timeout_s,
+            )
+            data = self._post_chunk(chunks[0], exaggeration, sidecar_filename)
+            generated = Path(data["output_path"])
+            if generated.resolve() != target.resolve():
+                if generated.exists():
+                    shutil.copyfile(generated, target)
+                else:
+                    raise RuntimeError(
+                        f"chatterbox produced {generated} but it is not visible to the client"
+                    )
+            logger.info(
+                "chatterbox OK — wrote %s (gen %.1fs, sr=%d)",
+                target,
+                data.get("duration_ms", 0) / 1000.0,
+                data.get("sample_rate", 0),
+            )
+            return str(target)
+
+        # Multi-chunk: generate each to a unique filename on the shared volume,
+        # concatenate, then clean up.
+        run_id = uuid.uuid4().hex[:8]
+        stem = target.stem
+        chunk_paths: List[Path] = []
+        total_gen_ms = 0.0
+        sr = 0
+        try:
+            for i, chunk in enumerate(chunks):
+                chunk_filename = f"{stem}__chunk{i:02d}__{run_id}.wav"
+                logger.info(
+                    "POST %s/tts chunk %d/%d chars=%d",
+                    self.endpoint, i + 1, len(chunks), len(chunk),
+                )
+                data = self._post_chunk(chunk, exaggeration, chunk_filename)
+                chunk_paths.append(Path(data["output_path"]))
+                total_gen_ms += float(data.get("duration_ms", 0))
+                sr = int(data.get("sample_rate", sr))
+            self._concat_wavs(chunk_paths, target)
+            logger.info(
+                "chatterbox OK — wrote %s (%d chunks, gen %.1fs total, sr=%d)",
+                target,
+                len(chunks),
+                total_gen_ms / 1000.0,
+                sr,
+            )
+            return str(target)
+        finally:
+            for p in chunk_paths:
+                p.unlink(missing_ok=True)
 
     def estimate_cost(self, text: str) -> dict:
         """Local generation — zero marginal cost."""

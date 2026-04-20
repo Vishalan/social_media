@@ -7,6 +7,7 @@ the Python client, so these tests run in any environment.
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -147,6 +148,81 @@ def test_chatterbox_generate_rejects_empty_text(tmp_path):
     gen = ChatterboxVoiceGenerator(endpoint="http://gpu:7777")
     with pytest.raises(ValueError, match="empty"):
         gen.generate("   ", str(tmp_path / "x.wav"))
+
+
+def test_chatterbox_chunk_text_single_short():
+    chunks = ChatterboxVoiceGenerator._chunk_text("Short line.")
+    assert chunks == ["Short line."]
+
+
+def test_chatterbox_chunk_text_sentence_boundary():
+    text = "First sentence. Second sentence! Third one? Fourth."
+    chunks = ChatterboxVoiceGenerator._chunk_text(text, max_chars=25)
+    # Each chunk must stay under the cap + end on a sentence boundary.
+    assert all(len(c) <= 25 for c in chunks)
+    # Reconstructing the concatenated text must cover every input word.
+    joined = " ".join(chunks)
+    for word in ["First", "Second", "Third", "Fourth"]:
+        assert word in joined
+
+
+def test_chatterbox_chunk_text_very_long_single_sentence_splits_on_commas():
+    long_sent = ", ".join(f"clause{i} here" for i in range(30))
+    chunks = ChatterboxVoiceGenerator._chunk_text(long_sent, max_chars=60)
+    assert all(len(c) <= 60 for c in chunks)
+    joined = " ".join(chunks)
+    assert "clause0" in joined and "clause29" in joined
+
+
+def test_chatterbox_chunk_text_empty_input():
+    assert ChatterboxVoiceGenerator._chunk_text("") == []
+    assert ChatterboxVoiceGenerator._chunk_text("   ") == []
+
+
+def test_chatterbox_multi_chunk_posts_each_and_concats(tmp_path, monkeypatch):
+    # Long text that must be split into 3+ chunks.
+    text = ". ".join(f"Sentence number {i} goes here with some padding words." for i in range(8)) + "."
+    chunk_files: list = []
+
+    def fake_post(url, json=None, timeout=None):  # noqa: A002 — match requests API
+        # Each call corresponds to one chunk; write a stub WAV file and
+        # return its path so _concat_wavs has real files to read.
+        out_name = json["output_filename"]
+        out_path = tmp_path / out_name
+        out_path.write_bytes(b"RIFFxxxxWAVE")  # stub body
+        chunk_files.append(out_path)
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {
+                "output_path": str(out_path),
+                "duration_ms": 1000.0,
+                "sample_rate": 24000,
+            },
+            text="",
+        )
+
+    monkeypatch.setattr("voiceover.chatterbox_generator.requests.post", fake_post)
+    # Stub ffmpeg concat so we don't need real binary in tests.
+    concat_called: dict = {}
+
+    def fake_concat(paths, output_path):
+        concat_called["paths"] = list(paths)
+        concat_called["output"] = output_path
+        Path(output_path).write_bytes(b"concatenated")
+
+    monkeypatch.setattr(
+        ChatterboxVoiceGenerator, "_concat_wavs", staticmethod(fake_concat)
+    )
+
+    gen = ChatterboxVoiceGenerator(endpoint="http://gpu:7777")
+    gen.generate(text, str(tmp_path / "out.wav"))
+
+    # Should have posted multiple times (exact count depends on chunker)
+    assert len(chunk_files) >= 2
+    # Concat was called with all chunk paths
+    assert concat_called["paths"] == chunk_files
+    # Final output file exists
+    assert (tmp_path / "out.wav").exists()
 
 
 def test_chatterbox_estimate_cost_is_zero():

@@ -380,7 +380,30 @@ class BrollSelector:
             self.last_split_screen_pair = data.get("split_screen_pair") or None
             # Same pattern for Unit B1's ``tweet_quote``.
             self.last_tweet_quote = data.get("tweet_quote") or None
-            return [data["primary"], data["fallback"]]
+            primary = data["primary"]
+            fallback = data["fallback"]
+            # Hard-enforce the forced primary constraint. The prompt SAYS
+            # "primary MUST be one of ..." but Haiku routinely ignores the
+            # soft instruction. Without this override, article-rooted topics
+            # were falling to stats_card / image_montage even when the
+            # phone_highlight + browser_visit gate had been passed.
+            if forced_primary_candidates is not None and primary not in forced_primary_candidates:
+                logger.info(
+                    "BrollSelector: Haiku picked %s but constraint was %s — "
+                    "overriding primary to %s (Haiku's pick demoted to fallback)",
+                    primary, forced_primary_candidates, forced_primary_candidates[0],
+                )
+                fallback = primary if primary != forced_primary_candidates[0] else fallback
+                primary = forced_primary_candidates[0]
+                # Ensure fallback isn't identical to primary.
+                if fallback == primary:
+                    # Pick the next forced candidate, else a safe filler.
+                    nxt = next(
+                        (t for t in forced_primary_candidates if t != primary),
+                        None,
+                    )
+                    fallback = nxt or _SAFE_DEFAULT[0]
+            return [primary, fallback]
         except Exception as exc:
             logger.warning(
                 "BrollSelector: Claude call failed (%s). Using safe default %s.",
