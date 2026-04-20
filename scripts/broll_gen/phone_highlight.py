@@ -682,7 +682,7 @@ async def _assemble_video(
     if _CHROME_PNG_PATH.exists():
         cmd += ["-loop", "1", "-i", str(_CHROME_PNG_PATH)]
         filter_complex = (
-            f"[0:v]scale={_VIEWPORT_W}:{_VIEWPORT_H}:force_original_aspect_ratio=cover,"
+            f"[0:v]scale={_VIEWPORT_W}:{_VIEWPORT_H}:force_original_aspect_ratio=increase,"
             f"crop={_VIEWPORT_W}:{_VIEWPORT_H},setsar=1,fps={_FPS}[bg];"
             f"[1:v]scale={_VIEWPORT_W}:{_VIEWPORT_H}[chrome];"
             f"[bg][chrome]overlay=0:0:format=auto:shortest=1[vout]"
@@ -694,7 +694,7 @@ async def _assemble_video(
     else:
         cmd += [
             "-vf",
-            f"scale={_VIEWPORT_W}:{_VIEWPORT_H}:force_original_aspect_ratio=cover,"
+            f"scale={_VIEWPORT_W}:{_VIEWPORT_H}:force_original_aspect_ratio=increase,"
             f"crop={_VIEWPORT_W}:{_VIEWPORT_H},setsar=1,fps={_FPS}",
         ]
 
@@ -708,8 +708,12 @@ async def _assemble_video(
     try:
         await asyncio.to_thread(subprocess.run, cmd, check=True, capture_output=True)
     except subprocess.CalledProcessError as exc:
-        stderr = exc.stderr.decode(errors="replace")[:500] if exc.stderr else ""
-        raise BrollError(f"ffmpeg phone_highlight failed: {stderr}") from exc
+        # ffmpeg's banner always prints first; the real error is at the tail
+        # of stderr. Grab the last ~1500 chars so the raised error carries
+        # the actionable lines (filter errors, missing inputs, codec errors).
+        full = exc.stderr.decode(errors="replace") if exc.stderr else ""
+        stderr = full[-1500:]
+        raise BrollError(f"ffmpeg phone_highlight failed (tail of stderr):\n{stderr}") from exc
 
 
 # ─── Public generator ────────────────────────────────────────────────────────
