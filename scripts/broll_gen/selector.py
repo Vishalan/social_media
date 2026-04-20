@@ -258,8 +258,17 @@ class BrollSelector:
         )
         if not topic_url_is_article:
             return None
-        if extracted_article and len(extracted_article.get("body_paragraphs", [])) >= 2:
-            return ["phone_highlight", "browser_visit"]
+        # Phone-highlight eligibility: enough article substance for the
+        # scrolling highlight to have something to reveal. Either:
+        #   (a) ≥2 body paragraphs (Trafilatura's usual shape), OR
+        #   (b) 1 body paragraph with ≥800 chars total content (some blogs
+        #       — notably Google's — return the whole article as one
+        #       paragraph).
+        if extracted_article:
+            paragraphs = extracted_article.get("body_paragraphs") or []
+            total_chars = sum(len(p) for p in paragraphs)
+            if len(paragraphs) >= 2 or (len(paragraphs) >= 1 and total_chars >= 800):
+                return ["phone_highlight", "browser_visit"]
         return ["browser_visit"]
 
     # ── Unit C2 — cinematic_chart numeric-density gating ──────────────────
