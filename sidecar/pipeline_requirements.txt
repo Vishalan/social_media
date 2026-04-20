@@ -30,3 +30,6 @@ python-dateutil==2.9.0.post0
 # Without it, phone_highlight b-roll falls back to "no article body" and the
 # selector rules it out before ranking.
 trafilatura==1.12.2
+# HTML template engine used by phone_highlight (engage-v2 Unit A1) to render
+# the phone-mockup article page before Playwright screenshots it.
+Jinja2==3.1.6
