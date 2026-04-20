@@ -57,6 +57,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -541,7 +542,34 @@ async def step_avatar(topic: dict, audio_path: str, audio_duration: float) -> li
     return list(paths)
 
 
-async def step_broll(topic: dict, script: dict, audio_duration: float) -> tuple[str, str]:
+def step_transcribe(audio_path: str, script_text: str, topic: dict) -> list[dict]:
+    """Run faster-whisper on the generated voice to get word-level timings.
+
+    Pulled out of step_assemble so phone_highlight (which needs
+    caption_segments to chunk phrases) can consume it from step_broll.
+    """
+    _section("3. Transcribe voiceover (faster-whisper base)")
+    from faster_whisper import WhisperModel
+    t0 = time.monotonic()
+    model = WhisperModel("base", device="cpu", compute_type="int8")
+    prompt_hint = script_text[:500] if script_text else topic.get("title", "")
+    segments, _ = model.transcribe(
+        audio_path, word_timestamps=True, initial_prompt=prompt_hint,
+    )
+    words: list[dict] = []
+    for seg in segments:
+        for w in (seg.words or []):
+            words.append({"word": w.word.strip(), "start": w.start, "end": w.end})
+    print(f"  {_PASS}  Transcribed in {time.monotonic()-t0:.1f}s  ({len(words)} words)")
+    return words
+
+
+async def step_broll(
+    topic: dict,
+    script: dict,
+    audio_duration: float,
+    caption_segments: Optional[list[dict]] = None,
+) -> tuple[str, str]:
     _section("5. B-roll generation (AI-selected CPU generator)")
     from anthropic import AsyncAnthropic
     from broll_gen import BrollError, make_broll_generator
@@ -597,6 +625,11 @@ async def step_broll(topic: dict, script: dict, audio_duration: float) -> tuple[
         chart_spec=chart_spec,
         tweet_quote=selector.last_tweet_quote,
         split_screen_pair=selector.last_split_screen_pair,
+        # phone_highlight needs word-level timings to chunk phrases to the
+        # narration. Pre-transcribe and pass through the job (see
+        # step_transcribe above). When absent, phone_highlight raises
+        # "no caption_segments — cannot chunk phrases".
+        caption_segments=caption_segments or [],
     )
     gen_kwargs = {
         "anthropic_client": anthropic_client,
@@ -628,36 +661,16 @@ async def step_assemble(
     avatar_paths: list[str],
     broll_path: str,
     audio_path: str,
+    caption_segments: list[dict],
     script_text: str = "",
 ) -> str:
-    _section("6–7. Transcribe + trim silence + assemble final video")
-    from faster_whisper import WhisperModel
+    _section("6–7. Assemble final video")
     from video_edit.video_editor import VideoEditor
     from avatar_gen.layout import AvatarLayout
 
     safe = re.sub(r"[^a-z0-9_]", "_", topic["title"].lower())[:40]
-
-    # Transcribe for word-level timing, using the script as vocabulary hint.
-    # Whisper gets the script as initial_prompt so it recognises domain terms
-    # (e.g. "Veo" instead of "VO", "GPT-4o" instead of "GPT for").
-    print("  ↗  Transcribing audio (faster-whisper base)...")
-    t0 = time.monotonic()
-    model = WhisperModel("base", device="cpu", compute_type="int8")
-    prompt_hint = script_text[:500] if script_text else topic.get("title", "")
-    segments, _ = model.transcribe(
-        audio_path, word_timestamps=True, initial_prompt=prompt_hint,
-    )
-    whisper_words = []
-    for seg in segments:
-        for w in (seg.words or []):
-            whisper_words.append({"word": w.word.strip(), "start": w.start, "end": w.end})
-
-    # Use Whisper's own words — initial_prompt handles domain term spelling.
-    # Script-word replacement doesn't work because Whisper may detect a
-    # different number of words than the script contains.
-    caption_segments = whisper_words
-
-    print(f"  {_PASS}  Transcribed in {time.monotonic()-t0:.1f}s  ({len(caption_segments)} words)")
+    # caption_segments is now produced upstream in step_transcribe so
+    # phone_highlight can see it during step_broll.
 
     # ── Unit A3: keyword-punch extraction (failure-isolated). ──
     # Mirrors the commoncreed_pipeline step between transcribe and assemble.
@@ -904,10 +917,14 @@ async def main() -> None:
         audio_path = step_voice(topic, script.get("script", ""))
         from moviepy import AudioFileClip as _AFC
         audio_duration = _AFC(audio_path).duration
+        # Transcribe BEFORE b-roll so phone_highlight sees caption_segments.
+        caption_segments = step_transcribe(audio_path, script.get("script", ""), topic)
         # step_avatar now handles segment extraction, upload, and parallel VEED calls.
         # It returns a list of avatar clip paths (one per visible segment).
         avatar_paths = await step_avatar(topic, audio_path, audio_duration)
-        broll_path, broll_type = await step_broll(topic, script, audio_duration)
+        broll_path, broll_type = await step_broll(
+            topic, script, audio_duration, caption_segments=caption_segments,
+        )
 
     # Pass script text for accurate captions (Whisper timing + script words)
     _script_text = ""
@@ -915,7 +932,10 @@ async def main() -> None:
         _script_text = script.get("script", "")
     elif "script" in topic:
         _script_text = topic.get("script", "")
-    final_path = await step_assemble(topic, avatar_paths, broll_path, audio_path, script_text=_script_text)
+    final_path = await step_assemble(
+        topic, avatar_paths, broll_path, audio_path,
+        caption_segments=caption_segments, script_text=_script_text,
+    )
 
     total_elapsed = time.monotonic() - t_total
 
