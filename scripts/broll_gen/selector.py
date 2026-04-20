@@ -384,25 +384,28 @@ class BrollSelector:
             fallback = data["fallback"]
             # Hard-enforce the forced primary constraint. The prompt SAYS
             # "primary MUST be one of ..." but Haiku routinely ignores the
-            # soft instruction. Without this override, article-rooted topics
-            # were falling to stats_card / image_montage even when the
-            # phone_highlight + browser_visit gate had been passed.
-            if forced_primary_candidates is not None and primary not in forced_primary_candidates:
-                logger.info(
-                    "BrollSelector: Haiku picked %s but constraint was %s — "
-                    "overriding primary to %s (Haiku's pick demoted to fallback)",
-                    primary, forced_primary_candidates, forced_primary_candidates[0],
-                )
-                fallback = primary if primary != forced_primary_candidates[0] else fallback
-                primary = forced_primary_candidates[0]
-                # Ensure fallback isn't identical to primary.
-                if fallback == primary:
-                    # Pick the next forced candidate, else a safe filler.
-                    nxt = next(
-                        (t for t in forced_primary_candidates if t != primary),
-                        None,
+            # soft instruction — and even when it stays in-list, it happily
+            # picks the second item as primary (cinematic_chart vs stats_card:
+            # stats_card wins because it's "safer" per Haiku). forced_primary
+            # _candidates is a RANKED list, [0] is the preferred pick. Pin it.
+            if forced_primary_candidates is not None:
+                forced = forced_primary_candidates[0]
+                if primary != forced:
+                    logger.info(
+                        "BrollSelector: Haiku picked %s but forced primary is %s — "
+                        "pinning primary, demoting Haiku's pick to fallback",
+                        primary, forced,
                     )
-                    fallback = nxt or _SAFE_DEFAULT[0]
+                    # Haiku's original primary becomes the fallback (still useful
+                    # signal about what fits the topic if the forced type errors).
+                    fallback = primary if primary != forced else fallback
+                    primary = forced
+                # Ensure fallback != primary.
+                if fallback == primary:
+                    fallback = next(
+                        (t for t in forced_primary_candidates if t != primary),
+                        _SAFE_DEFAULT[0],
+                    )
             return [primary, fallback]
         except Exception as exc:
             logger.warning(
