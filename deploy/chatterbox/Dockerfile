@@ -25,8 +25,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Install Python deps first for better layer caching.
+# chatterbox-tts transitively pulls several heavy wheels (gradio, librosa,
+# scipy, etc.) on top of the pytorch base, so pip timeouts + retries are
+# non-negotiable — one slow download otherwise kills a 15-min build.
 COPY deploy/chatterbox/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir \
+      --default-timeout=300 \
+      --retries=5 \
+      -r requirements.txt
 
 # Server code. Kept minimal — FastAPI + one TTS endpoint + healthz.
 COPY deploy/chatterbox/server.py ./server.py
