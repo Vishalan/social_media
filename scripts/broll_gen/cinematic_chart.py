@@ -133,11 +133,11 @@ _BAR_DATUM_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+# Anthropic constrained decoding only accepts minItems/maxItems of 0 or 1.
+# Shape validation for [x, y] pairs is done in Python instead (see below).
 _LINE_POINT_SCHEMA: dict[str, Any] = {
     "type": "array",
     "items": {"type": "number"},
-    "minItems": 2,
-    "maxItems": 2,
 }
 
 _CHART_PROPS_SCHEMA: dict[str, Any] = {
@@ -235,6 +235,21 @@ async def extract_chart_spec(
             return None
         if not isinstance(spec.get("props"), dict):
             return None
+        # For line_chart, validate the [x, y]-pair shape the schema can no
+        # longer enforce (Anthropic constrained decoding rejects
+        # minItems/maxItems other than 0/1).
+        if template == "line_chart":
+            pts = spec["props"].get("points")
+            if not isinstance(pts, list) or not pts:
+                return None
+            for p in pts:
+                if not (isinstance(p, list) and len(p) == 2 and
+                        all(isinstance(v, (int, float)) for v in p)):
+                    logger.warning(
+                        "extract_chart_spec: line_chart point %r is not [x, y]",
+                        p,
+                    )
+                    return None
         try:
             target = float(spec.get("target_duration_s", 0))
         except (TypeError, ValueError):
