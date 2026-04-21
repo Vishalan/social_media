@@ -119,7 +119,7 @@ Success-criteria traceability:
 **ComfyUI / local I2V:**
 - `scripts/video_gen/comfyui_client.py` (runner + `{{placeholder}}` substitution). `scripts/gpu/pod_manager.py` for RunPod lifecycle.
 - `comfyui_workflows/short_video_wan21.json` uses Wan2.1. **Wan2.2-class has no production code — only a skeleton workflow from a paused plan (`2026-04-15-001-feat-wan22-avatar-provider`).**
-- Research finding: `docs/plans/2026-04-19-002-refactor-ai-video-to-local-comfyui-plan.md` moved `ai_video` off RunPod because of ~30 s RunPod cold-start vs ~10 s output. That plan targets a different (3090) host; Vesper's target host is the Ubuntu server's **RTX 2070 SUPER (8 GB VRAM)** per Key Decision #6. Vesper adopts the "local GPU, not RunPod cloud" shape but with 2070 SUPER VRAM constraints (see Unit 10 hardware contingency). Server-side coordination (Redis semaphore or shared lock file), not laptop-side `fcntl.flock`.
+- Research finding: `docs/plans/2026-04-19-002-refactor-ai-video-to-local-comfyui-plan.md` moved `ai_video` off RunPod because of ~30 s RunPod cold-start vs ~10 s output. That plan targets a 3090 host; Vesper's target host is the same Ubuntu server GPU (**RTX 3090, 24 GB VRAM**) per Key Decision #6. Vesper adopts the same "local GPU, not RunPod cloud" shape and inherits the ≤22 GB peak-VRAM guard (see Unit 10). Server-side coordination (Redis semaphore or shared lock file), not laptop-side `fcntl.flock`.
 
 **Reddit signal source:**
 - `sidecar/meme_sources/reddit_memes.py` uses **public JSON** (`GET /r/<sub>/top.json`), no auth. Custom `User-Agent: "CommonCreedBot/0.1"`. **Reddit TLS-fingerprint blocks httpx from Docker — must use `requests`** (per commoncreed-pipeline-expansion-2026-04-12 solution doc). This is solved in the existing code; Vesper's signal source reuses the same HTTP pattern.
@@ -146,7 +146,7 @@ From `docs/solutions/` and recent commits (all are concrete, not hypothetical):
 Framework docs (ordered by relevance to this plan):
 
 - **fal.ai Flux pricing (April 2026):** schnell $0.003/MP, dev ~$0.025/MP, pro v1.1 $0.04/MP, pro v1.1-ultra $0.06/image flat. Python SDK `fal-client`, canonical pattern `submit_async → iter_events → get`.
-- **Wan2.2 on RTX 4090 (24 GB, research benchmark):** 480p ~4 min/5 s clip; 720p I2V ~9 min/5 s; HunyuanVideo distilled ~75 s. **Hardware reality (not the benchmark):** Vesper's target is the Ubuntu server's 2070 SUPER (8 GB VRAM). Wan2.2 14B does not fit; smaller Wan/HunyuanVideo/CogVideoX variants are the realistic candidates. Benchmark numbers from the 4090 do not translate directly. Unit 10 re-benchmarks on the actual hardware.
+- **Wan2.2 on RTX 4090 (24 GB, research benchmark):** 480p ~4 min/5 s clip; 720p I2V ~9 min/5 s; HunyuanVideo distilled ~75 s. **Hardware reality:** Vesper's target is the Ubuntu server's **RTX 3090 (24 GB VRAM)** — same VRAM class as the 4090 benchmark host, with somewhat lower throughput (~20-30% slower for equivalent workloads). Wan2.2 14B fits; HunyuanVideo distilled and CogVideoX-5B all fit well under the 22 GB peak-VRAM guard. Unit 10 re-benchmarks on the 3090 to nail down exact per-clip times, but VRAM capacity is no longer the gating constraint.
 - **Reddit API 2024-2026:** Commercial use requires a contract. Pay-as-you-go commercial $0.24/1000 calls or $12-60k/yr. Reddit v Perplexity ongoing. **Decision: treat Reddit as public-JSON topic signal only (matches existing `reddit_memes.py` posture), never as content.**
 - **Anthropic prompt-injection defense (Nov 2025 research):** XML tags + system-prompt instruction hierarchy + output-shape JSON schema + pre-strip Unicode-tag chars / base64 / zero-width joiners. Opus 4.5/4.7 is trained SoTA on the pattern but not solved — defense-in-depth is the recommended posture.
 - **YouTube Data API v3 (Dec 2025):** `videos.insert` quota 1600 → 100 units (~100 uploads/day feasible). `status.containsSyntheticMedia` settable on insert (AI disclosure). Chapters parsed from `snippet.description` text — no API field. Multi-audio tracks NOT supported via API.
@@ -179,8 +179,8 @@ Best-practices (2026):
 6. **Local-GPU I2V, not RunPod cloud.** Matches `2026-04-19-002-refactor-ai-video-to-local-comfyui-plan.md`'s decision for `ai_video`.
 
    **Hardware topology (single authoritative statement):**
-   - The Ubuntu server at `192.168.29.237` has **one** GPU. Per `docs/solutions/integration-issues/server-migration-synology-to-ubuntu-2026-04-11.md`, that GPU is an **RTX 2070 SUPER (8 GB VRAM)**. Any earlier "3090" reference inherited from the `ai_video` refactor plan describes a *different* host and does not apply to Vesper.
-   - The chatterbox TTS sidecar and the ComfyUI sidecar both run on this same Ubuntu server and both draw on that single 2070 SUPER.
+   - The Ubuntu server at `192.168.29.237` has **one** GPU: an **RTX 3090 with 24 GB VRAM** (hardware-upgraded from the 2070 SUPER that earlier migration notes reference — treat any "2070 SUPER" or "8 GB" mention in older solution docs as stale).
+   - The chatterbox TTS sidecar and the ComfyUI sidecar both run on this same Ubuntu server and both draw on that single 3090.
    - The Vesper orchestrator runs on the **owner's laptop** via LaunchAgent and issues HTTP requests to the server sidecars. The laptop itself does not provide a GPU for Vesper.
 
    **GPU coordination implication (critical):** A `fcntl.flock` on `/tmp/gpu-plane.lock` on the *laptop* coordinates nothing about *server-side* GPU access. Two laptop-side Vesper processes could each acquire that lock and still issue concurrent HTTP requests to the chatterbox and ComfyUI sidecars. The mutex **must live server-side**. Options, picked in Unit 10:
@@ -189,7 +189,7 @@ Best-practices (2026):
    - (c) Serialize through the existing FastAPI sidecar's APScheduler as a single-worker queue for all GPU-bound jobs.
    - Option (b) is the likely production choice (lightweight, Redis-already-present). Option (c) is simpler if throughput permits.
 
-   **VRAM budget:** On a 2070 SUPER (8 GB), chatterbox + I2V cannot run concurrently. Any I2V model must fit in ≤7 GB (leaving headroom). This invalidates the earlier "peak VRAM ≤22 GB" guard copied from the ai_video refactor plan — 22 GB refers to a 3090's headroom, not the Vesper target machine. Unit 10 benchmarks must assume ≤7 GB VRAM and serial-with-chatterbox execution.
+   **VRAM budget:** On the 3090 (24 GB), the ≤22 GB peak-VRAM guard inherited from the ai_video refactor plan applies directly. Wan2.2 14B, HunyuanVideo distilled, and CogVideoX-5B all fit individually. Co-residency (chatterbox + I2V concurrently) is still ruled out — both sidecars peak near the guard under load and neither reliably loads/unloads between jobs. Serialize via the server-side mutex. Unit 10 benchmarks run under the ≤22 GB guard and the serial-with-chatterbox constraint.
 
 7. **Flux via fal.ai for stills (not local).** Flux.1-pro v1.1 at $0.04/MP. ~25 stills per short × ~1 MP × $0.04 = ~$1.00 — close to the per-short ceiling, so Unit 9 benchmarks schnell ($0.003/MP) against dev ($0.025/MP) against pro during implementation and picks the variant that clears ceiling with headroom. Local Flux (on 3090) is a fallback if fal.ai cost exceeds ceiling, constrained by GPU mutex.
 
@@ -220,7 +220,7 @@ Best-practices (2026):
 - **Postiz scoping:** existing `ig_profile`/`yt_profile` kwargs already route per-channel. No code change.
 - **Channel profile storage:** flat Python module (`channels/<id>.py`), not YAML. YAML reconsidered at channel #3.
 - **SFX pack delivery:** per-pack subdirectory under `assets/<channel>/sfx/` + `pack` argument to `pick_sfx`.
-- **I2V provider:** server-side local GPU (Ubuntu server's RTX 2070 SUPER) ComfyUI workflow. Serialized with chatterbox via server-side mutex (Key Decision #6).
+- **I2V provider:** server-side local GPU (Ubuntu server's RTX 3090, 24 GB VRAM) ComfyUI workflow. Serialized with chatterbox via server-side mutex (Key Decision #6).
 - **Instagram AI label:** cannot be programmatic; preserve C2PA from fal.ai through MoviePy; manual UI fallback accepted.
 - **YouTube chapters:** emit from `snippet.description` text format (`0:00 Title`) — for v1.1 long-form only.
 - **Cron staggering:** 09:30 Vesper vs 08:00 CommonCreed; file mutex on MoviePy assembly.
@@ -230,7 +230,7 @@ Best-practices (2026):
 - **[Unit 7][Technical]** Final Claude model for story generation — Sonnet 4.7 vs Haiku 4.5 for first-pass. Sonnet for hook/opening, Haiku for structural expansion. Benchmark a 10-story sample during implementation.
 - **[Unit 7][Technical]** Public-domain horror archetype library shape — JSON catalog with `archetype`, `key_beats`, `setting_hints`, `voice_patterns` seeded from Poe/Lovecraft/Machen/Blackwood/Hodgson plus Project Blue Book-style paranormal beats. Populate during implementation.
 - **[Unit 9][Technical]** Exact Flux variant for production — schnell vs dev vs pro. Benchmark 10-image samples during implementation against the $1.50/short ceiling.
-- **[Unit 10][Technical]** Exact local I2V model — Wan2.2 5B-class vs HunyuanVideo distilled vs CogVideoX. Benchmark on the Ubuntu server's RTX 2070 SUPER (8 GB VRAM) for 5-sec clip time and quality. Target: ≤2 min per clip to stay within daily budget. Model size must fit in ≤7 GB VRAM.
+- **[Unit 10][Technical]** Exact local I2V model — Wan2.2 14B vs Wan2.2 5B-class vs HunyuanVideo distilled vs CogVideoX-5B. Benchmark on the Ubuntu server's RTX 3090 (24 GB VRAM) for 5-sec clip time and quality. Target: ≤2 min per clip to stay within daily budget. Peak VRAM per-model must stay ≤22 GB (leaves headroom for ComfyUI overhead).
 - **[Unit 10][Needs research]** ComfyUI workflow JSON for chosen I2V model. Copy-adapt from `comfyui_workflows/short_video_wan21.json` structure.
 - **[Unit 11][Technical]** Hero-shot selection heuristic — which 20% of beats get I2V. Likely a tag emitted by the Haiku timeline planner (tags: `emotional_climax`, `reveal_moment`, `hero_face`). Bias toward climax beats over literal proper-noun beats.
 - **[Unit 11][Technical]** Pacing rule — shot-duration bound as a function of VO word-rate. Concrete formula during implementation; starting point is `shot_duration = max(1.5, min(4.0, 0.3 + 0.08 * words_in_beat))`.
@@ -265,7 +265,7 @@ flowchart TB
         E[faster-whisper<br/>caption_segments]
         F[Flux stills<br/>fal.ai]
         G[Depth Anything V2<br/>+ DepthFlow parallax]
-        H[Wan2.2-class I2V<br/>server 2070 SUPER<br/>server-side mutex]
+        H[Wan2.2-class I2V<br/>server 3090 24GB<br/>server-side mutex]
         I[MoviePy assembly<br/>ASS captions from<br/>engagement-v2<br/>SFX pack=vesper]
         J[Thumbnail<br/>palette=vesper<br/>aspect=9:16]
         K[Telegram approval<br/>prefix &quot;[Vesper]&quot;]
@@ -827,19 +827,18 @@ SFX_PACK = "vesper"   # resolves to assets/vesper/sfx/
 - Test: `scripts/video_gen/tests/test_hero_i2v.py`, `scripts/video_gen/tests/test_gpu_mutex.py`
 
 **Approach:**
-- **Model benchmark during implementation — hardware reality:** The GPU is **server-side RTX 2070 SUPER (8 GB VRAM)** on the Ubuntu server — not laptop-side, not a 3090, not a 4090. (See Key Decision #6 topology statement.) Model-size constraint: I2V checkpoint + runtime working set must fit in ≤7 GB VRAM. Wan2.2 14B is almost certainly out of scope at this VRAM (too large); Wan2.2 5B-class or HunyuanVideo-distilled variants are the realistic candidates. CogVideoX-5B is the conservative fallback. All candidates benchmarked under the constraint that chatterbox TTS cannot be coresident — I2V runs serially with chatterbox, coordinated by the server-side mutex (Key Decision #6).
-- **Hardware contingency — explicit branching:** Unit 10's first deliverable is a benchmark table across Wan2.2 / HunyuanVideo distilled / CogVideoX on the **actual 2070 SUPER hardware** (NOT borrowed from framework research assumptions). Branches:
-  - Any model ≤2 min/5 s clip → use it, proceed as planned.
+- **Model benchmark during implementation — hardware reality:** The GPU is **server-side RTX 3090 (24 GB VRAM)** on the Ubuntu server (not laptop-side). See Key Decision #6 topology statement. Peak VRAM guard: ≤22 GB. At 24 GB all of Wan2.2 14B, Wan2.2 5B-class, HunyuanVideo-distilled, and CogVideoX-5B fit individually — VRAM is not the gating constraint; wall-clock per-clip time is. All candidates benchmarked under the constraint that chatterbox TTS cannot be coresident with I2V at peak — they both push toward the 22 GB guard and don't reliably unload between jobs. I2V runs serially with chatterbox, coordinated by the server-side mutex (Key Decision #6).
+- **Hardware contingency — explicit branching:** Unit 10's first deliverable is a benchmark table across Wan2.2 14B / Wan2.2 5B-class / HunyuanVideo distilled / CogVideoX on the **actual 3090 hardware** (research benchmarks from 4090 translate roughly but 3090 is ~20-30% slower). Branches:
+  - Any model ≤2 min/5 s clip → use it, proceed as planned. (Most likely branch on a 3090.)
   - All models >2 min but ≤5 min → reduce I2V share from 20% to 10%; document the tradeoff in `channels/vesper.py::VISUAL.i2v_hero_pct`.
-  - All models >5 min → **defer hero I2V entirely to a follow-up plan**. Vesper ships with Unit 9's Depth Anything V2 + DepthFlow parallax covering the anti-slop requirement (plan already treats this as a ≥30% requirement above the 20% I2V). Mark Unit 10 as deferred, ship remaining units.
-  - If the owner decides to acquire a 3090 or rent a small RunPod pod specifically for I2V, revisit. Not in v1 scope.
+  - All models >5 min → defer Wan2.2 14B, fall back to distilled/5B-class; only defer hero I2V entirely if *every* candidate including CogVideoX-5B exceeds 5 min, which is unlikely at 24 GB VRAM. Vesper ships with Unit 9's Depth Anything V2 + DepthFlow parallax covering the anti-slop requirement regardless.
 - **ComfyUI workflow JSON:** copy `short_video_wan21.json` structure, swap model node to Wan2.2 checkpoint or HunyuanVideo. Inputs: `input_image_path`, `motion_prompt`, `duration_frames`, `seed`.
 - **Motion hints from timeline planner:** `"subtle_dolly_in"`, `"slow_pan"`, `"breathing_mist"`, `"shadow_movement"`, `"face_stare"`. Hero-shot selection biased toward emotional-climax beats (NOT literal proper-noun hits) per research.
-- **GPU mutex pattern:** `scripts/video_gen/gpu_mutex.py` uses `fcntl.flock` on `/tmp/gpu-plane.lock` with 5-minute blocking timeout. Chatterbox TTS and I2V generation both acquire before calling the GPU. `nas-pipeline-bringup-gotchas` notes two pollers on one bot token is unrecoverable — same rule for GPU. Peak VRAM guard: ≤22 GB. If benchmark shows Wan2.2 + chatterbox can't share even serially, drop I2V to HunyuanVideo OR move chatterbox to CPU (slower but decoupled).
+- **GPU mutex pattern:** server-side `fcntl.flock` on `/var/run/gpu-plane.lock` (or a Redis semaphore — choose one in Unit 10) with 5-minute blocking timeout. Chatterbox TTS and I2V generation both acquire before calling the GPU. `nas-pipeline-bringup-gotchas` notes two pollers on one bot token is unrecoverable — same rule for GPU. Peak VRAM guard: ≤22 GB. If Wan2.2 14B benchmark exceeds the time budget, drop to Wan2.2 5B-class or HunyuanVideo distilled; co-residency with chatterbox remains out of scope regardless.
 - **Retry budget:** 1 regeneration per hero shot. If second also fails, degrade that beat to still_parallax (Unit 9's parallax mode).
 - **Cost:** local 3090 means marginal cost is power + amortized hardware; counts as ~$0 in per-video budget.
 
-**Execution note:** First step is the benchmark — measure per-clip time on the owner's 3090 for Wan2.2 / HunyuanVideo / CogVideoX in isolation. If no model hits ≤2 min per 5 s clip on the actual hardware, defer hero I2V to a later phase and ship Vesper with parallax-only (Unit 9 covers that).
+**Execution note:** First step is the benchmark — measure per-clip time on the server 3090 for Wan2.2 14B / Wan2.2 5B-class / HunyuanVideo distilled / CogVideoX-5B in isolation. If no model hits ≤2 min per 5 s clip on the actual hardware, reduce I2V share per the contingency branches above; full deferral to a later phase is the last resort and unlikely on 24 GB VRAM.
 
 **Patterns to follow:**
 - `scripts/video_gen/comfyui_client.py` for workflow runner.
@@ -1097,7 +1096,7 @@ Two pipelines share five live resources: AnalyticsTracker SQLite, Postiz org (30
 
 ### Concrete concurrent failure modes (and architectural responses)
 
-1. **GPU plane is a server-side tri-consumer with server-side coordination** (CommonCreed chatterbox, Vesper chatterbox, Vesper I2V — all on the Ubuntu server's single RTX 2070 SUPER, 8 GB VRAM). Laptop-side `fcntl.flock` is irrelevant; the mutex lives on the server. Options spec'd in Key Decision #6. Depth Anything V2 on the laptop (if laptop has sufficient CPU/RAM) is mutex-free; if V2 must run on the server GPU, it joins the server-side serialization. **Ordering rule when both pipelines queue:** Vesper (actively shipping) wins over CommonCreed (currently paused); if CommonCreed resumes active posting, re-evaluate by posting-schedule priority, not "first-class infra" framing. On timeout (10 min wait), the losing pipeline alerts and retries 15 minutes later; second timeout degrades to skip-publish-keep-content for the current slot (not "defer whole day"). Vesper's orchestrator does a pre-flight probe against the Redis semaphore or server lock-file to detect contention. → **Unit 10, 13**
+1. **GPU plane is a server-side tri-consumer with server-side coordination** (CommonCreed chatterbox, Vesper chatterbox, Vesper I2V — all on the Ubuntu server's single RTX 3090, 24 GB VRAM). Laptop-side `fcntl.flock` is irrelevant; the mutex lives on the server. Options spec'd in Key Decision #6. Depth Anything V2 on the laptop (if laptop has sufficient CPU/RAM) is mutex-free; if V2 must run on the server GPU, it joins the server-side serialization. **Ordering rule when both pipelines queue:** Vesper (actively shipping) wins over CommonCreed (currently paused); if CommonCreed resumes active posting, re-evaluate by posting-schedule priority, not "first-class infra" framing. On timeout (10 min wait), the losing pipeline alerts and retries 15 minutes later; second timeout degrades to skip-publish-keep-content for the current slot (not "defer whole day"). Vesper's orchestrator does a pre-flight probe against the Redis semaphore or server lock-file to detect contention. → **Unit 10, 13**
 
 2. **Postiz 30 req/hour is org-wide, not per-pipeline.** A shared rate ledger (file-based counter in `data/postiz_rate_budget.jsonl`, rotated hourly) is decremented before each `publish_post` call. If Vesper enters its publish stage with <10 calls remaining in the current hour, Vesper **defers publish to the next hour** and holds in `approved-but-unposted` state in analytics. Under Phase 2 long-form the ceiling tightens — flag as a hard Phase 2 blocker. → **Unit 12**
 
@@ -1136,8 +1135,8 @@ End-to-end smoke test for Vesper (mocked externals) + live one-short test pre-la
 
 - **Research-driven Reddit pivot.** If the user insists on Reddit content ingestion, Unit 7's LLM-original design is replaced with an LLM-rewrite design (different prompt shape; same guardrail + mod filter; DMCA runbook moves from defense-in-depth to frontline). Flag for user confirmation before Unit 6-7 work begins.
 - **Engagement-layer-v2 is a hard blocker.** Units 3 + 11 depend on v2's SFX-pack + typography parameterization being complete. If v2 slips past Vesper launch-readiness, Vesper launch slips with it. Monitor v2 status during Unit 0-3 execution.
-- **Flux cost overrun.** If pro-v1.1 benchmarks show >$1.00 per-short, variant mix shifts toward schnell/dev. If even schnell breaches $1.00, local Flux on 3090 becomes the fallback (adds GPU contention; potentially forces a 2070→3090 hardware step the brainstorm explicitly ruled out of scope).
-- **Owner hardware is RTX 2070 SUPER, not RTX 4090.** Research benchmarks assumed 4090. Unit 10's I2V benchmark may find no model hits targets; contingency is ship with parallax-only (Unit 9) and revisit hero-shot I2V in a follow-up.
+- **Flux cost overrun.** If pro-v1.1 benchmarks show >$1.00 per-short, variant mix shifts toward schnell/dev. If even schnell breaches $1.00, local Flux on the server 3090 becomes the fallback — feasible at 24 GB VRAM but adds contention against chatterbox + I2V on the same GPU plane (see Key Decision #6 mutex ordering).
+- **Server GPU is RTX 3090, not RTX 4090.** Research benchmarks assumed 4090 (~20-30% faster for equivalent workloads). Unit 10's I2V benchmark may find Wan2.2 14B exceeds the per-clip budget; contingency is fall back to Wan2.2 5B-class or HunyuanVideo distilled, or reduce I2V share per Unit 10 branching. Full deferral is unlikely at 24 GB but remains the last-resort fallback.
 - **Chatterbox reference clip quality.** The whispered register depends entirely on the reference; a mediocre clip means mediocre Vesper voice. Pre-launch audit requires owner records 3 candidate clips and tests each.
 - **YouTube AI disclosure enforcement variance.** Jan-2026 monetization relaxation may or may not apply cleanly. Monitor first 10 uploads' monetization status; be ready to iterate descriptions/thumbnails if limited-ads > 10%.
 - **Handle squat race.** Day-0 claim across 7+ platforms mitigates; but simultaneous squat on any single platform forces `@vesper.tv` fallback. Brand-name survives; thumbnails/descriptions stay the same.
