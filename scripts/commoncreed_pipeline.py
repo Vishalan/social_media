@@ -212,7 +212,10 @@ class CommonCreedPipeline:
 
         Raises InsufficientTopicsError if fewer than 2 unique topics found.
         """
-        logger.info("CommonCreed pipeline starting")
+        logger.info(
+            "%s pipeline starting",
+            self.config.get("channel_display_name", "CommonCreed"),
+        )
 
         # News fetch: no GPU needed
         topics = self.news_sourcer.fetch()
@@ -228,7 +231,10 @@ class CommonCreedPipeline:
 
         # Phase 3: CPU — trim, assemble, approve, post (no pod running)
         await self._phase3_finalize(jobs)
-        logger.info("CommonCreed pipeline complete")
+        logger.info(
+            "%s pipeline complete",
+            self.config.get("channel_display_name", "CommonCreed"),
+        )
 
     # ─── Phase 1: CPU + cloud APIs ────────────────────────────────────────
 
@@ -790,8 +796,25 @@ def _derive_sfx_events(job: "VideoJob", caption_segments: list[dict]) -> list:
 # ─── CLI entry point ──────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import argparse
     import sys
     from dotenv import load_dotenv
+
+    # Ensure the repo root is on sys.path so ``channels.*`` resolves even
+    # when the script is run as ``python scripts/commoncreed_pipeline.py``.
+    _REPO_ROOT = Path(__file__).resolve().parent.parent
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+
+    from channels import ChannelNotFound, load_channel_config
+
+    parser = argparse.ArgumentParser(description="Daily content pipeline (channel-aware).")
+    parser.add_argument(
+        "--channel",
+        default="commoncreed",
+        help="Channel ID to run (loads channels/<id>.py). Default: commoncreed.",
+    )
+    args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.INFO,
@@ -799,6 +822,12 @@ if __name__ == "__main__":
         stream=sys.stdout,
     )
     load_dotenv()
+
+    try:
+        profile = load_channel_config(args.channel)
+    except ChannelNotFound as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
 
     # COMFYUI_URL is optional — if set, RunPod is bypassed (local dev mode)
     use_runpod = not os.environ.get("COMFYUI_URL") and bool(os.environ.get("RUNPOD_API_KEY"))
@@ -839,38 +868,9 @@ if __name__ == "__main__":
         logger.error("Missing required environment variables: %s", ", ".join(missing))
         sys.exit(1)
 
-    config = {
-        "anthropic_api_key": os.environ["ANTHROPIC_API_KEY"],
-        # Voice provider switch + provider-specific config
-        "voice_provider": voice_provider,
-        "elevenlabs_api_key": os.environ.get("ELEVENLABS_API_KEY", ""),
-        "voice_id": os.environ.get("ELEVENLABS_VOICE_ID", ""),
-        "chatterbox_reference_audio": os.environ.get("CHATTERBOX_REFERENCE_AUDIO", ""),
-        "chatterbox_endpoint": os.environ.get("CHATTERBOX_ENDPOINT", ""),
-        "chatterbox_device": os.environ.get("CHATTERBOX_DEVICE", "cuda"),
-        "comfyui_url": os.environ.get("COMFYUI_URL", ""),  # empty = use RunPod
-        "comfyui_api_key": os.environ.get("COMFYUI_API_KEY", ""),
-        "ayrshare_api_key": os.environ["AYRSHARE_API_KEY"],
-        "telegram_bot_token": os.environ["TELEGRAM_BOT_TOKEN"],
-        "telegram_owner_user_id": os.environ["TELEGRAM_OWNER_USER_ID"],
-        "niche": os.environ.get("NICHE", "AI & Technology"),
-        # RunPod config (used when COMFYUI_URL is not set)
-        "runpod_api_key": os.environ.get("RUNPOD_API_KEY", ""),
-        "runpod_gpu_type_id": os.environ.get("RUNPOD_GPU_TYPE_ID", "NVIDIA GeForce RTX 4090"),
-        "runpod_template_id": os.environ.get("RUNPOD_TEMPLATE_ID", ""),
-        "runpod_network_volume_id": os.environ.get("RUNPOD_NETWORK_VOLUME_ID", ""),
-        "runpod_comfyui_port": os.environ.get("RUNPOD_COMFYUI_PORT", "8188"),
-        # Avatar provider config
-        "avatar_provider": os.environ.get("AVATAR_PROVIDER", "veed"),
-        "heygen_api_key": os.environ.get("HEYGEN_API_KEY", ""),
-        "heygen_avatar_id": os.environ.get("HEYGEN_AVATAR_ID", ""),
-        "fal_api_key": os.environ.get("FAL_API_KEY", ""),
-        "kling_avatar_image_url": os.environ.get("KLING_AVATAR_IMAGE_URL", ""),
-        "veed_avatar_image_url": os.environ.get("VEED_AVATAR_IMAGE_URL", ""),
-        "veed_resolution": os.environ.get("VEED_RESOLUTION", "480p"),
-        # B-roll image sources (optional — degrades gracefully without keys)
-        "pexels_api_key": os.environ.get("PEXELS_API_KEY", ""),
-        "bing_api_key": os.environ.get("BING_SEARCH_API_KEY", ""),
-    }
+    # Flatten profile + env into the dict the pipeline class consumes.
+    # The shape is byte-for-byte equivalent to the previous inline dict build;
+    # all changes to env-var names or fields happen in the profile module.
+    config = profile.to_legacy_config(dict(os.environ))
 
     asyncio.run(CommonCreedPipeline(config).run_daily())
