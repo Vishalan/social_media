@@ -36,6 +36,7 @@ POSTIZ_UPLOAD_PATH = "/api/public/v1/upload"
 # Postiz integration identifier strings as returned by GET /integrations.
 PROVIDER_INSTAGRAM = "instagram"
 PROVIDER_YOUTUBE = "youtube"
+PROVIDER_TIKTOK = "tiktok"
 
 
 class PostizClient:
@@ -186,7 +187,10 @@ class PostizClient:
         scheduled_slot: datetime,
         ig_profile: Optional[str] = None,
         yt_profile: Optional[str] = None,
+        tt_profile: Optional[str] = None,
+        tt_caption: Optional[str] = None,
         media_kind: str = "video",
+        ai_disclosure: bool = False,
     ) -> dict:
         """Publish a video to Instagram + YouTube via Postiz.
 
@@ -215,9 +219,10 @@ class PostizClient:
         Raises ``requests.HTTPError`` on persistent failure.
         """
         # 1. resolve integration ids ----------------------------------
-        # YouTube only makes sense for video content — image-only memes
-        # are skipped from YT entirely (YT Shorts requires actual video,
-        # not a static JPEG, and a 30s freeze-frame "Short" is bad UX).
+        # YouTube + TikTok only make sense for video content — image-only
+        # memes are skipped from both (TT API requires video, YT Shorts
+        # similarly). TikTok is opt-in per-caller via ``tt_profile``;
+        # omitting it preserves the pre-Unit-12 IG+YT-only behavior.
         is_image = media_kind == "image"
         ig_id = self.integration_id_for(PROVIDER_INSTAGRAM, profile=ig_profile)
         yt_id = (
@@ -225,10 +230,15 @@ class PostizClient:
             if not is_image
             else None
         )
-        if not ig_id and not yt_id:
+        tt_id = (
+            self.integration_id_for(PROVIDER_TIKTOK, profile=tt_profile)
+            if (tt_profile and not is_image)
+            else None
+        )
+        if not ig_id and not yt_id and not tt_id:
             raise RuntimeError(
-                "Postiz publish_post: no instagram or youtube integration "
-                "found — check Postiz Settings → Channels"
+                "Postiz publish_post: no instagram, youtube, or tiktok "
+                "integration found — check Postiz Settings → Channels"
             )
 
         # 2. upload primary media (and thumbnail when applicable) -----
@@ -312,6 +322,11 @@ class PostizClient:
                     "path": thumb_media["path"],
                 },
             }
+            # AI-synthetic-media disclosure (YouTube Data API v3 +
+            # Oct-2024 `status.containsSyntheticMedia`). Required for
+            # any AI-voiced / AI-visuals content per platform policy.
+            if ai_disclosure:
+                yt_settings["containsSyntheticMedia"] = True
             posts.append(
                 {
                     "integration": {"id": yt_id},
@@ -327,6 +342,37 @@ class PostizClient:
                         }
                     ],
                     "settings": yt_settings,
+                }
+            )
+        if tt_id:
+            # TikTok Content Posting API accepts a disclosure_info block
+            # that flags AI-generated content. The caller's `tt_caption`
+            # defaults to the IG caption when not supplied (same text
+            # body typically works across IG Reels + TT).
+            tt_content = tt_caption if tt_caption is not None else ig_caption
+            tt_settings: dict[str, Any] = {
+                # Postiz TikTokSettingsDto minimum — privacy level required.
+                "privacy_level": "PUBLIC_TO_EVERYONE",
+                # Comment / duet / stitch controls default to off; leave
+                # these as Postiz defaults unless a caller needs them.
+            }
+            if ai_disclosure:
+                tt_settings["disclosure_info"] = {"ai_generated": True}
+            posts.append(
+                {
+                    "integration": {"id": tt_id},
+                    "value": [
+                        {
+                            "content": tt_content,
+                            "image": [
+                                {
+                                    "id": video_media["id"],
+                                    "path": video_media["path"],
+                                }
+                            ],
+                        }
+                    ],
+                    "settings": tt_settings,
                 }
             )
 
@@ -368,10 +414,12 @@ class PostizClient:
             date_iso,
         )
         logger.info(
-            "Postiz publish_post: creating %d post(s) ig_id=%s yt_id=%s",
+            "Postiz publish_post: creating %d post(s) ig_id=%s yt_id=%s tt_id=%s ai_disclosure=%s",
             len(posts),
             ig_id,
             yt_id,
+            tt_id,
+            ai_disclosure,
         )
         return self._request_json("POST", POSTIZ_POSTS_PATH, json_body=body)
 
