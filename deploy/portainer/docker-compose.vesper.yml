@@ -59,7 +59,7 @@ services:
     #
     # DO NOT pin to `latest` in production — tag to a specific release
     # once bringup verifies a working configuration.
-    image: ${COMFYUI_IMAGE:-yanwk/comfyui-boot:cu124}
+    image: ${COMFYUI_IMAGE:-yanwk/comfyui-boot:cu126-slim}
     container_name: commoncreed_comfyui
     restart: unless-stopped
     networks:
