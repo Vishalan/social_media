@@ -29,9 +29,15 @@ fails, you can trace it to the commit that introduced the guard.
 
 - [ ] Owner records 3 candidate chatterbox reference clips (whispered
       Archivist register, 8-15 s each). Blind-rate each against 2026
-      reference horror channels. Pick winner → copy into
-      `assets/vesper/refs/archivist.wav` (Security Posture S3; file
-      is gitignored per `.gitignore` biometric blocklist).
+      reference horror channels. Pick winner → copy into:
+      * Laptop (repo copy, gitignored per biometric blocklist):
+        `assets/vesper/refs/archivist.wav`
+      * Server (the file chatterbox actually reads):
+        `/opt/commoncreed/assets/vesper/archivist.wav`
+        — mounts into the existing `commoncreed_chatterbox` container
+        at `/app/refs/vesper/archivist.wav`. Zero compose change
+        needed; piggybacks on the existing bind mount.
+      (Security Posture S3 — biometric, 0600, gitignored.)
 - [ ] Vesper SFX pack `.wav` files sourced into
       `assets/vesper/sfx/{cut,punch,reveal,tick}.wav`. Each is
       CC0-licensed + documented in the repo's per-pack README.

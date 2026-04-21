@@ -1,0 +1,108 @@
+# =============================================================================
+# Vesper overlay — adds ONLY the ComfyUI service to the CommonCreed stack.
+# =============================================================================
+#
+# Design posture: DO NOT MODIFY docker-compose.yml.
+#
+# This overlay is applied on top of the existing CommonCreed stack:
+#
+#   cd deploy/portainer
+#   docker compose \
+#       -f docker-compose.yml \
+#       -f docker-compose.vesper.yml \
+#       up -d commoncreed_comfyui
+#
+# Effect:
+#   * Existing commoncreed_postgres / redis / temporal / postiz / sidecar /
+#     remotion / chatterbox services are UNCHANGED and keep running.
+#   * A single new container `commoncreed_comfyui` starts. It joins the
+#     existing `commoncreed` network so the sidecar + other in-network
+#     services can reach it via DNS (http://commoncreed_comfyui:8188).
+#     The host port 8188 is also published so the laptop orchestrator
+#     can reach it at http://192.168.29.237:8188.
+#
+# CommonCreed impact assessment:
+#   * Adds ~0-1 GB idle memory (ComfyUI sleeps between jobs).
+#   * Adds a second GPU consumer on the 3090 — serialized with
+#     commoncreed_chatterbox via the shared Redis semaphore
+#     (`gpu:plane:mutex`). Concurrent VRAM usage is ruled out; the
+#     mutex guarantees sequential execution. No compose change is
+#     required to the chatterbox service.
+#   * Model weights (~35 GB across Flux UNET/VAE/CLIP + Depth Anything)
+#     land on the named volume `commoncreed_comfyui_models`. Persist
+#     these across container restarts — otherwise every restart pays a
+#     multi-hour re-download.
+#
+# Rollback: `docker compose -f docker-compose.yml -f docker-compose.vesper.yml
+# rm -fsv commoncreed_comfyui` removes the container without touching
+# the other services. The model volume survives; delete it manually
+# only if you're reclaiming disk.
+# =============================================================================
+
+volumes:
+  # Model weights (~35 GB) — explicitly named so `docker volume rm`
+  # doesn't collide with CommonCreed volumes.
+  commoncreed_comfyui_models:
+    name: commoncreed_comfyui_models
+  # Output files (stills + parallax MP4s) — shared with Vesper's
+  # laptop-side orchestrator via a bind-mount path.
+  commoncreed_comfyui_output:
+    name: commoncreed_comfyui_output
+
+services:
+
+  commoncreed_comfyui:
+    # Use the official ComfyUI container (or roll your own Dockerfile
+    # if you need a specific node pack pre-installed). The operator
+    # adjusts node packs + downloads model weights manually during
+    # server bringup (see docs/runbooks/vesper/vesper-server-bringup.md).
+    #
+    # DO NOT pin to `latest` in production — tag to a specific release
+    # once bringup verifies a working configuration.
+    image: ${COMFYUI_IMAGE:-yanwk/comfyui-boot:cu124}
+    container_name: commoncreed_comfyui
+    restart: unless-stopped
+    networks:
+      # Joins CommonCreed's bridge network so the sidecar + chatterbox
+      # can reach it by DNS for server-local coordination. The host
+      # port 8188 publish below serves the laptop orchestrator.
+      - commoncreed
+    environment:
+      # Matches the bind-mount path below so ComfyUI's `output/` dir
+      # is persisted on the named volume and picked up by the Python
+      # pipeline's download_output() calls.
+      COMFYUI_ARGS: "--listen 0.0.0.0 --port 8188"
+    volumes:
+      # Model weights — filled by the operator during bringup S1.
+      - commoncreed_comfyui_models:/root/ComfyUI/models
+      # Outputs — shared with the pipeline output volume so Vesper's
+      # LocalFluxClient + VesperParallaxAdapter can pick up the
+      # generated PNGs/MP4s.
+      - commoncreed_comfyui_output:/root/ComfyUI/output
+      # Workflow JSONs from the repo checkout, read-only. These are
+      # the stub templates at comfyui_workflows/ in the repo; the
+      # operator tweaks node class_type strings per S2 of bringup.
+      - ../../comfyui_workflows:/root/ComfyUI/vesper_workflows:ro
+    ports:
+      # 8188 is the default ComfyUI port. Adjust if it's already in
+      # use on the host.
+      - "${COMFYUI_HOST_PORT:-8188}:8188"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8188/system_stats || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 12288M   # Room for model working set + ComfyUI runtime
+        reservations:
+          memory: 4096M
+          devices:
+            # Shares the 3090 with commoncreed_chatterbox. GPU-plane
+            # coordination lives in Redis (scripts/video_gen/gpu_mutex.py)
+            # — see plan Key Decision #6.
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

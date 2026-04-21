@@ -13,11 +13,19 @@ Required env vars:
 
     ANTHROPIC_API_KEY         — for ArchivistStoryWriter + TimelinePlanner
     CHATTERBOX_ENDPOINT       — chatterbox sidecar URL on the server
-    CHATTERBOX_REFERENCE_AUDIO — container path to Vesper's archivist.wav
-    COMFYUI_URL               — server ComfyUI endpoint (for Flux + parallax)
-    REDIS_URL                 — server Redis (GPU mutex)
+                                (SHARED with CommonCreed, e.g.
+                                http://192.168.29.237:7777)
+    CHATTERBOX_REFERENCE_AUDIO — container path to Vesper's archivist.wav;
+                                defaults to /app/refs/vesper/archivist.wav
+                                (the Vesper subdir avoids colliding with
+                                CommonCreed refs at /app/refs/*.wav)
+    COMFYUI_URL               — server ComfyUI endpoint (Vesper-specific;
+                                see docker-compose.vesper.yml overlay)
+    REDIS_URL                 — server Redis (SHARED with CommonCreed /
+                                Postiz; Vesper uses key gpu:plane:mutex
+                                which is namespaced away from BullMQ)
     FAL_API_KEY               — fal.ai key for Flux fallback
-    POSTIZ_URL, POSTIZ_API_KEY — Postiz base URL + API key
+    POSTIZ_URL, POSTIZ_API_KEY — Postiz base URL + API key (SHARED)
     TELEGRAM_BOT_TOKEN, TELEGRAM_OWNER_USER_ID — approval flow
 
 Optional env vars:

@@ -231,6 +231,10 @@ class Doctor:
         return out
 
     def _check_voice_reference(self) -> List[CheckResult]:
+        """Check laptop-side repo copy. The server-side copy (the one
+        chatterbox actually reads) lives at
+        /opt/commoncreed/assets/vesper/archivist.wav on the server —
+        verified by the network probe, not here."""
         path = (
             self.repo_root / "assets" / self.channel_id / "refs" / "archivist.wav"
         )
@@ -245,8 +249,9 @@ class Doctor:
             status=CheckStatus.WARN,
             severity=CheckSeverity.RECOMMENDED,
             message=(
-                f"{path} missing; chatterbox will use its default voice "
-                "(not the Archivist). See launch runbook T-3."
+                f"{path} missing (laptop copy). Server-side chatterbox "
+                "reads /app/refs/vesper/archivist.wav — verify via probe. "
+                "See server-bringup runbook S1."
             ),
         )]
 

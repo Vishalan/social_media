@@ -5,278 +5,420 @@ owner: vishalan
 status: active
 ---
 
-# Vesper Server Bringup
+# Vesper Server Bringup (Reuse-First)
 
-Sequence for taking the Ubuntu server at `192.168.29.237` (RTX 3090,
-24 GB VRAM) from "laptop code is ready" to "first Vesper short
-published." Partners with:
+Vesper's server footprint **piggybacks on the existing CommonCreed
+stack** at `192.168.29.237`. Don't stand up parallel infrastructure.
+Reuse:
 
-- `vesper-launch-runbook.md` — laptop-side pre-flight checklist
-- `vesper-incident-response.md` — failure-mode triage for after go-live
-- Automation: `python3 -m vesper_pipeline.doctor` (hermetic) +
-  `python3 -m vesper_pipeline.probe` (networked)
+- **Redis** — `commoncreed_redis`. Serves both Postiz BullMQ AND
+  Vesper's GPU mutex (key `gpu:plane:mutex` — namespaced, won't
+  collide with BullMQ keys).
+- **Postiz** — `commoncreed_postiz`. The `vesper` profile is a
+  first-class concept; routing is per-profile, not per-instance.
+- **chatterbox** — `commoncreed_chatterbox`. Same container, same
+  3090. Vesper just adds its own reference clip into the existing
+  `/opt/commoncreed/assets/` bind mount under a `vesper/` subdir.
 
-Estimated time end-to-end on a fresh box: **4-6 hours**. Model
-downloads are the long pole.
+The **only new service** on the server is ComfyUI (for Flux stills
++ parallax + eventual I2V). It's shipped as a compose OVERLAY
+(`docker-compose.vesper.yml`) so `docker-compose.yml` stays
+untouched.
 
-## S0 — prerequisites (box state)
+Every step below has a **CommonCreed impact** line calling out what
+changes (or doesn't) for the existing pipeline. Read those lines —
+they're the rollback guide too.
 
-- [ ] Ubuntu 22.04+ with NVIDIA drivers supporting the 3090.
-      Verify: `nvidia-smi` shows 24 GB on the 3090.
-- [ ] Docker + docker-compose installed.
-- [ ] `git clone` the repo into `/home/vishalan/social_media`.
-- [ ] Portainer stack referenced at `deploy/portainer/docker-compose.yml`
-      is deployed (Postiz + Redis + chatterbox + sidecar). Confirm with:
-      `docker compose ps` from the deploy dir.
+---
 
-## S1 — ComfyUI install
+## S0 — verify the existing stack
 
-The ComfyUI sidecar hosts both Flux (local primary for stills) and
-the parallax graph. One install, two workflow files.
+Before doing anything, confirm CommonCreed is healthy. If it's sick
+now, Vesper bringup will just pile onto the problem.
 
-- [ ] Pick an install path: `/opt/vesper/ComfyUI`. Run:
-      ```bash
-      git clone https://github.com/comfyanonymous/ComfyUI /opt/vesper/ComfyUI
-      cd /opt/vesper/ComfyUI
-      python3 -m venv venv && source venv/bin/activate
-      pip install -r requirements.txt
-      ```
+```bash
+ssh 192.168.29.237
+cd /home/vishalan/social_media/deploy/portainer
+docker compose ps
+```
 
-- [ ] Launch once to confirm it starts:
-      `python main.py --listen 0.0.0.0 --port 8188`
-      Expect `ComfyUI` banner + `/system_stats` responds.
-      Kill it with Ctrl-C.
+Expected services up + healthy (or at least `running`):
+- commoncreed_postgres
+- commoncreed_redis
+- commoncreed_temporal_postgres
+- commoncreed_temporal_elasticsearch
+- commoncreed_temporal
+- commoncreed_postiz
+- commoncreed_sidecar
+- commoncreed_chatterbox
+- commoncreed_remotion (may be idle-gated)
 
-- [ ] Install node packs (each via `ComfyUI-Manager` or git-clone into
-      `custom_nodes/`):
-        - **Flux**: upstream ComfyUI supports Flux natively as of
-          late 2024 — no extra nodes needed for `flux1-dev`.
-        - **Depth Anything V2**: `https://github.com/Fannovel16/comfyui_controlnet_aux`
-          or a V2-specific pack. Confirm a `DepthAnythingV2Preprocessor`
-          node appears in the UI.
-        - **DepthFlow parallax**: `https://github.com/BrokenSource/DepthFlow`
-          has a ComfyUI integration; alternatively install it as a
-          Python package and use a custom node. The graph's
-          `DepthFlowParallaxRender` node must accept
-          `image, depth, motion_mode, duration_s, fps, seed`.
-        - **Video output**: VideoHelperSuite
-          (`https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite`)
-          provides `VHS_VideoCombine` used in `depth_parallax.json`.
+If anything's unhealthy, fix that first using CommonCreed's
+runbooks — don't proceed.
 
-- [ ] Download Flux model weights into `models/unet/` + `models/vae/`
-      + `models/clip/`:
-        - `flux1-dev.safetensors` (~11 GB) or `flux1-schnell.safetensors` (~23 GB)
-        - `ae.safetensors` (Flux VAE)
-        - `t5xxl_fp8_e4m3fn.safetensors`
-        - `clip_l.safetensors`
-      After all four, `ls -lh models/unet` should confirm sizes.
+**CommonCreed impact:** None. Pure read.
 
-- [ ] Download Depth Anything V2 checkpoint:
-      `depth_anything_v2_vitl.pth` into the pack's expected dir
-      (typically `models/depthanything/`).
+---
 
-- [ ] Start ComfyUI as a systemd service or Docker container so it
-      survives reboots. Example systemd unit at
-      `/etc/systemd/system/comfyui-vesper.service`:
-      ```ini
-      [Unit]
-      Description=Vesper ComfyUI
-      After=network-online.target docker.service
-      [Service]
-      WorkingDirectory=/opt/vesper/ComfyUI
-      ExecStart=/opt/vesper/ComfyUI/venv/bin/python main.py --listen 0.0.0.0 --port 8188
-      Restart=on-failure
-      User=vishalan
-      [Install]
-      WantedBy=multi-user.target
-      ```
-      Then: `sudo systemctl enable --now comfyui-vesper`.
+## S1 — Vesper's Archivist voice reference
 
-- [ ] Port 8188 reachable from the laptop:
-      `curl http://192.168.29.237:8188/system_stats | head -c 200`
-      must return JSON.
+Drop the Archivist `.wav` into the existing chatterbox ref mount.
+No compose change needed.
 
-## S2 — install the Vesper workflow JSONs
+```bash
+# On the server — ssh 192.168.29.237
+sudo mkdir -p /opt/commoncreed/assets/vesper
+sudo chown $USER:$USER /opt/commoncreed/assets/vesper
+# scp the recorded clip from your laptop:
+# scp ~/path/to/archivist.wav 192.168.29.237:/opt/commoncreed/assets/vesper/
+chmod 600 /opt/commoncreed/assets/vesper/archivist.wav
+```
+
+Verify inside the chatterbox container:
+
+```bash
+docker exec commoncreed_chatterbox ls /app/refs/vesper/
+# → archivist.wav
+```
+
+Set the laptop env:
+
+```
+CHATTERBOX_REFERENCE_AUDIO=/app/refs/vesper/archivist.wav
+```
+
+(Note the subdir path — Vesper's ref lives under `vesper/` so
+CommonCreed's existing refs under `/app/refs/*.wav` stay
+untouched.)
+
+Verify the ref is visible via the `/refs/list` endpoint:
+
+```bash
+curl http://192.168.29.237:7777/refs/list | jq
+```
+
+Must show `archivist.wav` in the `vesper/` subdir listing (or
+flat-listed, depending on how `list_refs()` walks).
+
+**CommonCreed impact:** None. The bind mount already exists; adding
+a new file to a subdirectory doesn't restart the container and
+doesn't touch CommonCreed's existing `voice_ref.wav`.
+
+---
+
+## S2 — add ComfyUI via the compose overlay
+
+ComfyUI is the only new server service. The `docker-compose.vesper.yml`
+overlay adds it without touching the main compose file.
+
+```bash
+cd /home/vishalan/social_media/deploy/portainer
+git pull origin feat/vesper-v1   # pulls the overlay file onto the server
+docker compose \
+    -f docker-compose.yml \
+    -f docker-compose.vesper.yml \
+    up -d commoncreed_comfyui
+```
+
+Wait for the image pull + first start (~5-10 minutes).
+
+```bash
+docker compose ps commoncreed_comfyui
+curl http://192.168.29.237:8188/system_stats
+```
+
+**CommonCreed impact:**
+- Adds ~4 GB idle memory pressure on the host. Temporal + Postgres
+  use ~1.5 GB combined, leaving plenty of headroom on a 16 GB+ box.
+- Adds a second GPU consumer on the 3090. Concurrent VRAM usage is
+  ruled out by the Redis mutex (shipped in this PR). The mutex
+  priority queue is chatterbox > parallax > Flux > I2V — CommonCreed
+  chatterbox always wins against a Vesper Flux request at the same
+  instant.
+- No existing container restarts or is reconfigured. Rollback:
+  `docker compose -f docker-compose.yml -f docker-compose.vesper.yml rm -fsv commoncreed_comfyui`.
+
+---
+
+## S3 — install ComfyUI model weights + node packs
+
+The default `yanwk/comfyui-boot` image is bare ComfyUI. Install the
+Vesper-required models + node packs via the container's ComfyUI
+Manager UI (or by docker-exec + wget).
+
+```bash
+# Exec into the container
+docker exec -it commoncreed_comfyui bash
+
+# Inside container:
+cd /root/ComfyUI
+
+# Flux weights (adjust filenames for schnell vs dev vs pro)
+wget -P models/unet https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/flux1-dev.safetensors
+wget -P models/vae  https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/ae.safetensors
+wget -P models/clip https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors
+wget -P models/clip https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors
+
+# Depth Anything V2 checkpoint
+mkdir -p models/depthanything
+wget -P models/depthanything https://huggingface.co/depth-anything/Depth-Anything-V2-Large/resolve/main/depth_anything_v2_vitl.pth
+
+# Custom node packs — install via ComfyUI Manager UI (browser) OR:
+cd custom_nodes
+git clone https://github.com/Fannovel16/comfyui_controlnet_aux
+git clone https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite
+# DepthFlow: either pip install in the container's venv OR install
+# a ComfyUI wrapper — pick whichever your installed DAV2 pack pairs with.
+exit
+
+docker restart commoncreed_comfyui
+```
+
+Verify node availability:
+
+```bash
+curl http://192.168.29.237:8188/object_info | \
+    jq 'keys[] | select(contains("Depth") or contains("Flux") or contains("VHS"))'
+```
+
+Expected: entries for `DepthAnythingV2Preprocessor`,
+`VHS_VideoCombine` (and your installed DAV2 + DepthFlow nodes by
+their pack-specific names).
+
+**CommonCreed impact:** None. Models land in a Vesper-scoped named
+volume (`commoncreed_comfyui_models`); no CommonCreed models are
+touched.
+
+---
+
+## S4 — validate the Vesper workflow JSONs
 
 The repo ships stub templates at `comfyui_workflows/flux_still.json`
-and `comfyui_workflows/depth_parallax.json`. Both have a `_meta`
-block listing the substitution tokens and flagging which node
-`class_type` strings need to match YOUR installed node pack (node
-names drift between packs, e.g. `DepthAnythingV2Preprocessor` vs
-`ControlNetPreprocessor_DepthAnythingV2`).
+and `comfyui_workflows/depth_parallax.json`. Stub templates need
+one-time adjustment because node `class_type` strings drift between
+packs.
 
-- [ ] For each workflow:
-        1. Open it in a text editor on the server.
-        2. Confirm every `class_type` matches a node that appears in
-           your running ComfyUI's `/object_info` endpoint:
-           `curl http://localhost:8188/object_info | jq 'keys' | grep -i depth`.
-        3. Adjust `model_name` / `ckpt_name` to the exact filename you
-           downloaded in S1.
-        4. Smoke-test directly against ComfyUI via a manual
-           `POST /prompt` with the token substitution already done.
-           ```bash
-           curl -X POST http://localhost:8188/prompt -d @test_flux_prompt.json
-           ```
+```bash
+cd /home/vishalan/social_media/comfyui_workflows
 
-- [ ] The pipeline consults these workflow files by their repo path,
-      so no install step beyond ensuring they sit under
-      `/home/vishalan/social_media/comfyui_workflows/` on the server.
+# For each JSON: confirm every class_type matches a key in
+# /object_info above. Common mismatches:
+#   DepthAnythingV2Preprocessor vs DepthAnything_V2 vs similar
+#   DepthFlowParallaxRender vs your pack's actual name
+# Fix filenames too — flux1-dev.safetensors, ae.safetensors, etc.
+# must match what you downloaded.
+```
 
-## S3 — chatterbox ref file
+Smoke-test each workflow directly against ComfyUI (substitute tokens
+manually for the test):
 
-- [ ] Owner records 3 candidate Archivist whisper clips (8-15 s each,
-      44.1 or 48 kHz mono WAV). Blind-rate them against two reference
-      2026 horror channels; pick one.
-- [ ] Copy winning `.wav` to the bind-mount path the chatterbox
-      compose service uses. Per `deploy/portainer/docker-compose.yml`,
-      this is typically `/home/vishalan/social_media/assets/vesper/refs/archivist.wav`.
-      Set mode 0600: `chmod 600 assets/vesper/refs/archivist.wav`
-      (Security Posture S3 — biometric, gitignored).
-- [ ] Restart chatterbox to pick up the new mount if it was already
-      running: `docker compose restart chatterbox`.
-- [ ] Verify from the laptop:
-      `curl http://192.168.29.237:7777/refs/list | jq`
-      must include `archivist.wav`.
+```bash
+cp flux_still.json /tmp/test_flux.json
+# Replace {{prompt}}, {{width}} etc. with literal values, then:
+curl -X POST http://192.168.29.237:8188/prompt \
+    -H "Content-Type: application/json" \
+    -d "{\"prompt\": $(cat /tmp/test_flux.json)}"
+# Watch /history or /view for the output PNG.
+```
 
-## S4 — Vesper SFX + overlay pack sourcing
+**CommonCreed impact:** None. The workflow files live in the repo's
+`comfyui_workflows/` directory; Vesper's JSONs don't collide with
+CommonCreed's `short_video_wan21.json`, `broll_generator.json`,
+`thumbnail_generator.json`, `echomimic_v3_avatar.json`.
 
-- [ ] Source CC0-licensed `.wav`s for the Vesper SFX pack under
-      `assets/vesper/sfx/`:
-        - `cut_*.wav` (heavy cuts between hero shots; 2 variants min)
-        - `punch_*.wav` (sub-bass thumps for hero-beat entries; 2 variants)
-        - `reveal_*.wav` (risers/reverb-tails for keyword punches; 2-3)
-        - `tick_*.wav` (background ticks for quiet beats; 1-2)
-      Register map lives in `channels/vesper.py::_register_sfx_pack`.
-      Missing files cause SFX mix to silently no-op (WARN in pipeline
-      log) — the short will still publish with raw voice.
+---
 
-- [ ] Source four overlay `.mp4`s under `assets/vesper/overlays/`:
-      `grain.mp4`, `dust.mp4`, `flicker.mp4`, `fog.mp4`. Each 30-60 s
-      looping source video, 1080x1920 (9:16), CC0. Length >= longest
-      expected short (90 s v1) so the overlay loops at most once.
+## S5 — Postiz Vesper profile
 
-- [ ] The overlay pack is the ONLY pre-launch asset whose absence
-      degrades the short visibly (no grain → synthetic-looking).
-      Missing SFX / voice ref degrade audio quality; missing overlay
-      degrades visual quality.
+Postiz is already running. Add a new profile — do NOT delete or
+modify the `commoncreed` profile.
 
-## S5 — env file
+- Postiz UI (`http://192.168.29.237:5100`, or whatever
+  `POSTIZ_HOST_PORT` is) → Profiles → Add `vesper`.
+- Connect IG + YouTube + TikTok accounts for `@vesper.tv` under that
+  profile.
+- Enable AI-content disclosure at the profile level (redundant with
+  the per-publish flag; belt-and-braces).
 
-- [ ] Copy `.env.example` → `.env` on BOTH server and laptop. Fill:
+Verify:
 
-      ```
-      ANTHROPIC_API_KEY=sk-ant-...
-      REDIS_URL=redis://192.168.29.237:6379/0
-      COMFYUI_URL=http://192.168.29.237:8188
-      CHATTERBOX_ENDPOINT=http://192.168.29.237:7777
-      CHATTERBOX_REFERENCE_AUDIO=/app/refs/archivist.wav
-      POSTIZ_URL=http://192.168.29.237:3000
-      POSTIZ_API_KEY=<your postiz token>
-      TELEGRAM_BOT_TOKEN=<bot token>
-      TELEGRAM_OWNER_USER_ID=<your id>
-      FAL_API_KEY=<optional, for Flux fallback>
-      ```
-- [ ] `chmod 600 .env` (never cat/head/grep per auto-memory).
+```bash
+curl -H "Authorization: $POSTIZ_API_KEY" \
+     http://192.168.29.237:5100/api/public/v1/integrations | \
+     jq '.[] | select(.profile=="vesper") | {id, identifier}'
+```
 
-## S6 — Postiz profile + integrations
+Expected: three rows for `instagram`, `youtube`, `tiktok` under the
+`vesper` profile.
 
-- [ ] Postiz UI → create `vesper` profile.
-- [ ] Under that profile, connect IG + YT + TikTok accounts for
-      `@vesper.tv` (or your claimed handle). AI-disclosure toggle
-      already fires per-publish via the pipeline, but enable it at
-      the profile level too (belt-and-braces).
-- [ ] Probe from the laptop:
-      ```bash
-      curl -H "Authorization: $POSTIZ_API_KEY" \
-           http://192.168.29.237:3000/api/public/v1/integrations | jq \
-           '.[] | select(.profile=="vesper") | {id, identifier, profile}'
-      ```
-      Expect three rows: `instagram`, `youtube`, `tiktok`.
+**CommonCreed impact:** None. Per-profile isolation is Postiz's
+native model — CommonCreed posts still route via `commoncreed`
+profile. Shared rate budget (30 req/hr org-wide) is enforced via
+`PostizRateLedger` which both pipelines already consult.
 
-## S7 — laptop-side automated verification
+---
 
-From the laptop (repo root):
+## S6 — Vesper SFX + overlay assets (on the laptop)
 
-- [ ] `cd scripts && python3 -m vesper_pipeline.doctor`
-      Must exit 0 (warnings allowed; no blocking failures).
+These are git-ignored binary assets, not shipped in the repo. They
+live under `assets/vesper/` on the laptop only — the pipeline runs
+laptop-side, so the server never sees them.
 
-- [ ] `cd scripts && python3 -m vesper_pipeline.probe`
-      Must exit 0. Every required probe reports `[ok]`; fal.ai may
-      `[skip]` without breaking.
+- [ ] Source CC0 `.wav`s into `assets/vesper/sfx/` (see
+      `channels/vesper.py::_register_sfx_pack` for filename
+      expectations):
+        - `cut_light_*.wav`, `cut_heavy_*.wav` (transition whooshes)
+        - `punch_light_*.wav`, `punch_heavy_*.wav` (hero thumps)
+        - `reveal_light_*.wav`, `reveal_heavy_*.wav` (risers for punches)
+        - `tick_light_*.wav`, `tick_heavy_*.wav` (subtle accents)
 
-If either exits 2, fix the reported items and re-run before S8.
+- [ ] Source four overlay `.mp4`s into `assets/vesper/overlays/`:
+      `grain.mp4`, `dust.mp4`, `flicker.mp4`, `fog.mp4`. Each 30-60
+      s 1080x1920 CC0. Length ≥ longest expected short.
 
-## S8 — single-short smoke test
+- [ ] Drop `CormorantGaramond-Bold.ttf` into `assets/fonts/`.
 
-- [ ] On the laptop:
-      ```bash
-      VESPER_MAX_SHORTS_PER_RUN=1 bash deploy/run_vesper_pipeline.sh
-      ```
+**CommonCreed impact:** None. These are Vesper-scoped paths; adding
+files under `assets/vesper/` doesn't affect `assets/sfx/` or
+`assets/fonts/*.ttf` CommonCreed relies on.
 
-- [ ] Follow the pipeline log:
-      `tail -f logs/vesper_pipeline_$(date +%Y-%m-%d).log`
+---
 
-- [ ] Expected timeline:
-        1. `topic_signal` — Reddit fetch completes in ~10-20 s.
-        2. `draft_story` — Archivist writer completes in ~15-30 s.
-        3. `voice_preflight` — chatterbox health + refs list: <1 s.
-        4. `voice_generate` — chatterbox TTS: 60-180 s for a 200-word
-           script depending on VRAM contention.
-        5. `transcribe_voice` — faster-whisper local: 5-15 s.
-        6. `plan_timeline` — Haiku call: ~5 s.
-        7. `mix_sfx` — ffmpeg: 1-3 s (no-op if pack empty).
-        8. `generate_stills` — Flux local × ~15 beats: 150-300 s
-           (~10-20 s/image on 3090).
-        9. `animate_still_beats` — parallax × ~5 beats: 50-100 s.
-           Hero I2V beats skipped in v1 (Unit 10 deferred — no
-           workflow yet).
-        10. `assemble_video` — MoviePy concat + audio + overlay +
-            zoom + captions: 30-60 s.
-        11. `render_thumbnail` — PIL: <1 s.
-        12. `request_approval` — Telegram preview card delivered; wait
-            on owner tap.
-        13. `publish` — Postiz × 3 platforms: 5-20 s.
-        14. `log_analytics` — SQLite insert: <1 s.
+## S7 — env file (laptop + server)
 
-- [ ] Approve via Telegram. Confirm the short appears on all three
-      platforms. Record the job UUID for future `/takedown` if needed.
+```
+# Required for Vesper
+ANTHROPIC_API_KEY=sk-ant-...                     # shared with CommonCreed — do not rotate
+REDIS_URL=redis://192.168.29.237:6379/0          # same instance — different db # if desired
+COMFYUI_URL=http://192.168.29.237:8188           # NEW (Vesper-only)
+CHATTERBOX_ENDPOINT=http://192.168.29.237:7777   # SHARED with CommonCreed
+CHATTERBOX_REFERENCE_AUDIO=/app/refs/vesper/archivist.wav  # NEW subdir path
+POSTIZ_URL=http://192.168.29.237:5100            # SHARED
+POSTIZ_API_KEY=...                               # SHARED token
+TELEGRAM_BOT_TOKEN=...                           # may reuse CommonCreed bot
+TELEGRAM_OWNER_USER_ID=...                       # same owner
+FAL_API_KEY=...                                  # optional Flux fallback
+```
 
-- [ ] If something fails, match against `vesper-incident-response.md`.
-      First-run failures most commonly trip:
-        - **ComfyUI class_type mismatch** — edit the workflow JSON to
-          match your installed node names. Restart ComfyUI (model
-          cache invalidates).
-        - **Postiz integration ID not found** — the profile/identifier
-          combination in `list_integrations()` must match what the
-          pipeline requests. Check Postiz UI for exact profile name.
-        - **Telegram 400 invalid chat** — confirm
-          `TELEGRAM_OWNER_USER_ID` is your NUMERIC id (use @userinfobot).
+`chmod 600 .env` on both sides. Never `cat`/`grep` the file
+(auto-memory rule).
 
-## S9 — enable LaunchAgent + backup job
+**CommonCreed impact:** None, if you keep `ANTHROPIC_API_KEY`,
+`POSTIZ_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_USER_ID`
+unchanged. Adding new keys (`COMFYUI_URL`, `CHATTERBOX_REFERENCE_AUDIO`
+with the Vesper subdir path) doesn't affect CommonCreed's reads.
 
-Once S8 is green:
+---
 
-- [ ] Load both LaunchAgents from the laptop:
-      ```bash
-      cp deploy/com.vesper.pipeline.plist ~/Library/LaunchAgents/
-      cp deploy/com.vesper.sqlite_backup.plist ~/Library/LaunchAgents/
-      launchctl load -w ~/Library/LaunchAgents/com.vesper.pipeline.plist
-      launchctl load -w ~/Library/LaunchAgents/com.vesper.sqlite_backup.plist
-      ```
+## S8 — laptop-side automated verification
 
-- [ ] Confirm:
-      ```bash
-      launchctl list | grep com.vesper
-      ```
-      Two rows with PID `-`.
+From the laptop, repo root:
 
-- [ ] Let the next-scheduled run fire naturally (09:30 local for
-      the pipeline, 04:30 for the backup). Tail logs the next morning
-      and match against `vesper-daily-ops-runbook.md` criteria.
+```bash
+cd scripts
+python3 -m vesper_pipeline.doctor     # hermetic — filesystem only
+python3 -m vesper_pipeline.probe      # networked — hits every server
+```
+
+Both must exit 0. Investigate warnings (optional to fix) and fail
+items (must fix before S9).
+
+**CommonCreed impact:** None — doctor + probe only perform reads.
+
+---
+
+## S9 — single-short smoke test
+
+```bash
+cd /Users/vishalan/Documents/Projects/social_media
+VESPER_MAX_SHORTS_PER_RUN=1 bash deploy/run_vesper_pipeline.sh
+```
+
+Tail the log in another terminal:
+
+```bash
+tail -f logs/vesper_pipeline_$(date +%Y-%m-%d).log
+```
+
+Expected timeline (first run is slower than steady-state —
+chatterbox model load, Flux KV-cache warmup):
+
+1. topic_signal (~15 s)
+2. draft_story (~20 s)
+3. voice_preflight (<1 s)
+4. voice_generate (60-180 s)
+5. transcribe_voice (5-15 s)
+6. plan_timeline (~5 s)
+7. mix_sfx (1-3 s, or no-op if pack empty)
+8. generate_stills (150-300 s — 15 beats × ~10-20 s on 3090)
+9. animate_still_beats (50-100 s — parallax only in v1; I2V deferred)
+10. assemble_video (30-60 s)
+11. render_thumbnail (<1 s)
+12. request_approval — wait on owner tap in Telegram
+13. publish (5-20 s)
+14. log_analytics (<1 s)
+
+**Approve from Telegram** and confirm the short lands on all three
+platforms.
+
+**CommonCreed impact:** **This is the moment of truth.** The Vesper
+run uses the shared chatterbox GPU. If CommonCreed happens to be
+running concurrently (unlikely at the staggered 08:00 / 09:30 times
+but possible during manual tests), the mutex will serialize them.
+Run this smoke test at a time CommonCreed is idle to get clean
+timing data.
+
+If the run fails, DO NOT immediately retry on auto-schedule. Match
+against `vesper-incident-response.md` first. Common S9 failures:
+
+- **ComfyUI node class_type mismatch** → edit workflow JSON per S2.
+- **Postiz 403 for vesper profile** → S5 wiring incomplete.
+- **Telegram 400** → `TELEGRAM_OWNER_USER_ID` must be numeric.
+- **GpuMutexAcquireTimeout** → CommonCreed had the GPU plane for
+  longer than the 10-min acquire budget. Re-run when idle.
+
+---
+
+## S10 — enable LaunchAgents (laptop)
+
+Only after S9 is green.
+
+```bash
+cp deploy/com.vesper.pipeline.plist ~/Library/LaunchAgents/
+cp deploy/com.vesper.sqlite_backup.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/com.vesper.pipeline.plist
+launchctl load -w ~/Library/LaunchAgents/com.vesper.sqlite_backup.plist
+launchctl list | grep com.vesper    # two rows, PID=- (idle)
+```
+
+Pipeline fires at 09:30 local; backup at 04:30. CommonCreed's 08:00
+schedule is 90 min before Vesper — by design (Key Decision #12). If
+a run overlaps, the Redis mutex handles it.
+
+**CommonCreed impact:** None. Separate LaunchAgent units; no shared
+state.
+
+---
+
+## Rollback cheatsheet
+
+If anything goes wrong:
+
+| Action | Command | CommonCreed impact |
+|---|---|---|
+| Disable Vesper daily run | `launchctl unload ~/Library/LaunchAgents/com.vesper.pipeline.plist` | None |
+| Remove ComfyUI container | `cd deploy/portainer && docker compose -f docker-compose.yml -f docker-compose.vesper.yml rm -fsv commoncreed_comfyui` | None |
+| Remove Vesper Postiz profile | Postiz UI → delete `vesper` profile | None — posts under `commoncreed` keep working |
+| Remove Vesper ref clip | `rm /opt/commoncreed/assets/vesper/archivist.wav` (don't touch the `vesper/` dir unless confident) | None |
+| Nuke Vesper model weights | `docker volume rm commoncreed_comfyui_models` | None — CommonCreed models live elsewhere |
+
+Stopping Vesper never requires modifying `docker-compose.yml`,
+restarting existing CommonCreed services, or touching CommonCreed
+data.
+
+---
 
 ## Failure-mode pointers
-
-Map each server-side failure back to the right runbook:
 
 | Failure | Runbook |
 |---|---|
@@ -284,4 +426,4 @@ Map each server-side failure back to the right runbook:
 | Postiz rate budget exhausted | vesper-rate-budget-breach.md |
 | DMCA notice arrives | vesper-dmca-response.md |
 | Chatterbox ref missing | vesper-incident-response.md |
-| Any other first-day pipeline failure | vesper-incident-response.md "Unknown failure" branch |
+| Any other first-day pipeline failure | vesper-incident-response.md |
