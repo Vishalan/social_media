@@ -58,6 +58,7 @@ from .demo_offline import (  # noqa: E402
     _build_timeline,
     _render_storyboard_still,
 )
+from .smoke_flux import run_smoke as _flux_generate  # noqa: E402
 from still_gen._types import Beat, Timeline  # noqa: E402
 from .assembler import VesperAssembler  # noqa: E402
 from .captions import CaptionStyle, transcribe_voice  # noqa: E402
@@ -74,6 +75,14 @@ DEFAULT_EXAGGERATION = 0.5
 # macOS-say-generated refs — Archivist target is ~140-160 wpm. 0.72
 # stretches 40 s → 55 s which lands ~160 wpm on a 180-word script.
 DEFAULT_TEMPO = 0.72
+# ComfyUI endpoint (server-side). Flux per-beat generation is ~6-8 s
+# on a 3090 with flux1-schnell-fp8 at 4 steps / CFG 1.0.
+DEFAULT_COMFYUI_URL = "http://localhost:8188"
+_FLUX_PROMPT_PREFIX = (
+    "cinematic horror photograph, 35mm film, "
+    "near-black background, oxidized blood and bone palette, "
+    "high detail, no text no watermark, "
+)
 
 # Match the shipped ChatterboxVoiceGenerator's chunking rule: sentence
 # boundaries, ≤380 chars per chunk (beats the ~40 s silent-truncation
@@ -249,6 +258,8 @@ def run_demo(
     chatterbox_name: str = DEFAULT_CHATTERBOX_NAME,
     exaggeration: float = DEFAULT_EXAGGERATION,
     tempo: float = DEFAULT_TEMPO,
+    with_flux: bool = False,
+    comfyui_url: str = DEFAULT_COMFYUI_URL,
     output_path: Path | None = None,
 ) -> Path:
     logging.basicConfig(
@@ -358,18 +369,63 @@ def run_demo(
         scale, timeline.count, timeline.total_duration_s,
     )
 
-    # 6. Storyboard stills.
+    # 6. Stills — real Flux when --with-flux, else storyboard placeholders.
     stills_dir = demo_dir / "stills"
     stills_dir.mkdir(parents=True, exist_ok=True)
     still_paths: List[str] = []
+    if with_flux:
+        logger.info(
+            "Generating %d Flux stills on %s (~6-8 s each on 3090)",
+            timeline.count, comfyui_url,
+        )
+    flux_t0 = time.monotonic()
     for idx, beat in enumerate(timeline.beats):
         out = stills_dir / f"beat_{idx:03d}.png"
-        _render_storyboard_still(
-            out_path=out,
-            beat_index=idx, total=timeline.count,
-            prompt=beat.prompt, tag=beat.tag,
-        )
+        if with_flux:
+            full_prompt = _FLUX_PROMPT_PREFIX + beat.prompt
+            try:
+                _flux_generate(
+                    comfyui_url=comfyui_url,
+                    prompt=full_prompt,
+                    output_dir=stills_dir,
+                    width=768,
+                    height=1344,
+                    steps=4,
+                    cfg=1.0,
+                    timeout_s=120,
+                )
+                # _flux_generate writes flux_smoke_<seed>.png. Find the
+                # newest PNG in stills_dir and rename to the beat slot.
+                candidates = sorted(
+                    (p for p in stills_dir.glob("flux_*.png")),
+                    key=lambda p: p.stat().st_mtime,
+                )
+                if not candidates:
+                    raise RuntimeError("Flux produced no PNG")
+                candidates[-1].rename(out)
+                logger.info("  beat %02d/%d Flux done", idx + 1, timeline.count)
+            except Exception as exc:
+                logger.warning(
+                    "Flux failed on beat %d (%s); falling back to storyboard",
+                    idx, exc,
+                )
+                _render_storyboard_still(
+                    out_path=out,
+                    beat_index=idx, total=timeline.count,
+                    prompt=beat.prompt, tag=beat.tag,
+                )
+        else:
+            _render_storyboard_still(
+                out_path=out,
+                beat_index=idx, total=timeline.count,
+                prompt=beat.prompt, tag=beat.tag,
+            )
         still_paths.append(str(out))
+    logger.info(
+        "Stills: %d (%.1f s wall)%s",
+        len(still_paths), time.monotonic() - flux_t0,
+        " [Flux]" if with_flux else "",
+    )
 
     # 7. Build the job + assemble.
     job = VesperJob(
@@ -419,6 +475,13 @@ def main(argv: list[str] | None = None) -> int:
         "--tempo", type=float, default=DEFAULT_TEMPO,
         help="Post-TTS tempo multiplier (default 0.72 slows for Archivist pace)",
     )
+    parser.add_argument(
+        "--with-flux", action="store_true",
+        help="Generate real Flux stills via ComfyUI instead of PIL storyboard",
+    )
+    parser.add_argument(
+        "--comfyui-url", default=DEFAULT_COMFYUI_URL,
+    )
     args = parser.parse_args(argv)
     try:
         run_demo(
@@ -426,6 +489,8 @@ def main(argv: list[str] | None = None) -> int:
             chatterbox_name=args.chatterbox_name,
             exaggeration=args.exaggeration,
             tempo=args.tempo,
+            with_flux=args.with_flux,
+            comfyui_url=args.comfyui_url,
         )
     except Exception as exc:
         logger.exception("demo failed: %s", exc)
