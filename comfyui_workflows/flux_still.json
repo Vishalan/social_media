@@ -1,0 +1,90 @@
+{
+  "_meta": {
+    "vesper_note": "STUB. Vesper LocalFluxClient submits this workflow + substitutes {{prompt}}, {{negative_prompt}}, {{width}}, {{height}}, {{num_inference_steps}}, {{guidance_scale}}, {{seed}}. Node IDs below assume a vanilla Flux install with UNETLoader + DualCLIPLoader + VAELoader. Swap checkpoint_path for the variant you installed (schnell/dev/pro-v1.1). Confirm node `class_type` strings match your ComfyUI node pack. See docs/runbooks/vesper/vesper-server-bringup.md.",
+    "substitution_tokens": [
+      "{{prompt}}", "{{negative_prompt}}",
+      "{{width}}", "{{height}}",
+      "{{num_inference_steps}}", "{{guidance_scale}}",
+      "{{seed}}"
+    ]
+  },
+  "11": {
+    "class_type": "DualCLIPLoader",
+    "inputs": {
+      "clip_name1": "t5xxl_fp8_e4m3fn.safetensors",
+      "clip_name2": "clip_l.safetensors",
+      "type": "flux"
+    },
+    "_meta": {"title": "Flux CLIP"}
+  },
+  "10": {
+    "class_type": "VAELoader",
+    "inputs": {"vae_name": "ae.safetensors"},
+    "_meta": {"title": "Flux VAE"}
+  },
+  "12": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "flux1-dev.safetensors",
+      "weight_dtype": "fp8_e4m3fn"
+    },
+    "_meta": {"title": "Flux UNET (swap per variant)"}
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "{{prompt}}",
+      "clip": ["11", 0]
+    },
+    "_meta": {"title": "Positive Prompt"}
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "{{negative_prompt}}",
+      "clip": ["11", 0]
+    },
+    "_meta": {"title": "Negative Prompt"}
+  },
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": "{{width}}",
+      "height": "{{height}}",
+      "batch_size": 1
+    },
+    "_meta": {"title": "Latent (9:16 Vesper)"}
+  },
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["12", 0],
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["5", 0],
+      "seed": "{{seed}}",
+      "steps": "{{num_inference_steps}}",
+      "cfg": "{{guidance_scale}}",
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0
+    },
+    "_meta": {"title": "KSampler"}
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["3", 0],
+      "vae": ["10", 0]
+    },
+    "_meta": {"title": "VAE Decode"}
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "vesper_flux",
+      "images": ["8", 0]
+    },
+    "_meta": {"title": "Save PNG"}
+  }
+}

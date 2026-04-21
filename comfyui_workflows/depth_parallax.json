@@ -1,0 +1,59 @@
+{
+  "_meta": {
+    "vesper_note": "STUB. Vesper VesperParallaxAdapter submits this workflow + substitutes {{input_image}}, {{motion_mode}}, {{duration_s}}, {{output_fps}}, {{seed}}. The graph assumes a Depth Anything V2 node producing a depth map + a DepthFlow/ParallaxRender node consuming image + depth. The actual node names vary between repos — swap class_type strings to match your installed Depth Anything V2 + DepthFlow node pack. See docs/runbooks/vesper/vesper-server-bringup.md.",
+    "substitution_tokens": [
+      "{{input_image}}",
+      "{{motion_mode}}",
+      "{{duration_s}}",
+      "{{output_fps}}",
+      "{{seed}}"
+    ]
+  },
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{input_image}}"
+    },
+    "_meta": {"title": "Load Still (from LocalFluxClient)"}
+  },
+  "2": {
+    "class_type": "DepthAnythingV2Preprocessor",
+    "inputs": {
+      "image": ["1", 0],
+      "ckpt_name": "depth_anything_v2_vitl.pth",
+      "resolution": 1024
+    },
+    "_meta": {
+      "title": "Depth map (swap class_type per installed pack)"
+    }
+  },
+  "3": {
+    "class_type": "DepthFlowParallaxRender",
+    "inputs": {
+      "image": ["1", 0],
+      "depth": ["2", 0],
+      "motion_mode": "{{motion_mode}}",
+      "duration_s": "{{duration_s}}",
+      "fps": "{{output_fps}}",
+      "seed": "{{seed}}"
+    },
+    "_meta": {
+      "title": "Parallax render (swap class_type per installed pack)"
+    }
+  },
+  "4": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "images": ["3", 0],
+      "frame_rate": "{{output_fps}}",
+      "loop_count": 0,
+      "filename_prefix": "vesper_parallax",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 18
+    },
+    "_meta": {
+      "title": "Export MP4 (swap to your preferred VHS/Video Combine node)"
+    }
+  }
+}
