@@ -90,6 +90,9 @@ def build_pipeline_from_env():
     from voiceover.chatterbox_generator import ChatterboxVoiceGenerator
 
     from . import VesperPipeline, VesperPipelineConfig
+    from .assembler import VesperAssembler
+    from .parallax_adapter import VesperParallaxAdapter
+    from .thumbnail_adapter import VesperThumbnailAdapter
     from .timeline_planner import TimelinePlanner
 
     # ── Secrets + required URLs ─────────────────────────────────────────
@@ -180,21 +183,27 @@ def build_pipeline_from_env():
     planner = TimelinePlanner(llm=timeline_llm)
 
     # ── Parallax + I2V backends ─────────────────────────────────────────
-    # These two need ComfyUI workflow files that are server-side
-    # deliverables (see docs/runbooks/vesper/vesper-launch-runbook.md).
-    # When the workflows exist, swap these stubs for concrete clients
-    # wrapping ComfyUIClient + the GPU mutex, same shape as
-    # LocalFluxClient.
-    parallax = _NotYetWiredParallaxBackend()
+    # Parallax adapter is real code now; its ComfyUI workflow JSON is
+    # still a server-side deliverable (fails at animate() with a clear
+    # runbook-pointer error when absent).
+    parallax = VesperParallaxAdapter(
+        comfyui_client=comfy,
+        mutex=mutex,
+        workflow_path=os.getenv(
+            "VESPER_PARALLAX_WORKFLOW_PATH",
+            "comfyui_workflows/depth_parallax.json",
+        ),
+    )
+    # I2V still Unit-10-hardware-gated; keep the stub until Wan2.2
+    # benchmarks on the 3090 pick a model.
     i2v = _NotYetWiredI2VBackend() if _env_bool("VESPER_I2V_ENABLED") else None
 
     # ── Assembly + thumbnail ────────────────────────────────────────────
-    # These need adapters around the existing VideoEditor + compositor
-    # code. Stubbed with clear NotImplementedError so a first-day run
-    # fails loudly at the stage boundary rather than silently producing
-    # a broken short.
-    assembler = _NotYetWiredAssembler()
-    thumbnails = _NotYetWiredThumbnailBuilder()
+    assembler = VesperAssembler()
+    thumbnails = VesperThumbnailAdapter(
+        palette=profile.palette,
+        thumbnail_style=profile.thumbnail,
+    )
 
     # ── Approval + publish ──────────────────────────────────────────────
     approval_bot = TelegramApprovalBot(
@@ -252,16 +261,7 @@ def build_pipeline_from_env():
     )
 
 
-# ─── Stub backends — fail loudly until server-side wiring lands ────────────
-
-
-class _NotYetWiredParallaxBackend:
-    async def animate(self, still_path, output_path, *, duration_s):
-        raise NotImplementedError(
-            "Vesper parallax backend not yet wired. Implement a "
-            "ComfyUI-backed DepthAnythingParallax client that acquires "
-            "the GPU mutex before submitting, mirroring LocalFluxClient."
-        )
+# ─── Remaining stub — I2V gated on Unit 10 hardware benchmarks ─────────────
 
 
 class _NotYetWiredI2VBackend:
@@ -269,26 +269,7 @@ class _NotYetWiredI2VBackend:
         raise NotImplementedError(
             "Vesper I2V backend not yet wired. Per Unit 10, benchmark "
             "Wan2.2-class models on the 3090 and add a ComfyUI client "
-            "mirroring LocalFluxClient."
-        )
-
-
-class _NotYetWiredAssembler:
-    def assemble(self, *, job, output_path):
-        raise NotImplementedError(
-            "Vesper assembler adapter not yet wired. Wrap "
-            "scripts.video_edit.video_editor.VideoEditor with a "
-            "method that reads job.still_paths + parallax_paths + "
-            "i2v_paths and produces a final MP4 at output_path."
-        )
-
-
-class _NotYetWiredThumbnailBuilder:
-    def render(self, *, job, output_path):
-        raise NotImplementedError(
-            "Vesper thumbnail builder adapter not yet wired. Wrap "
-            "scripts.thumbnail_gen.compositor with a ThumbnailConfig "
-            "built from the Vesper channel profile."
+            "mirroring LocalFluxClient + VesperParallaxAdapter."
         )
 
 
