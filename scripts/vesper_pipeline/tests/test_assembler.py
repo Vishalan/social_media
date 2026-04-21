@@ -619,6 +619,166 @@ class OverlayPassTests(unittest.TestCase):
         self.assertFalse(Path(out + ".stage1.mp4").exists())
 
 
+class ZoomBellPassTests(unittest.TestCase):
+    """Zoom-bell pass sits between overlays and captions. Runs only
+    when enable_zoom_bells is True AND job.keyword_punches is non-empty."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp(prefix="vesper-zoom-asm-"))
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _job_with_punches(self):
+        from vesper_pipeline.keyword_punch import KeywordPunch
+        tl = _mixed_timeline()
+        job = _job_for_timeline(tl, self.tmp)
+        job.keyword_punches = [
+            KeywordPunch(t_seconds=1.5, word="DAVID", reason="capitalized"),
+            KeywordPunch(t_seconds=8.0, word="silence.", reason="end_of_sentence"),
+        ]
+        return job
+
+    def _zoom_burner(self, *, applied: bool = True):
+        class _Burner:
+            def __init__(self):
+                self.calls: List[dict] = []
+
+            def apply(self, *, input_mp4, output_mp4, punches):
+                self.calls.append({
+                    "input_mp4": input_mp4,
+                    "output_mp4": output_mp4,
+                    "punches": list(punches),
+                })
+                if applied:
+                    Path(output_mp4).write_bytes(b"zoomed mp4")
+                return applied
+
+        return _Burner()
+
+    def test_zoom_fires_when_punches_and_enabled(self):
+        factory = _FakeClipFactory()
+        burner = self._zoom_burner()
+        asm = VesperAssembler(
+            clip_factory=factory,
+            zoom_bell_burner=burner,
+            enable_zoom_bells=True,
+        )
+        out = str(self.tmp / "final.mp4")
+        asm.assemble(job=self._job_with_punches(), output_path=out)
+        self.assertEqual(len(burner.calls), 1)
+        self.assertEqual(len(burner.calls[0]["punches"]), 2)
+
+    def test_zoom_skipped_when_disabled(self):
+        factory = _FakeClipFactory()
+        burner = self._zoom_burner()
+        asm = VesperAssembler(
+            clip_factory=factory,
+            zoom_bell_burner=burner,
+            enable_zoom_bells=False,
+        )
+        asm.assemble(
+            job=self._job_with_punches(),
+            output_path=str(self.tmp / "final.mp4"),
+        )
+        self.assertEqual(burner.calls, [])
+
+    def test_zoom_skipped_when_no_punches(self):
+        factory = _FakeClipFactory()
+        burner = self._zoom_burner()
+        asm = VesperAssembler(
+            clip_factory=factory,
+            zoom_bell_burner=burner,
+            enable_zoom_bells=True,
+        )
+        tl = _mixed_timeline()
+        job = _job_for_timeline(tl, self.tmp)
+        # No keyword_punches on job.
+        asm.assemble(job=job, output_path=str(self.tmp / "final.mp4"))
+        self.assertEqual(burner.calls, [])
+
+    def test_zoom_between_overlays_and_captions_chains_correctly(self):
+        """With overlays + zoom + captions, chain is:
+        stage0 → stage1 (overlay) → stage2 (zoom) → final (caption)."""
+        from vesper_pipeline.captions import CaptionStyle
+
+        factory = _FakeClipFactory()
+
+        class _OverlayBurner:
+            def __init__(self):
+                self.calls: List[dict] = []
+
+            def apply(self, *, input_mp4, output_mp4, pack):
+                self.calls.append({
+                    "input_mp4": input_mp4, "output_mp4": output_mp4,
+                })
+                Path(output_mp4).write_bytes(b"ov")
+                return True
+
+        overlay = _OverlayBurner()
+        zoom = self._zoom_burner()
+
+        class _AssRunner:
+            def __init__(self):
+                self.calls: List[list] = []
+
+            def __call__(self, cmd, capture_output=False, **kw):
+                self.calls.append(list(cmd))
+
+                class _R:
+                    returncode = 0
+                    stdout = b""
+                    stderr = b""
+
+                Path(cmd[-1]).write_bytes(b"captioned")
+                return _R()
+
+        ass_runner = _AssRunner()
+
+        job = self._job_with_punches()
+        job.caption_segments = [{"word": "hi", "start": 0.0, "end": 0.3}]
+        asm = VesperAssembler(
+            clip_factory=factory,
+            overlay_pack="sentinel",
+            overlay_burner=overlay,
+            zoom_bell_burner=zoom,
+            caption_style=CaptionStyle(
+                primary="#E8E2D4", accent="#8B1A1A", shadow="#2C2826",
+                font_name="CormorantGaramond-Bold",
+            ),
+            ass_burn_runner=ass_runner,
+        )
+        out = str(self.tmp / "final.mp4")
+        asm.assemble(job=job, output_path=out)
+
+        # Overlay reads stage0, writes stage1.
+        self.assertIn(".stage0.mp4", overlay.calls[0]["input_mp4"])
+        self.assertIn(".stage1.mp4", overlay.calls[0]["output_mp4"])
+        # Zoom reads stage1, writes stage2.
+        self.assertIn(".stage1.mp4", zoom.calls[0]["input_mp4"])
+        self.assertIn(".stage2.mp4", zoom.calls[0]["output_mp4"])
+        # Caption reads stage2.
+        caption_in = ass_runner.calls[0][ass_runner.calls[0].index("-i") + 1]
+        self.assertIn(".stage2.mp4", caption_in)
+
+    def test_zero_punches_but_enabled_falls_through(self):
+        """Enabled + empty punches still no-ops (burner returns False)."""
+        factory = _FakeClipFactory()
+        burner = self._zoom_burner(applied=False)  # applied=False won't fire
+        asm = VesperAssembler(
+            clip_factory=factory,
+            zoom_bell_burner=burner,
+            enable_zoom_bells=True,
+        )
+        tl = _mixed_timeline()
+        job = _job_for_timeline(tl, self.tmp)
+        # Empty keyword_punches — zoom check short-circuits, burner never called.
+        asm.assemble(job=job, output_path=str(self.tmp / "final.mp4"))
+        self.assertEqual(burner.calls, [])
+
+
 class KenBurnsDurationTests(unittest.TestCase):
     def setUp(self):
         import tempfile

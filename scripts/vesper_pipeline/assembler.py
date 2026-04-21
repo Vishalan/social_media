@@ -118,6 +118,13 @@ class VesperAssembler:
     # overlays. None → raw video.
     overlay_pack: Optional[Any] = None
     overlay_burner: Optional[Any] = None
+    # Optional zoom-bell pass on keyword punches. Runs between overlays
+    # and captions so captions stay crisp (not scaled inside the zoom).
+    zoom_bell_burner: Optional[Any] = None
+    # When True (default), zoom bells fire whenever the job has
+    # keyword_punches. Set False to disable the pass without removing
+    # the burner.
+    enable_zoom_bells: bool = True
 
     def assemble(self, *, job: VesperJob, output_path: str) -> str:
         """Produce a 9:16 MP4 at ``output_path``. Returns the path.
@@ -180,49 +187,66 @@ class VesperAssembler:
         final = _apply_audio(video, audio)
 
         # Post-write passes run as FFmpeg subprocess steps so we can
-        # chain overlay → captions without going through MoviePy twice.
+        # chain overlay → zoom → captions without going through
+        # MoviePy multiple times.
         #
         # Order matters:
-        #   1. MoviePy write → raw concat MP4 (staging_raw)
-        #   2. Overlay pass  → grain/dust/flicker/fog baked in (staging_ov)
-        #   3. Caption pass  → ASS subs ON TOP of overlays (output_path)
-        # Staging files are cleaned up regardless of which passes run.
+        #   1. MoviePy write → raw concat MP4   (staging[0])
+        #   2. Overlay pass  → grain/dust/...    (staging[1])
+        #   3. Zoom pass     → sin-bell zooms    (staging[2])
+        #   4. Caption pass  → ASS on top        (output_path)
+        # Captions go LAST so the text isn't scaled inside the zoom
+        # or flickered under the overlay. Staging files are cleaned
+        # up regardless of which passes run.
         caption_segments = getattr(job, "caption_segments", None)
+        keyword_punches = getattr(job, "keyword_punches", None) or []
         want_captions = bool(self.caption_style and caption_segments)
         want_overlays = self.overlay_pack is not None
-        staging_raw: Optional[str] = None
-        staging_ov: Optional[str] = None
+        want_zoom = bool(
+            self.enable_zoom_bells
+            and keyword_punches
+            and (self.zoom_bell_burner is not None or self.enable_zoom_bells)
+        )
 
-        if want_overlays or want_captions:
-            staging_raw = output_path + ".stage0.mp4"
-            _write_file(final, staging_raw, fps=self.fps)
-            current = staging_raw
+        if want_overlays or want_zoom or want_captions:
+            staging: List[str] = []
+            current = output_path + ".stage0.mp4"
+            _write_file(final, current, fps=self.fps)
+            staging.append(current)
 
             if want_overlays:
-                staging_ov = output_path + ".stage1.mp4"
-                applied = self._apply_overlays(current, staging_ov)
-                if applied:
-                    current = staging_ov
+                nxt = output_path + ".stage1.mp4"
+                if self._apply_overlays(current, nxt):
+                    current = nxt
+                    staging.append(nxt)
                 else:
-                    # Zero-layer pack: skip the overlay output and keep
-                    # the raw staging MP4 as current.
                     try:
-                        Path(staging_ov).unlink(missing_ok=True)
+                        Path(nxt).unlink(missing_ok=True)
                     except OSError:
                         pass
-                    staging_ov = None
+
+            if want_zoom:
+                nxt = output_path + ".stage2.mp4"
+                if self._apply_zoom_bells(current, nxt, keyword_punches):
+                    current = nxt
+                    staging.append(nxt)
+                else:
+                    try:
+                        Path(nxt).unlink(missing_ok=True)
+                    except OSError:
+                        pass
 
             if want_captions:
                 self._burn_captions(current, caption_segments, output_path)
             else:
-                # No captions — promote current to output.
                 import shutil as _sh
                 _sh.move(current, output_path)
-                current = output_path
+                # `current` is now the output — don't try to delete it.
+                if current in staging:
+                    staging.remove(current)
 
-            # Clean up any staging files we're done with.
-            for p in (staging_raw, staging_ov):
-                if p and Path(p).exists() and p != output_path:
+            for p in staging:
+                if p != output_path and Path(p).exists():
                     try:
                         Path(p).unlink(missing_ok=True)
                     except OSError:
@@ -231,13 +255,33 @@ class VesperAssembler:
             _write_file(final, output_path, fps=self.fps)
 
         logger.info(
-            "VesperAssembler: wrote %s (%d beats, %.1fs, overlays=%s, captions=%s)",
+            "VesperAssembler: wrote %s (%d beats, %.1fs, overlays=%s, "
+            "zoom_bells=%s, captions=%s)",
             output_path, len(clips),
             sum(b.duration_s for b in beats),
             "yes" if want_overlays else "no",
+            "yes" if (want_zoom and keyword_punches) else "no",
             "yes" if want_captions else "no",
         )
         return output_path
+
+    def _apply_zoom_bells(
+        self,
+        input_mp4: str,
+        output_mp4: str,
+        punches: list,
+    ) -> bool:
+        """Run the zoom-bell burner; return True when FFmpeg actually
+        wrote output_mp4, False when punches empty."""
+        burner = self.zoom_bell_burner
+        if burner is None:
+            from .zoom_bell import ZoomBellBurner
+            burner = ZoomBellBurner()
+        return burner.apply(
+            input_mp4=input_mp4,
+            output_mp4=output_mp4,
+            punches=punches,
+        )
 
     def _apply_overlays(self, input_mp4: str, output_mp4: str) -> bool:
         """Run the overlay burner; return True when FFmpeg actually
