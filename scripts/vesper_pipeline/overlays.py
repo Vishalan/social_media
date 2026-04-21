@@ -184,7 +184,8 @@ class OverlayBurner:
     ) -> List[str]:
         """Compose the FFmpeg command. Pulled out as a method so tests
         can assert the graph without running FFmpeg."""
-        cmd: List[str] = ["ffmpeg", "-y", "-i", input_mp4]
+        from ._ffmpeg import ffmpeg_bin
+        cmd: List[str] = [ffmpeg_bin(), "-y", "-i", input_mp4]
         for name in layers:
             cmd.extend(["-i", str(pack.layer_path(name))])
 

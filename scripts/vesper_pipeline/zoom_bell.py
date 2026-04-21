@@ -132,8 +132,9 @@ class ZoomBellBurner:
             f"scale=iw*({z_expr}):ih*({z_expr}),"
             f"crop=iw/({z_expr}):ih/({z_expr})"
         )
+        from ._ffmpeg import ffmpeg_bin
         cmd = [
-            "ffmpeg", "-y", "-i", input_mp4,
+            ffmpeg_bin(), "-y", "-i", input_mp4,
             "-vf", filter_chain,
             "-c:a", "copy",
             "-c:v", "libx264",

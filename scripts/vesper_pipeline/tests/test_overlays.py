@@ -110,7 +110,10 @@ class OverlayBurnerTests(unittest.TestCase):
         ))
         self.assertEqual(len(runner.calls), 1)
         cmd = runner.calls[0]
-        self.assertEqual(cmd[0], "ffmpeg")
+        self.assertTrue(
+            cmd[0].endswith("ffmpeg") or "ffmpeg" in cmd[0],
+            f"expected an ffmpeg binary, got {cmd[0]!r}",
+        )
         # Five inputs total: base + 4 layers.
         self.assertEqual(cmd.count("-i"), 5)
         # The filter graph includes each layer's colorchannelmixer.

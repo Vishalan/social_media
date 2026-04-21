@@ -77,21 +77,26 @@ class _ClipFactory(Protocol):
 
 
 def _load_real_moviepy() -> _ClipFactory:
-    """Import moviepy lazily + bundle the names the assembler uses."""
+    """Import moviepy lazily + bundle the names the assembler uses.
+
+    Uses a ``SimpleNamespace`` rather than a nested class because
+    class bodies don't capture enclosing-function locals via free
+    variables — ``class _Bundle: ImageClip = ImageClip`` raises
+    NameError at class-body evaluation time.
+    """
+    from types import SimpleNamespace
     from moviepy import (  # type: ignore
         AudioFileClip,
         ImageClip,
         VideoFileClip,
         concatenate_videoclips,
     )
-
-    class _Bundle:
-        ImageClip = staticmethod(ImageClip)
-        VideoFileClip = staticmethod(VideoFileClip)
-        AudioFileClip = staticmethod(AudioFileClip)
-        concatenate_videoclips = staticmethod(concatenate_videoclips)
-
-    return _Bundle()  # type: ignore[return-value]
+    return SimpleNamespace(  # type: ignore[return-value]
+        ImageClip=ImageClip,
+        VideoFileClip=VideoFileClip,
+        AudioFileClip=AudioFileClip,
+        concatenate_videoclips=concatenate_videoclips,
+    )
 
 
 # ─── Assembler ─────────────────────────────────────────────────────────────
@@ -345,9 +350,10 @@ class VesperAssembler:
             ass_tmp.write(ass_text)
             ass_path = ass_tmp.name
 
+        from ._ffmpeg import ffmpeg_bin
         runner = self.ass_burn_runner or subprocess.run
         cmd = [
-            "ffmpeg", "-y", "-i", staging_path,
+            ffmpeg_bin(), "-y", "-i", staging_path,
             "-vf", f"ass={ass_path}",
             "-c:a", "copy", output_path,
         ]

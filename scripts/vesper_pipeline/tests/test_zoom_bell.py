@@ -124,7 +124,10 @@ class ZoomBellBurnerTests(unittest.TestCase):
         ))
         self.assertEqual(len(runner.calls), 1)
         cmd = runner.calls[0]
-        self.assertEqual(cmd[0], "ffmpeg")
+        self.assertTrue(
+            cmd[0].endswith("ffmpeg") or "ffmpeg" in cmd[0],
+            f"expected an ffmpeg binary, got {cmd[0]!r}",
+        )
         # -vf contains scale + crop referencing the expression.
         vf_idx = cmd.index("-vf")
         vf = cmd[vf_idx + 1]
