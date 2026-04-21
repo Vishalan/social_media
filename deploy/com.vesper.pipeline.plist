@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.vesper.pipeline</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/vishalan/Documents/Projects/social_media/deploy/run_vesper_pipeline.sh</string>
+    </array>
+
+    <!-- Run daily at 09:30 local time — staggered 90 min after
+         CommonCreed (08:00) so the two pipelines don't collide on
+         the shared GPU plane during peak stages (per plan Key
+         Decision #12). -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <!-- Keep a separate stdout/stderr log for launchd-level errors -->
+    <key>StandardOutPath</key>
+    <string>/Users/vishalan/Documents/Projects/social_media/logs/vesper_launchd_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/vishalan/Documents/Projects/social_media/logs/vesper_launchd_stderr.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.vesper.sqlite_backup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>-m</string>
+        <string>ops.daily_sqlite_backup</string>
+        <string>--db</string>
+        <string>/Users/vishalan/Documents/Projects/social_media/data/analytics.db</string>
+        <string>--backup-dir</string>
+        <string>/Users/vishalan/Documents/Projects/social_media/data/backups</string>
+        <string>--retention-days</string>
+        <string>30</string>
+        <string>--verbose</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/vishalan/Documents/Projects/social_media/scripts</string>
+
+    <!-- Run daily at 04:30 local — well before the first pipeline
+         kicks off at 08:00, so backups don't contend with the
+         analytics WAL during active writes. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/vishalan/Documents/Projects/social_media/logs/sqlite_backup_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/vishalan/Documents/Projects/social_media/logs/sqlite_backup_stderr.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
