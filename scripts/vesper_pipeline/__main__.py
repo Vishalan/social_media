@@ -39,10 +39,13 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-# Path bootstrap so absolute imports under scripts/ resolve.
+# Path bootstrap so absolute imports under scripts/ resolve, plus
+# the repo root for `channels.*` (lives alongside scripts/, not under it).
 _SCRIPTS = Path(__file__).resolve().parent.parent
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
+_REPO_ROOT = _SCRIPTS.parent
+for p in (str(_SCRIPTS), str(_REPO_ROOT)):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 logger = logging.getLogger(__name__)
 

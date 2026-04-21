@@ -63,6 +63,12 @@ fails, you can trace it to the commit that introduced the guard.
       `cd scripts && python -m ops.daily_sqlite_backup --verbose`.
       Confirm `data/backups/analytics_*.db` lands and is mode 0600.
 
+## T-1 — automated readiness check
+
+- [ ] Run the doctor: `cd scripts && python3 -m vesper_pipeline.doctor`.
+      Exit 0 = ready to launch (warnings allowed).
+      Exit 2 = at least one required check failed; fix before proceeding.
+
 ## T-0 — dry-run + enable LaunchAgent
 
 - [ ] Dry-run one full short: set `MAX_SHORTS_PER_RUN=1` in
