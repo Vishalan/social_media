@@ -36,7 +36,11 @@ from video_gen.gpu_mutex import (  # noqa: E402
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 def _write_stub_workflow(tmpdir: str) -> str:

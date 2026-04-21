@@ -60,7 +60,11 @@ def _ok(path: str = "/tmp/out.png") -> FluxResult:
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 class LocalSuccessPathTests(unittest.TestCase):
