@@ -27,7 +27,9 @@ import shutil
 import subprocess
 import tempfile
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 from typing import List, Optional
 
 import requests
@@ -39,6 +41,24 @@ logger = logging.getLogger(__name__)
 # to stay well under that cap. 380 chars ≈ 25-30s of speech at typical pace,
 # leaving headroom for punchier lines.
 _MAX_CHARS_PER_CHUNK = 380
+
+
+@dataclass(frozen=True)
+class PreflightResult:
+    """Outcome of :meth:`ChatterboxVoiceGenerator.check_ref_available`.
+
+    Three discriminated states drive the tiered error-handling in
+    plan System-Wide Impact #5:
+
+      * ``ok``           — proceed with TTS.
+      * ``ref_missing``  — the sidecar is healthy but this channel's
+        reference is absent; abort THIS channel's run only.
+      * ``sidecar_down`` — /refs/list transport failure or 5xx; abort
+        BOTH pipelines' current runs.
+    """
+
+    status: Literal["ok", "ref_missing", "sidecar_down"]
+    reason: str = ""
 
 
 class ChatterboxVoiceGenerator:
@@ -145,6 +165,73 @@ class ChatterboxVoiceGenerator:
                 f"chatterbox TTS failed (HTTP {resp.status_code}): {resp.text[:500]}"
             )
         return resp.json()
+
+    # ─── Pre-flight + discovery ──────────────────────────────────────────────
+
+    def list_refs(self, timeout_s: float = 5.0) -> list[str]:
+        """Return the sidecar's list of mounted reference .wav paths.
+
+        Relative to ``REFS_ROOT`` inside the container (e.g.
+        ``"vesper/archivist.wav"``). Used by the pre-flight discriminator
+        to distinguish "reference missing from volume" from "sidecar
+        unreachable" before a full TTS call commits GPU time. Raises
+        :class:`requests.RequestException` on transport failure.
+        """
+        url = f"{self.endpoint}/refs/list"
+        resp = requests.get(url, timeout=timeout_s)
+        resp.raise_for_status()
+        data = resp.json()
+        return list(data.get("entries") or [])
+
+    def check_ref_available(
+        self,
+        expected_ref: str,
+        *,
+        timeout_s: float = 5.0,
+    ) -> "PreflightResult":
+        """Tiered pre-flight: does the sidecar have ``expected_ref`` mounted?
+
+        Returns a :class:`PreflightResult` with three discriminated states
+        so the caller can choose whether to abort the whole pipeline or
+        just this channel's run (Unit 8 / System-Wide Impact #5):
+
+          * ``status='sidecar_down'``  — /refs/list timed out or 5xx →
+            abort both pipelines' current runs, alert owner.
+          * ``status='ref_missing'``   — /refs/list OK but the expected
+            path is not in the listing → abort this channel's run only,
+            alert owner.
+          * ``status='ok'``            — the reference is available;
+            proceed with TTS.
+
+        ``expected_ref`` is compared two ways: as a direct substring of
+        the container path (``/app/refs/vesper/archivist.wav``) and as a
+        matching relative path entry (``vesper/archivist.wav``). Either
+        form is acceptable so callers can pass whichever they have.
+        """
+        try:
+            entries = self.list_refs(timeout_s=timeout_s)
+        except requests.RequestException as exc:
+            logger.warning(
+                "chatterbox /refs/list transport failure — classifying "
+                "as sidecar_down: %s", exc,
+            )
+            return PreflightResult(status="sidecar_down", reason=str(exc))
+
+        # Accept either the absolute container path or the relative entry.
+        # Strip a leading "/app/refs/" from the expected ref before comparing
+        # against the relative-path entries returned by the sidecar.
+        needle = expected_ref
+        for prefix in ("/app/refs/", "/opt/commoncreed/assets/"):
+            if needle.startswith(prefix):
+                needle = needle[len(prefix):]
+                break
+        needle = needle.lstrip("/")
+        if needle in entries:
+            return PreflightResult(status="ok")
+        return PreflightResult(
+            status="ref_missing",
+            reason=f"{expected_ref!r} (normalized {needle!r}) not in {len(entries)} refs",
+        )
 
     @staticmethod
     def _concat_wavs(wav_paths: List[Path], output_path: Path) -> None:

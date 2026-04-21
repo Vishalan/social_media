@@ -52,6 +52,7 @@ logger = logging.getLogger("chatterbox-sidecar")
 
 PORT = int(os.environ.get("CHATTERBOX_PORT", "7777"))
 OUTPUT_ROOT = Path(os.environ.get("CHATTERBOX_OUTPUT_ROOT", "/app/output"))
+REFS_ROOT = Path(os.environ.get("CHATTERBOX_REFS_ROOT", "/app/refs"))
 DEVICE = os.environ.get("CHATTERBOX_DEVICE", "cuda")
 
 app = FastAPI(title="CommonCreed Chatterbox", version="0.1.0")
@@ -110,6 +111,56 @@ def healthz() -> JSONResponse:
             "cuda_available": torch.cuda.is_available(),
         }
     )
+
+
+@app.get("/refs/list")
+def refs_list() -> JSONResponse:
+    """List every reference .wav file mounted under ``REFS_ROOT``.
+
+    Returned paths are **relative** to the refs root (e.g.
+    ``"vesper/archivist.wav"``), so pipeline pre-flight can check for a
+    specific channel's reference without needing knowledge of the
+    container mount point. The endpoint enables tiered error
+    discrimination (Unit 8): if ``/healthz`` is healthy but the expected
+    reference is missing from this listing, the caller classifies the
+    failure as Vesper-only config-fail rather than sidecar-down.
+
+    Path-traversal guard: refuse to descend into symlinks that resolve
+    outside ``REFS_ROOT``.
+    """
+    entries: list[str] = []
+    if not REFS_ROOT.exists():
+        return JSONResponse(
+            {"refs_root": str(REFS_ROOT), "entries": [], "exists": False}
+        )
+    try:
+        real_root = REFS_ROOT.resolve()
+        for path in REFS_ROOT.rglob("*.wav"):
+            try:
+                real_path = path.resolve()
+            except OSError:
+                continue
+            # Reject any symlink that escapes the refs root.
+            try:
+                rel = real_path.relative_to(real_root)
+            except ValueError:
+                logger.warning(
+                    "refs/list: skipping %s — resolves outside %s",
+                    path, real_root,
+                )
+                continue
+            entries.append(str(rel).replace(os.sep, "/"))
+        entries.sort()
+        return JSONResponse(
+            {
+                "refs_root": str(REFS_ROOT),
+                "entries": entries,
+                "exists": True,
+            }
+        )
+    except Exception as exc:
+        logger.exception("refs/list failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"refs/list failed: {exc}")
 
 
 @app.post("/tts", response_model=TTSResponse)

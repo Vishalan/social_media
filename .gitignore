@@ -30,6 +30,16 @@ assets/spike/
 # files pre-launch per the Vesper launch runbook).
 !assets/vesper/sfx/*.wav
 
+# Biometric refs (Security Posture S3) — voice-clone reference clips are
+# biometric-equivalent: a leaked reference lets an attacker synthesize
+# arbitrary speech in the narrator's voice. Block ALL media formats under
+# any channel's refs/ directory; docs (README.md etc.) stay committable.
+/assets/**/refs/**/*.wav
+/assets/**/refs/**/*.mp3
+/assets/**/refs/**/*.ogg
+/assets/**/refs/**/*.flac
+/assets/**/refs/**/*.m4a
+
 # macOS
 .DS_Store
 **/.DS_Store
