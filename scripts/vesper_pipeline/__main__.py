@@ -93,6 +93,7 @@ def build_pipeline_from_env():
     from .assembler import VesperAssembler
     from .captions import caption_style_from_palette, transcribe_voice
     from .parallax_adapter import VesperParallaxAdapter
+    from .sfx_mix import SfxMixStage
     from .thumbnail_adapter import VesperThumbnailAdapter
     from .timeline_planner import TimelinePlanner
 
@@ -199,10 +200,11 @@ def build_pipeline_from_env():
     # benchmarks on the 3090 pick a model.
     i2v = _NotYetWiredI2VBackend() if _env_bool("VESPER_I2V_ENABLED") else None
 
-    # ── Captions + assembly + thumbnail ─────────────────────────────────
+    # ── Captions + SFX + assembly + thumbnail ───────────────────────────
     caption_style = caption_style_from_palette(
         profile.palette, profile.thumbnail,
     )
+    sfx_mix_stage = SfxMixStage(pack_name="vesper")  # matches channels/vesper.py::_register_sfx_pack
     assembler = VesperAssembler(caption_style=caption_style)
     thumbnails = VesperThumbnailAdapter(
         palette=profile.palette,
@@ -262,6 +264,7 @@ def build_pipeline_from_env():
         async_runner=_run_async,
         timeline_planner=planner,
         transcriber=transcribe_voice,
+        sfx_mix_stage=sfx_mix_stage,
         cost_ledger_factory=_cost_ledger_factory,
     )
 

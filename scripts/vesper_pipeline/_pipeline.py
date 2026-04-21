@@ -211,6 +211,7 @@ class VesperPipeline:
         async_runner: Callable[[Any], Any],
         timeline_planner: Optional[_TimelinePlanner] = None,
         transcriber: Optional[Callable[[str], List[dict]]] = None,
+        sfx_mix_stage: Optional[Any] = None,
         cost_ledger_factory: Callable[[], CostLedger] = CostLedger,
     ) -> None:
         self.config = config
@@ -228,6 +229,7 @@ class VesperPipeline:
         self.tracker = tracker
         self.timeline_planner = timeline_planner
         self.transcriber = transcriber
+        self.sfx_mix_stage = sfx_mix_stage
         self._run_async = async_runner
         self._cost_ledger_factory = cost_ledger_factory
 
@@ -361,6 +363,27 @@ class VesperPipeline:
                 job.job_id, exc,
             )
             job.caption_segments = []
+        return True
+
+    def mix_sfx(self, job: VesperJob) -> bool:
+        """Stage 4.75 — fold SFX hits into the voice track.
+
+        Optional: no-op when ``self.sfx_mix_stage`` is None. Never fails
+        the job — a missing SFX pack degrades to raw-voice render per
+        Key Decision #10 (SFX is polish, not correctness)."""
+        if self.sfx_mix_stage is None:
+            return True
+        sfx_dir = self._path_dir("voice")
+        try:
+            self.sfx_mix_stage.run(job=job, output_dir=sfx_dir)
+        except Exception as exc:
+            # SfxMixStage.run() is already defensive — this catches any
+            # unexpected path so the stage never propagates.
+            logger.warning(
+                "mix_sfx: unexpected error for job=%s: %s; "
+                "continuing with raw voice",
+                job.job_id, exc,
+            )
         return True
 
     def plan_timeline(self, job: VesperJob) -> bool:
@@ -780,6 +803,9 @@ class VesperPipeline:
             return job
         ledger.record(CostStage.LLM_TIMELINE, 0.0, note="uncharged — populate later")
 
+        # Stage 4.75 — SFX mix (optional; never fails the short).
+        self.mix_sfx(job)
+
         # Stages 5-6 — visuals.
         # Beat count: prefer the planner's output; fall back to the
         # heuristic (~6 words/beat, clamped 8-25) when no timeline ran.
@@ -815,9 +841,13 @@ class VesperPipeline:
     # ─── Helpers ─────────────────────────────────────────────────────────
 
     def _path(self, subdir: str, stem: str, *, ext: str) -> str:
+        out_dir = self._path_dir(subdir)
+        return str(Path(out_dir) / f"{stem}.{ext}")
+
+    def _path_dir(self, subdir: str) -> str:
         out_dir = Path(self.config.output_base_dir) / subdir
         out_dir.mkdir(parents=True, exist_ok=True)
-        return str(out_dir / f"{stem}.{ext}")
+        return str(out_dir)
 
     def _fail(self, job: VesperJob, stage: str, reason: str) -> None:
         job.failure_stage = stage
