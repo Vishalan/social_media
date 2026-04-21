@@ -424,6 +424,28 @@ class PostizClient:
         return self._request_json("POST", POSTIZ_POSTS_PATH, json_body=body)
 
     # ------------------------------------------------------------------
+    # delete_post (rapid unpublish — Unit 11 /takedown command)
+    # ------------------------------------------------------------------
+    def delete_post(self, post_id: str) -> dict:
+        """DELETE /api/public/v1/posts/{id} — rapid unpublish.
+
+        Used by the Telegram ``/takedown`` command (plan Unit 11 +
+        Risks: DMCA / compliance response path). Each post_id returned
+        by publish_post resolves to exactly one platform publication;
+        deleting a multi-platform short therefore means calling this
+        once per platform post_id (caller loops).
+
+        Raises ``requests.HTTPError`` on 4xx/5xx so the caller can
+        distinguish "already gone" (404, idempotent success) from a
+        platform-side rejection that needs human follow-up.
+        """
+        if not post_id:
+            raise ValueError("delete_post requires a non-empty post_id")
+        return self._request_json(
+            "DELETE", f"{POSTIZ_POSTS_PATH}/{post_id}",
+        )
+
+    # ------------------------------------------------------------------
     # get_account_tokens
     # ------------------------------------------------------------------
     def get_account_tokens(self) -> dict:
