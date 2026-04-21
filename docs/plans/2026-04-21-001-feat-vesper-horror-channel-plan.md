@@ -1,7 +1,7 @@
 ---
 title: "feat: Vesper horror channel — shorts-first pipeline + thin channel-profile factory"
 type: feat
-status: active
+status: completed
 date: 2026-04-21
 deepened: 2026-04-21
 origin: docs/brainstorms/2026-04-21-story-channels-v1-requirements.md
