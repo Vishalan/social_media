@@ -1,0 +1,183 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "description": "Curated horror archetype library for the Archivist story generator. Each archetype describes a narrative *shape* (beats + setting hints + voice patterns) — NOT a public-domain text to copy. Seed archetypes are abstracted from the horror-genre conventions established by pre-1930 US horror (Poe, Lovecraft, Machen, Blackwood, Hodgson) and 1960s-70s paranormal case archives. The LLM uses these to generate ORIGINAL night-shift / rural-America / liminal-space stories in the Archivist persona.",
+    "source_posture": "Archetypes describe genre conventions, not copied text. Seeded archetypes use only public-domain structural patterns; modern-sounding paraphrases were authored fresh for this repo.",
+    "anti_slop": [
+      "Every archetype forbids gothic vocabulary ('verily', 'lantern', 'moor', 'doth', 'thee', 'ere'). Vesper's register is 2020s workplace/road prose, not 1890s cosmic horror.",
+      "Every archetype encodes mundane-anchor-then-wrong structure — the setup must feel plausibly real before the turn."
+    ],
+    "intentional_omissions": [
+      "No archetype mentions named real people, dated real-world crimes, explicit self-harm methods, or minors as victims/perpetrators — the mod filter would reject these at output time anyway, and seeding them invites drift."
+    ]
+  },
+  "archetypes": [
+    {
+      "id": "night_shift_trucker_encounter",
+      "family": "night_shift",
+      "setting_hint": "long-haul trucker on an empty highway between 2 AM and 4 AM; rain, fog, or CB static common",
+      "key_beats": [
+        "mundane-anchor: the narrator establishes routine (coffee, fuel stop, mileage)",
+        "first wrongness: something off-pattern (hitchhiker where none should be, headlights behind for too long, radio voice that names them)",
+        "escalation: the wrong thing persists or repeats",
+        "reveal or retreat: narrator either glimpses something that should not be there or abandons the route"
+      ],
+      "voice_patterns": [
+        "present-tense internal monologue, short sentences",
+        "avoid adjectives stacking; let the wrongness carry the weight",
+        "narrator doubts themselves before the reader does"
+      ]
+    },
+    {
+      "id": "hospital_night_shift_case",
+      "family": "night_shift",
+      "setting_hint": "ER / ICU / psych ward during the slow 2-6 AM window; single-nurse floor or understaffed wing",
+      "key_beats": [
+        "mundane-anchor: routine chart check or med round",
+        "patient or empty-room anomaly (room that should be empty shows light, patient names the wrong staff, equipment turns on)",
+        "narrator tests the anomaly rationally and fails",
+        "ambiguous end — narrator does NOT see the thing; they feel seen"
+      ],
+      "voice_patterns": [
+        "medical-terminology grounding",
+        "no screaming, no running — nurse voice stays measured",
+        "end on a mundane action interrupted by a small sensory detail"
+      ]
+    },
+    {
+      "id": "rural_america_backroad",
+      "family": "rural_america",
+      "setting_hint": "two-lane county road at night, 50+ miles from the nearest town, reception dead",
+      "key_beats": [
+        "mundane-anchor: rerouted by GPS or detour",
+        "landmark that shouldn't be there (unlisted town, deer-crossing sign in wrong language, abandoned gas station open)",
+        "person at the landmark who knows something about the narrator",
+        "narrator drives away; in the rearview, something is not right"
+      ],
+      "voice_patterns": [
+        "first-person, past tense, conversational",
+        "geographic specificity (county roads, mileposts) without naming the real state",
+        "end on the rearview mirror detail"
+      ]
+    },
+    {
+      "id": "small_town_service_worker",
+      "family": "rural_america",
+      "setting_hint": "night-shift cashier / motel clerk / gas station attendant in a town under 3,000 people",
+      "key_beats": [
+        "mundane-anchor: regular customer schedule",
+        "new customer whose behavior violates one small pattern",
+        "discovery that the customer's pattern matches something local (old photograph, missing-poster, closed-down place)",
+        "morning shift arrives; the narrator tries to explain and can't"
+      ],
+      "voice_patterns": [
+        "working-class idiom, sparse",
+        "prop details (register, camera, back room)",
+        "no explanation offered to the reader"
+      ]
+    },
+    {
+      "id": "liminal_hallway",
+      "family": "liminal_spaces",
+      "setting_hint": "office building / hotel / parking garage after hours; fluorescent lights, identical doors, no people",
+      "key_beats": [
+        "mundane-anchor: shortcut or routine errand",
+        "the space does not end where it should",
+        "narrator counts / marks / times to prove they are not imagining it",
+        "escape is ambiguous — they're out, but the space might be following"
+      ],
+      "voice_patterns": [
+        "spatial measurement language (steps, doors, minutes)",
+        "sensory fatigue (fluorescent hum, ventilation drone, footsteps)",
+        "never describe the 'thing' — only the space's wrongness"
+      ]
+    },
+    {
+      "id": "liminal_backrooms",
+      "family": "liminal_spaces",
+      "setting_hint": "basement / storage room / back-of-house corridor accessed by accident during a normal day",
+      "key_beats": [
+        "mundane-anchor: utility task (supplies, maintenance, locked door)",
+        "narrator crosses a threshold that wasn't marked",
+        "space feels residential but is clearly not",
+        "narrator leaves before understanding what they saw"
+      ],
+      "voice_patterns": [
+        "utilitarian tone — narrator is not imaginative",
+        "describe textures (carpet, paint, dust) in disproportionate detail",
+        "end on an object the narrator took or left behind"
+      ]
+    },
+    {
+      "id": "paranormal_witness_account",
+      "family": "paranormal_archive",
+      "setting_hint": "first-person account delivered to the Archivist as a voicemail, letter, or interview transcript — Archivist frames the retelling",
+      "key_beats": [
+        "Archivist frame: 'this was shared with me by...' — vague witness identity",
+        "witness describes the encounter in their own idiom",
+        "Archivist notes a small detail the witness didn't emphasize",
+        "Archivist closes the frame without closure"
+      ],
+      "voice_patterns": [
+        "dual register: Archivist's measured tone + witness's colloquial voice",
+        "witness carries the emotion; Archivist stays detached",
+        "end with the Archivist referring to the witness in third person past tense"
+      ]
+    },
+    {
+      "id": "cold_object_encounter",
+      "family": "paranormal_archive",
+      "setting_hint": "narrator acquires or inherits an object (tape, photograph, letter, keychain); the object's history is unknown",
+      "key_beats": [
+        "mundane-anchor: how the object came to the narrator",
+        "narrator examines the object, finds a small anomaly",
+        "anomaly suggests the object has a specific prior owner or context",
+        "narrator attempts to dispose of or return the object — the attempt fails or lingers"
+      ],
+      "voice_patterns": [
+        "physical-description detail on the object; sensory texture",
+        "no dialogue with the object; the object does not speak",
+        "end with the object present somewhere the narrator did not put it"
+      ]
+    },
+    {
+      "id": "rule_violation_aftermath",
+      "family": "ruleshorror",
+      "setting_hint": "narrator was told 'rules of the place' upon arrival (security briefing, orientation, handover note); one rule is violated",
+      "key_beats": [
+        "mundane-anchor: the job or task context",
+        "narrator recounts the rules — specifically and clearly",
+        "one rule is broken (by someone else, or by circumstance)",
+        "consequence manifests in a way that is strange but not violent"
+      ],
+      "voice_patterns": [
+        "procedural, almost HR-manual tone in early paragraphs",
+        "tone shifts slightly after the rule breaks",
+        "never explain WHY the rule existed"
+      ]
+    },
+    {
+      "id": "creepy_encounter_witness",
+      "family": "creepy_encounter",
+      "setting_hint": "commute, supermarket, gym, public transit — a stranger is unusually attentive to the narrator",
+      "key_beats": [
+        "mundane-anchor: repetitive daily context",
+        "stranger displays knowledge of the narrator they should not have",
+        "narrator breaks the pattern (different route, store, time)",
+        "stranger appears on the new pattern too"
+      ],
+      "voice_patterns": [
+        "urban / suburban specificity",
+        "narrator's rationalization layer",
+        "end without confrontation — the stranger persists off-page"
+      ]
+    }
+  ],
+  "subreddit_archetype_hints": {
+    "nosleep": ["paranormal_witness_account", "night_shift_trucker_encounter", "hospital_night_shift_case"],
+    "LetsNotMeet": ["creepy_encounter_witness", "rural_america_backroad", "small_town_service_worker"],
+    "ThreeKings": ["cold_object_encounter", "rule_violation_aftermath"],
+    "Ruleshorror": ["rule_violation_aftermath"],
+    "creepyencounters": ["creepy_encounter_witness", "liminal_hallway", "liminal_backrooms"]
+  }
+}
