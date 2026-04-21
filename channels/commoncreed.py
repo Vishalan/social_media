@@ -116,6 +116,19 @@ PROFILE = ChannelProfile(
     platforms_enabled=["instagram_reels", "tiktok", "youtube_shorts"],
     languages_enabled=["en"],
     telegram_prefix="[CommonCreed]",
-    cpm_rates={},  # Unit 2b populates per-channel CPM rates.
+    # Per-channel CPM (USD per 1000 views). These are the values that
+    # previously lived as a module-level dict in ``analytics.tracker``;
+    # pulling them onto the profile means Vesper's horror-tier CPM map
+    # (added in Unit 5 with the Vesper profile) doesn't stomp these.
+    # ``AnalyticsTracker.revenue_estimate(cpm_rates=...)`` reads whatever
+    # the caller passes — the legacy module-level default in tracker.py
+    # stays as a safety-net for callers that bypass profiles.
+    cpm_rates={
+        "youtube": 4.50,
+        "tiktok": 0.25,
+        "instagram": 0.40,
+        "twitter": 0.30,
+        "default": 0.50,
+    },
     _legacy_config_builder=_build_legacy_config,
 )
