@@ -54,7 +54,7 @@ DEFAULT_FPS = 30
 # Ken Burns on a still — simple ~3% push over the beat duration. The
 # existing VideoEditor has richer Ken Burns modes (push_in / pull_back /
 # slow_pan_*) we'll port across in a follow-up; MVP uses one direction.
-KEN_BURNS_ZOOM = 1.03
+KEN_BURNS_ZOOM = 1.12
 
 # Dip-to-black fade duration at scene-change boundaries (Key Decision #10).
 SCENE_DIP_S = 0.25

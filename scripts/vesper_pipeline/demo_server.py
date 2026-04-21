@@ -54,11 +54,16 @@ for p in (str(_SCRIPTS), str(_REPO_ROOT)):
         sys.path.insert(0, p)
 
 from .demo_offline import (  # noqa: E402
-    _STORY,
+    _STORY as _FALLBACK_STORY,
     _build_timeline,
     _render_storyboard_still,
 )
 from .smoke_flux import run_smoke as _flux_generate  # noqa: E402
+from .story_library import (  # noqa: E402
+    build_flux_prompts,
+    list_all_scored,
+    pick_best_story,
+)
 from still_gen._types import Beat, Timeline  # noqa: E402
 from .assembler import VesperAssembler  # noqa: E402
 from .captions import CaptionStyle, transcribe_voice  # noqa: E402
@@ -78,11 +83,6 @@ DEFAULT_TEMPO = 0.72
 # ComfyUI endpoint (server-side). Flux per-beat generation is ~6-8 s
 # on a 3090 with flux1-schnell-fp8 at 4 steps / CFG 1.0.
 DEFAULT_COMFYUI_URL = "http://localhost:8188"
-_FLUX_PROMPT_PREFIX = (
-    "cinematic horror photograph, 35mm film, "
-    "near-black background, oxidized blood and bone palette, "
-    "high detail, no text no watermark, "
-)
 
 # Match the shipped ChatterboxVoiceGenerator's chunking rule: sentence
 # boundaries, ≤380 chars per chunk (beats the ~40 s silent-truncation
@@ -274,8 +274,19 @@ def run_demo(
     logger.info("Output: %s", output_path)
     logger.info("Ref: %s (exag=%.2f)", chatterbox_ref, exaggeration)
 
+    # 0. Pick the best-scoring story from the curated library.
+    logger.info("Story ranking (tension-curve lexical scorer):")
+    for score, st in list_all_scored():
+        logger.info(
+            "  %5.2f  %-30s  %s",
+            score.total, st["id"], score.detail,
+        )
+    story_dict = pick_best_story()
+    story_text = story_dict["text"]
+    logger.info("Picked story: %s — %s", story_dict["id"], story_dict["title"])
+
     # 1. Chunk + TTS each chunk.
-    chunks = _chunk_text(_STORY)
+    chunks = _chunk_text(story_text)
     logger.info("Story split into %d chunk(s)", len(chunks))
     ip = _chatterbox_ip(chatterbox_name)
     chatterbox_url = f"http://{ip}:7777/tts"
@@ -340,7 +351,7 @@ def run_demo(
             "faster-whisper returned 0 segments — falling back to "
             "uniform word timing. Install faster-whisper for real timings."
         )
-        words = [w for w in _STORY.split() if w]
+        words = [w for w in story_text.split() if w]
         per = voice_duration / max(len(words), 1)
         caption_segments = [
             {"word": w, "start": round(i * per, 3),
@@ -378,15 +389,20 @@ def run_demo(
             "Generating %d Flux stills on %s (~6-8 s each on 3090)",
             timeline.count, comfyui_url,
         )
+    # Build per-beat Flux prompts aligned with the chosen story's
+    # narrative phases, with a palette gradient by beat tag so the
+    # Vesper horror palette escalates into climax rather than
+    # front-loading at the hook.
+    aligned_prompts = build_flux_prompts(story_text, list(timeline.beats))
     flux_t0 = time.monotonic()
     for idx, beat in enumerate(timeline.beats):
         out = stills_dir / f"beat_{idx:03d}.png"
         if with_flux:
-            full_prompt = _FLUX_PROMPT_PREFIX + beat.prompt
+            flux_prompt = aligned_prompts[idx]
             try:
                 _flux_generate(
                     comfyui_url=comfyui_url,
-                    prompt=full_prompt,
+                    prompt=flux_prompt,
                     output_dir=stills_dir,
                     width=768,
                     height=1344,
@@ -429,11 +445,11 @@ def run_demo(
 
     # 7. Build the job + assemble.
     job = VesperJob(
-        topic_title="The 2:47 diner (server demo)",
+        topic_title=story_dict.get("title", "Vesper demo"),
         subreddit="demo",
         job_id="demo-server-v2",
-        story_script=_STORY,
-        story_word_count=len(_STORY.split()),
+        story_script=story_text,
+        story_word_count=len(story_text.split()),
         voice_path=str(mp3_path),
         voice_duration_s=voice_duration,
         caption_segments=caption_segments,
