@@ -64,7 +64,7 @@ from .story_library import (  # noqa: E402
     list_all_scored,
     pick_best_story,
 )
-from still_gen._types import Beat, Timeline  # noqa: E402
+from still_gen._types import Beat, BeatMode, Timeline  # noqa: E402
 from .assembler import VesperAssembler  # noqa: E402
 from .captions import CaptionStyle, transcribe_voice  # noqa: E402
 from ._ffmpeg import ffmpeg_bin  # noqa: E402
@@ -206,6 +206,49 @@ def _concat_wavs(wavs: List[Path], out_wav: Path) -> None:
     list_txt.unlink(missing_ok=True)
 
 
+def _run_depthflow(
+    *,
+    still_path: Path,
+    output_path: Path,
+    duration_s: float,
+    width: int = 768,
+    height: int = 1344,
+    fps: int = 30,
+) -> Path:
+    """Run DepthFlow on ``still_path``, producing a parallax MP4.
+
+    Uses the depthflow CLI installed in the same venv. First call
+    downloads Depth Anything V2 weights (~1.5 GB) to the user's
+    ``~/.local/share/BrokenSource/`` cache; subsequent calls reuse.
+    """
+    venv_bin = Path(sys.executable).parent
+    depthflow_cli = venv_bin / "depthflow"
+    if not depthflow_cli.exists():
+        raise RuntimeError(
+            f"depthflow CLI not found at {depthflow_cli}. Install "
+            "depthflow + torch (cu126 wheels) in the pipeline venv."
+        )
+    result = subprocess.run(
+        [
+            str(depthflow_cli),
+            "input", "--image", str(still_path),
+            "main",
+            "--width", str(width),
+            "--height", str(height),
+            "--fps", str(fps),
+            "--time", f"{duration_s:.2f}",
+            "--output", str(output_path),
+        ],
+        capture_output=True, text=True, timeout=180,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"depthflow exited {result.returncode}: "
+            f"{result.stderr[-500:]}"
+        )
+    return output_path
+
+
 def _atempo_slow(in_wav: Path, out_wav: Path, factor: float) -> None:
     """Apply `atempo=factor` to slow (factor<1) or speed up. Preserves
     pitch via PSOLA. ffmpeg's atempo accepts 0.5-2.0; chain two filters
@@ -261,6 +304,7 @@ def run_demo(
     exaggeration: float = DEFAULT_EXAGGERATION,
     tempo: float = DEFAULT_TEMPO,
     with_flux: bool = False,
+    with_parallax: bool = False,
     comfyui_url: str = DEFAULT_COMFYUI_URL,
     output_path: Path | None = None,
 ) -> Path:
@@ -445,6 +489,65 @@ def run_demo(
         " [Flux]" if with_flux else "",
     )
 
+    # 6b. DepthFlow parallax on STILL_PARALLAX beats.
+    parallax_paths: List[str] = []
+    if with_parallax:
+        parallax_dir = demo_dir / "parallax"
+        parallax_dir.mkdir(parents=True, exist_ok=True)
+        parallax_beats = [
+            (idx, beat) for idx, beat in enumerate(timeline.beats)
+            if beat.mode == BeatMode.STILL_PARALLAX
+        ]
+        if parallax_beats:
+            logger.info(
+                "Generating %d DepthFlow parallax clips (~5-15 s/beat)",
+                len(parallax_beats),
+            )
+            px_t0 = time.monotonic()
+            for idx, beat in parallax_beats:
+                still = Path(still_paths[idx])
+                if not still.exists():
+                    logger.warning(
+                        "parallax beat %d: missing still %s — skipping",
+                        idx, still,
+                    )
+                    continue
+                out_mp4 = parallax_dir / f"beat_{idx:03d}_parallax.mp4"
+                try:
+                    _run_depthflow(
+                        still_path=still,
+                        output_path=out_mp4,
+                        duration_s=beat.duration_s,
+                    )
+                    parallax_paths.append(str(out_mp4))
+                    logger.info(
+                        "  beat %02d parallax done (%s)",
+                        idx, beat.motion_hint,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "parallax beat %d failed (%s) — downgrading "
+                        "to STILL_KENBURNS for this render",
+                        idx, exc,
+                    )
+                    # Rewrite the timeline in-place: this beat becomes
+                    # STILL_KENBURNS so the assembler uses the still
+                    # instead of a non-existent parallax clip.
+                    patched_beats = list(timeline.beats)
+                    patched_beats[idx] = Beat(
+                        mode=BeatMode.STILL_KENBURNS,
+                        motion_hint="push_in",  # type: ignore[arg-type]
+                        duration_s=beat.duration_s,
+                        shot_class=beat.shot_class,
+                        prompt=beat.prompt,
+                        tag=beat.tag,
+                    )
+                    timeline = Timeline(beats=patched_beats)
+            logger.info(
+                "Parallax: %d clips in %.1f s",
+                len(parallax_paths), time.monotonic() - px_t0,
+            )
+
     # 7. Build the job + assemble.
     job = VesperJob(
         topic_title=story_dict.get("title", "Vesper demo"),
@@ -456,7 +559,7 @@ def run_demo(
         voice_duration_s=voice_duration,
         caption_segments=caption_segments,
         still_paths=still_paths,
-        parallax_paths=[],
+        parallax_paths=parallax_paths,
         i2v_paths=[],
         timeline=timeline,
         beat_count=timeline.count,
@@ -498,6 +601,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Generate real Flux stills via ComfyUI instead of PIL storyboard",
     )
     parser.add_argument(
+        "--with-parallax", action="store_true",
+        help="Run DepthFlow on STILL_PARALLAX beats for depth-based motion",
+    )
+    parser.add_argument(
         "--comfyui-url", default=DEFAULT_COMFYUI_URL,
     )
     args = parser.parse_args(argv)
@@ -508,6 +615,7 @@ def main(argv: list[str] | None = None) -> int:
             exaggeration=args.exaggeration,
             tempo=args.tempo,
             with_flux=args.with_flux,
+            with_parallax=args.with_parallax,
             comfyui_url=args.comfyui_url,
         )
     except Exception as exc:

@@ -119,12 +119,26 @@ def _synthesize_caption_segments(story: str, total_duration_s: float) -> List[di
 
 
 def _build_timeline() -> Timeline:
-    motions = ["push_in", "pull_back", "slow_pan_left", "slow_pan_right"]
+    """Build a 12-beat timeline with a mix of STILL_KENBURNS (~67%) and
+    STILL_PARALLAX (~33%). Parallax beats land on rising/reveal/climax
+    where depth motion sells the tension best. Matches plan K.D. #10's
+    ≥30% parallax mandate."""
+    kb_motions = ["push_in", "pull_back", "slow_pan_left", "slow_pan_right"]
+    px_motions = ["push_in_2d", "orbit_slight", "dolly_in_subtle"]
+    # Indices that render as parallax — pick the most atmospheric
+    # moments: second setup beat, both rising beats, first climax.
+    parallax_indices = {3, 5, 7, 9}
     beats: List[Beat] = []
     for i, b in enumerate(_BEATS):
+        if i in parallax_indices:
+            mode = BeatMode.STILL_PARALLAX
+            motion = px_motions[i % len(px_motions)]
+        else:
+            mode = BeatMode.STILL_KENBURNS
+            motion = kb_motions[i % len(kb_motions)]
         beats.append(Beat(
-            mode=BeatMode.STILL_KENBURNS,
-            motion_hint=motions[i % 4],  # type: ignore[arg-type]
+            mode=mode,
+            motion_hint=motion,  # type: ignore[arg-type]
             duration_s=b["d"],
             shot_class="interior" if i % 2 else "exterior",  # type: ignore[arg-type]
             prompt=b["prompt"],
