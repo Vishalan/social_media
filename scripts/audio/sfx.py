@@ -21,14 +21,17 @@ import logging
 import random
 import shlex
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Literal, NamedTuple
+from typing import Dict, Iterable, Literal, NamedTuple
 
 __all__ = [
     "SfxCategory",
     "SfxEvent",
+    "SfxPack",
     "pick_sfx",
     "mix_sfx_into_audio",
+    "register_pack",
     "SFX_DIR",
     "SFX_WEIGHT",
 ]
@@ -52,11 +55,16 @@ class SfxEvent(NamedTuple):
 # ─── Library layout ──────────────────────────────────────────────────────────
 
 # ``<repo>/assets/sfx`` — relative to this file, regardless of CWD.
+# Retained as a module-level export for backwards compatibility: callers
+# that previously imported ``SFX_DIR`` still see the CommonCreed pack root.
 SFX_DIR: Path = Path(__file__).resolve().parents[2] / "assets" / "sfx"
 
 # Category → intensity → candidate filenames (without .wav extension).
-# Keep lists stable — ``pick_sfx`` uses index-based RNG choice.
-_CATEGORY_FILES: dict[SfxCategory, dict[SfxIntensity, list[str]]] = {
+# These names map to the whoosh/pop/ding/tick CommonCreed SFX generator
+# (see ``_generate_sfx.py``). Vesper registers its own pack with a
+# separate category_files map (drones/sub-bass/risers/reverb-tails/etc.)
+# — see Unit 5 + the Vesper pre-launch sourcing step.
+_COMMONCREED_CATEGORY_FILES: dict[SfxCategory, dict[SfxIntensity, list[str]]] = {
     "cut": {
         "light": ["cut_whoosh", "cut_swish"],
         "heavy": ["cut_swoop", "whoosh_long"],
@@ -75,6 +83,54 @@ _CATEGORY_FILES: dict[SfxCategory, dict[SfxIntensity, list[str]]] = {
     },
 }
 
+
+@dataclass(frozen=True)
+class SfxPack:
+    """A named SFX asset pack rooted at a filesystem directory.
+
+    Packs live under ``assets/<pack>/sfx/`` (or, for the legacy
+    CommonCreed pack, directly at ``assets/sfx/``). ``category_files``
+    maps the stable category/intensity axes onto pack-specific filenames
+    (without ``.wav`` extension). Each channel profile declares which
+    pack to use via ``SfxPack.name``.
+    """
+
+    name: str
+    root_dir: Path
+    category_files: Dict[SfxCategory, Dict[SfxIntensity, list[str]]]
+
+
+# Default CommonCreed pack — keeps existing callers working byte-identical.
+_COMMONCREED_PACK = SfxPack(
+    name="commoncreed",
+    root_dir=SFX_DIR,
+    category_files=_COMMONCREED_CATEGORY_FILES,
+)
+
+# Pack registry. Additional channels (Vesper etc.) register their pack
+# via :func:`register_pack` during pipeline init.
+_PACKS: dict[str, SfxPack] = {"commoncreed": _COMMONCREED_PACK}
+
+
+def register_pack(pack: SfxPack) -> None:
+    """Register a pack by name. Safe to call multiple times (last one wins)."""
+    _PACKS[pack.name] = pack
+    log.info("Registered SFX pack %r (root=%s)", pack.name, pack.root_dir)
+
+
+def _get_pack(name: str) -> SfxPack:
+    try:
+        return _PACKS[name]
+    except KeyError as exc:
+        raise KeyError(
+            f"Unknown SFX pack: {name!r} — known packs: {sorted(_PACKS)}"
+        ) from exc
+
+
+# Backwards-compat alias for tests / external callers that referenced the
+# legacy flat dict.
+_CATEGORY_FILES = _COMMONCREED_CATEGORY_FILES
+
 # -18 dB relative to the voiceover (amplitude ratio 10 ** (-18/20) ≈ 0.1259).
 # The origin plan recommends ~0.18; we follow that empirical value so SFX
 # punctuates without clipping the voice.
@@ -89,41 +145,56 @@ def pick_sfx(
     category: SfxCategory,
     intensity: SfxIntensity,
     seed: int,
+    pack: str = "commoncreed",
 ) -> Path:
     """Deterministic, seed-keyed SFX selection.
 
-    Same ``(category, intensity, seed)`` → same ``Path``, regardless of
-    process or platform.  Different seeds may (but are not guaranteed to)
-    pick different files.
+    Same ``(category, intensity, seed, pack)`` → same ``Path``, regardless
+    of process or platform.  Different seeds may (but are not guaranteed
+    to) pick different files.
+
+    Parameters
+    ----------
+    category, intensity, seed:
+        Stable axes for deterministic selection.
+    pack:
+        Pack name registered via :func:`register_pack`. Default
+        ``"commoncreed"`` — backward-compatible with pre-Unit-3 callers.
 
     Raises
     ------
     KeyError
-        If ``category`` or ``intensity`` is not a known library bucket.
+        If ``pack`` is unknown or ``(category, intensity)`` is not a
+        known library bucket within that pack.
     FileNotFoundError
-        If the candidate name maps to a missing .wav on disk.  (Sanity
-        check — the generator in ``_generate_sfx.py`` populates every
-        name listed in ``_CATEGORY_FILES``.)
+        If the candidate name maps to a missing .wav on disk. (Sanity
+        check — CommonCreed's generator in ``_generate_sfx.py`` populates
+        every name in its pack; Vesper's pack must be pre-sourced.)
     """
-    if category not in _CATEGORY_FILES:
-        raise KeyError(f"Unknown SFX category: {category!r}")
-    bucket = _CATEGORY_FILES[category]
+    sfx_pack = _get_pack(pack)
+    if category not in sfx_pack.category_files:
+        raise KeyError(
+            f"Unknown SFX category: {category!r} in pack {sfx_pack.name!r}"
+        )
+    bucket = sfx_pack.category_files[category]
     if intensity not in bucket:
         raise KeyError(
-            f"Unknown intensity {intensity!r} for category {category!r}"
+            f"Unknown intensity {intensity!r} for category {category!r} "
+            f"in pack {sfx_pack.name!r}"
         )
     candidates = bucket[intensity]
     if not candidates:  # pragma: no cover — config sanity
         raise KeyError(
-            f"Empty SFX bucket for category={category!r} intensity={intensity!r}"
+            f"Empty SFX bucket for category={category!r} intensity={intensity!r} "
+            f"in pack {sfx_pack.name!r}"
         )
     rng = random.Random(seed)
     name = rng.choice(candidates)
-    path = SFX_DIR / f"{name}.wav"
+    path = sfx_pack.root_dir / f"{name}.wav"
     if not path.exists():
         raise FileNotFoundError(
-            f"SFX file missing on disk: {path} — "
-            f"run `python -m scripts.audio._generate_sfx` to repopulate"
+            f"SFX file missing on disk: {path} (pack={sfx_pack.name!r}) — "
+            f"repopulate pack before running the pipeline"
         )
     return path
 
@@ -218,6 +289,7 @@ def mix_sfx_into_audio(
     sfx_events: Iterable[SfxEvent],
     output_path: str,
     seed: int = 0,
+    pack: str = "commoncreed",
 ) -> str:
     """Mix all ``sfx_events`` into ``audio_path``, writing ``output_path``.
 
@@ -239,6 +311,10 @@ def mix_sfx_into_audio(
     seed : int
         Master RNG seed.  Derived per-event so the full pipeline stays
         deterministic for a given story.
+    pack : str
+        SFX pack name. Default ``"commoncreed"``. Vesper and other
+        channels pass their own pack name (registered via
+        :func:`register_pack`).
 
     Returns
     -------
@@ -253,7 +329,7 @@ def mix_sfx_into_audio(
     events = list(sfx_events)
 
     if not events:
-        log.info("mix_sfx_into_audio: no events → voiceover passthrough")
+        log.info("mix_sfx_into_audio: no events → voiceover passthrough (pack=%s)", pack)
         cmd = _voiceover_passthrough_cmd(audio_path, output_path)
         subprocess.run(cmd, check=True)
         return output_path
@@ -262,15 +338,14 @@ def mix_sfx_into_audio(
     # filter_complex labels.
     sfx_paths: list[Path] = []
     for i, ev in enumerate(events):
-        # Derive a per-event seed — hash(master_seed, index, category, intensity).
-        # Stable across runs because ``hash()`` of a tuple of ints/strs is
-        # reproducible *within a Python session* — for true
-        # cross-process stability we fold via a simple mixer.
         event_seed = _derive_event_seed(seed, i, ev.category, ev.intensity)
-        sfx_paths.append(pick_sfx(ev.category, ev.intensity, event_seed))
+        sfx_paths.append(pick_sfx(ev.category, ev.intensity, event_seed, pack=pack))
 
     cmd = _build_amix_cmd(audio_path, events, sfx_paths, output_path)
-    log.info("mix_sfx_into_audio: %d events, cmd=%s", len(events), shlex.join(cmd))
+    log.info(
+        "mix_sfx_into_audio: %d events (pack=%s) cmd=%s",
+        len(events), pack, shlex.join(cmd),
+    )
     subprocess.run(cmd, check=True)
     return output_path
 

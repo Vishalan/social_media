@@ -233,9 +233,61 @@ class VideoEditor:
     # Lip-sync offset for avatar provider. Set > 0 if lips lag audio.
     AVATAR_SYNC_OFFSET_S = 0.0
 
-    def __init__(self, output_dir: str = "output/video"):
+    # CommonCreed default palette + typography — kept as class-level
+    # defaults so ``VideoEditor()`` (no-arg) renders byte-identical to
+    # the pre-Unit-3 code. Per-channel callers (Vesper's future
+    # orchestrator) override via the constructor.
+    DEFAULT_CAPTION_PRIMARY = "#FFFFFF"       # opaque white fill
+    DEFAULT_CAPTION_ACCENT = "#5C9BFF"        # Sky-blue highlight ring / bord-as-bg
+    DEFAULT_CAPTION_SHADOW = "#1E3A8A"        # Navy drop-shadow outline
+    DEFAULT_CAPTION_FONT = "Inter"
+    DEFAULT_CAPTION_FONTSIZE = 64
+    DEFAULT_CAPTION_ACTIVE_FONTSIZE = 72
+    DEFAULT_SFX_PACK = "commoncreed"
+
+    def __init__(
+        self,
+        output_dir: str = "output/video",
+        *,
+        caption_primary: Optional[str] = None,
+        caption_accent: Optional[str] = None,
+        caption_shadow: Optional[str] = None,
+        caption_font: Optional[str] = None,
+        caption_fontsize: Optional[int] = None,
+        caption_active_fontsize: Optional[int] = None,
+        sfx_pack: Optional[str] = None,
+    ):
+        """Initialize the editor.
+
+        Per-channel style knobs default to CommonCreed-tuned values when
+        ``None`` — the no-arg constructor renders byte-identical to the
+        pre-Unit-3 behavior. Vesper's future orchestrator passes the
+        horror-tuned palette + typography + pack here.
+
+        Args:
+            output_dir: Output directory for assembled MP4s.
+            caption_primary: Hex color (``#RRGGBB``) for inactive-word fill.
+            caption_accent: Hex color for active-word highlight bord.
+            caption_shadow: Hex color for caption drop-shadow outline.
+            caption_font: ASS ``Fontname`` for captions.
+            caption_fontsize: Inactive-word font size.
+            caption_active_fontsize: Active-word font size (larger = pop).
+            sfx_pack: SFX pack name forwarded to ``mix_sfx_into_audio``.
+        """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        self._caption_primary = caption_primary or self.DEFAULT_CAPTION_PRIMARY
+        self._caption_accent = caption_accent or self.DEFAULT_CAPTION_ACCENT
+        self._caption_shadow = caption_shadow or self.DEFAULT_CAPTION_SHADOW
+        self._caption_font = caption_font or self.DEFAULT_CAPTION_FONT
+        self._caption_fontsize = (
+            caption_fontsize or self.DEFAULT_CAPTION_FONTSIZE
+        )
+        self._caption_active_fontsize = (
+            caption_active_fontsize or self.DEFAULT_CAPTION_ACTIVE_FONTSIZE
+        )
+        self._sfx_pack = sfx_pack or self.DEFAULT_SFX_PACK
 
     def assemble(
         self,
@@ -901,6 +953,7 @@ class VideoEditor:
                     sfx_events=sfx_events,
                     output_path=sfx_track_path,
                     seed=0,
+                    pack=self._sfx_pack,
                 )
                 audio_input_path = sfx_track_path
             else:
@@ -984,7 +1037,12 @@ class VideoEditor:
             A complete ASS subtitle file as a string.
         """
         # Local imports keep module import lean and avoid circular edges.
-        from branding import NAVY, SKY_BLUE, to_ass_color
+        # Per-channel palette + typography live on ``self`` (set via the
+        # constructor); colors flow through ``branding.to_ass_color`` for
+        # deterministic hex → ASS encoding. CommonCreed defaults preserve
+        # byte-identical rendering pre-Unit-3; Vesper overrides palette
+        # to bone/blood/graphite for its horror register.
+        from branding import to_ass_color
 
         # ASS timestamp format: H:MM:SS.cc (centiseconds).
         def _ts(seconds: float) -> str:
@@ -1005,15 +1063,15 @@ class VideoEditor:
                     return cy_center
             return cy_default
 
-        # ── Brand colors (derived via branding.to_ass_color, never hardcoded).
-        navy_ass = to_ass_color(NAVY)       # &H008A3A1E& — drop-shadow on inactive words
-        sky_ass = to_ass_color(SKY_BLUE)    # &H00FF9B5C& — active-word highlight ring
-        white_ass = "&H00FFFFFF&"           # opaque white primary fill
+        # ── Brand colors: resolved from per-instance palette. ``to_ass_color``
+        # handles the hex → BGR+alpha ASS encoding.
+        primary_ass = to_ass_color(self._caption_primary)  # inactive-word fill
+        accent_ass = to_ass_color(self._caption_accent)    # active-word highlight
+        shadow_ass = to_ass_color(self._caption_shadow)    # drop-shadow outline
 
-        # Font sizes: the active word renders a full step larger so the karaoke
-        # beat reads as a "pop".
-        DEFAULT_FONTSIZE = 64
-        ACTIVE_FONTSIZE = 72
+        font_name = self._caption_font
+        DEFAULT_FONTSIZE = self._caption_fontsize
+        ACTIVE_FONTSIZE = self._caption_active_fontsize
 
         header = (
             "[Script Info]\n"
@@ -1027,14 +1085,14 @@ class VideoEditor:
             "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
             "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
             "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-            # Caption: white fill, navy outline, thin border (3px) = drop-shadow feel.
-            f"Style: Caption,Inter,{DEFAULT_FONTSIZE},{white_ass},&H000000FF,"
-            f"{navy_ass},&H00000000,1,0,0,0,100,100,0,0,1,3,0,5,10,10,10,1\n"
-            # CaptionActive: larger size, white fill, sky-blue thick outline used as
-            # a background highlight (bord-as-bg). Border thickness is overridden
-            # inline per-Dialogue as well, but the style provides a sane default.
-            f"Style: CaptionActive,Inter,{ACTIVE_FONTSIZE},{white_ass},&H000000FF,"
-            f"{sky_ass},&H00000000,1,0,0,0,100,100,0,0,1,12,0,5,10,10,10,1\n"
+            # Caption: primary fill, shadow outline, thin border (3px) = drop-shadow feel.
+            f"Style: Caption,{font_name},{DEFAULT_FONTSIZE},{primary_ass},&H000000FF,"
+            f"{shadow_ass},&H00000000,1,0,0,0,100,100,0,0,1,3,0,5,10,10,10,1\n"
+            # CaptionActive: larger size, primary fill, accent-color thick outline
+            # used as a background highlight (bord-as-bg). Border thickness is
+            # overridden inline per-Dialogue as well; the style gives a sane default.
+            f"Style: CaptionActive,{font_name},{ACTIVE_FONTSIZE},{primary_ass},&H000000FF,"
+            f"{accent_ass},&H00000000,1,0,0,0,100,100,0,0,1,12,0,5,10,10,10,1\n"
             "\n"
             "[Events]\n"
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -1152,14 +1210,16 @@ class VideoEditor:
                 start_ts = _ts(float(seg["start"]))
                 end_ts = _ts(float(seg["end"]))
 
-                # Active-word override: thick sky-blue border as background
-                # highlight, using the brand SKY_BLUE color token. The \bord12
-                # here is redundant with the style default but makes the line
-                # robust to any future Style: edits.
+                # Active-word override: thick accent-color border as background
+                # highlight. The \bord12 here is redundant with the style default
+                # but makes the line robust to any future Style: edits. Colors
+                # come from the per-channel palette (self._caption_primary and
+                # self._caption_accent) so Vesper's bone + oxidized-blood pair
+                # rides through exactly like CommonCreed's white + sky-blue did.
                 active_override = (
                     f"{{{pos_override}"
-                    f"\\1c{white_ass}"
-                    f"\\3c{sky_ass}"
+                    f"\\1c{primary_ass}"
+                    f"\\3c{accent_ass}"
                     f"\\bord12}}"
                 )
                 lines.append(

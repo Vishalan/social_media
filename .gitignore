@@ -24,8 +24,11 @@ outputs/
 assets/input_media/
 assets/spike/
 
-# Whitelist curated SFX bundle (Unit 0.3) — these ARE committed despite *.wav rule above.
+# Whitelist curated SFX bundles — these ARE committed despite *.wav rule above.
 !assets/sfx/*.wav
+# Vesper channel SFX pack (Unit 3 scaffolding; owner sources the actual .wav
+# files pre-launch per the Vesper launch runbook).
+!assets/vesper/sfx/*.wav
 
 # macOS
 .DS_Store
