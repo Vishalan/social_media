@@ -83,6 +83,48 @@ class DeriveEventsTests(unittest.TestCase):
         events = derive_sfx_events(tl)
         self.assertEqual(events, [])
 
+    def test_keyword_punches_emit_reveal_events(self):
+        """Keyword punches become 'reveal' SFX at those timestamps —
+        the "SFX-flash on keyword-punch" cue from K.D. #10."""
+        from vesper_pipeline.keyword_punch import KeywordPunch
+
+        tl = Timeline(beats=[
+            _beat(BeatMode.STILL_KENBURNS, "push_in", 4.0),
+            _beat(BeatMode.STILL_KENBURNS, "pull_back", 4.0),
+            _beat(BeatMode.STILL_KENBURNS, "slow_pan_left", 4.0),
+        ])
+        punches = [
+            KeywordPunch(t_seconds=1.2, word="whispered", reason="long_word"),
+            KeywordPunch(t_seconds=6.8, word="DAVID", reason="capitalized"),
+            KeywordPunch(t_seconds=10.5, word="silence.", reason="end_of_sentence"),
+        ]
+        events = derive_sfx_events(tl, keyword_punches=punches)
+        reveals = [e for e in events if e.category == "reveal"]
+        # All three land at unique timestamps far from the beat cuts
+        # at t=4 and t=8, so all survive the dedup filter.
+        self.assertEqual(len(reveals), 3)
+        self.assertEqual(
+            sorted(round(r.t_seconds, 2) for r in reveals),
+            [1.2, 6.8, 10.5],
+        )
+
+    def test_keyword_punch_colliding_with_cut_is_deduped(self):
+        """A punch landing within 0.25 s of an existing cut/punch is
+        suppressed so the audio track isn't muddy."""
+        from vesper_pipeline.keyword_punch import KeywordPunch
+
+        tl = Timeline(beats=[
+            _beat(BeatMode.STILL_KENBURNS, "push_in", 3.0),
+            _beat(BeatMode.STILL_KENBURNS, "pull_back", 3.0),
+        ])
+        # Cut lands at t=3.0; this punch at t=3.05 is too close.
+        punches = [
+            KeywordPunch(t_seconds=3.05, word="dark", reason="long_word"),
+        ]
+        events = derive_sfx_events(tl, keyword_punches=punches)
+        reveals = [e for e in events if e.category == "reveal"]
+        self.assertEqual(reveals, [])
+
 
 class SfxMixStageRunTests(unittest.TestCase):
     def setUp(self):

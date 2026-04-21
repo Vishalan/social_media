@@ -41,6 +41,10 @@ class VesperJob:
     voice_duration_s: float = 0.0
     # Word-level timings from faster-whisper: {word, start, end}
     caption_segments: List[dict] = field(default_factory=list)
+    # Detected emphasis punches — populated from caption_segments by
+    # :func:`scripts.vesper_pipeline.keyword_punch.detect_keyword_punches`.
+    # Typed loosely so this module doesn't pull in the detector.
+    keyword_punches: List[Any] = field(default_factory=list)
 
     # ─── Timeline + visuals ───
     beat_count: int = 0

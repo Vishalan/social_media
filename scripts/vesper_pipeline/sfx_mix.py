@@ -30,7 +30,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, Sequence
 
 _SCRIPTS = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS) not in sys.path:
@@ -47,11 +47,21 @@ logger = logging.getLogger(__name__)
 _MIN_EVENT_GAP_S = 0.25
 
 
-def derive_sfx_events(timeline: Timeline) -> list:
-    """Return a list of ``SfxEvent`` dicts keyed to timeline beats.
+def derive_sfx_events(
+    timeline: Timeline,
+    *,
+    keyword_punches: Optional[Sequence] = None,
+) -> list:
+    """Return a list of ``SfxEvent`` dicts keyed to timeline beats +
+    (optionally) keyword punches.
 
     Typed loosely (``Any``) at the public boundary so tests can stub
     :mod:`scripts.audio.sfx` without importing ffmpeg-pinned deps.
+
+    :param keyword_punches: Optional list of ``KeywordPunch``-like
+        objects with a ``t_seconds`` attribute. Each emits a light
+        ``reveal`` event at that timestamp — the "SFX-flash on
+        keyword-punch" cue from plan Key Decision #10.
     """
     from audio.sfx import SfxEvent  # type: ignore
 
@@ -83,7 +93,31 @@ def derive_sfx_events(timeline: Timeline) -> list:
                 ))
 
         cumulative += beat.duration_s
+
+    # Keyword-punch reveals — dedup against the cut/punch timeline so
+    # a punch that coincides with a hero entry doesn't stack. The
+    # detector's own density cap already rate-limits these.
+    if keyword_punches:
+        existing = sorted(e.t_seconds for e in events)
+        for kp in keyword_punches:
+            t = round(float(getattr(kp, "t_seconds", 0.0)), 3)
+            if _too_close(t, existing):
+                continue
+            events.append(SfxEvent(
+                t_seconds=t, category="reveal", intensity="light",
+            ))
+            existing.append(t)
+            existing.sort()
     return events
+
+
+def _too_close(t: float, sorted_existing: List[float]) -> bool:
+    """Return True if ``t`` is within ``_MIN_EVENT_GAP_S`` of any
+    timestamp in the pre-sorted list (O(N) — N is small enough)."""
+    for e in sorted_existing:
+        if abs(t - e) < _MIN_EVENT_GAP_S:
+            return True
+    return False
 
 
 # ─── Stage wrapper ─────────────────────────────────────────────────────────
@@ -118,7 +152,11 @@ class SfxMixStage:
             return False
 
         deriver = self.event_deriver or derive_sfx_events
-        events = deriver(timeline)
+        kwargs: dict = {}
+        kp = getattr(job, "keyword_punches", None)
+        if kp:
+            kwargs["keyword_punches"] = kp
+        events = deriver(timeline, **kwargs) if kwargs else deriver(timeline)
         if not events:
             logger.info("SfxMixStage: no events derived for job=%s",
                         getattr(job, "job_id", "?"))

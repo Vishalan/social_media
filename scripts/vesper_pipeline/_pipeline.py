@@ -347,7 +347,12 @@ class VesperPipeline:
         Optional: when :attr:`self.transcriber` is None, caption_segments
         stay empty and the assembler renders without burned captions.
         Plan Key Decision #15 calls captions a hard blocker, so the
-        orchestrator logs loudly when they're missing."""
+        orchestrator logs loudly when they're missing.
+
+        On successful transcription, also derive keyword punches from
+        the segments — these feed the SFX stage's "SFX-flash on
+        keyword-punch" cue (Key Decision #10) and future zoom-bell
+        passes."""
         transcriber = getattr(self, "transcriber", None)
         if transcriber is None or not job.voice_path:
             return True
@@ -363,6 +368,22 @@ class VesperPipeline:
                 job.job_id, exc,
             )
             job.caption_segments = []
+            return True
+
+        # Derive keyword punches for SFX + future zoom bells.
+        try:
+            from .keyword_punch import detect_keyword_punches
+            job.keyword_punches = detect_keyword_punches(job.caption_segments)
+            logger.info(
+                "transcribe_voice: detected %d keyword punch(es) for %s",
+                len(job.keyword_punches), job.job_id,
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "transcribe_voice: keyword-punch detection failed for %s: %s",
+                job.job_id, exc,
+            )
+            job.keyword_punches = []
         return True
 
     def mix_sfx(self, job: VesperJob) -> bool:
