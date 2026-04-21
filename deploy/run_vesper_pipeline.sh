@@ -26,14 +26,4 @@ if [ -f "$PROJECT_DIR/.env" ]; then
 fi
 
 cd "$SCRIPTS_DIR"
-# Vesper entrypoint: the package's CLI (to be added as a __main__.py
-# in a follow-up; for now callers import and invoke VesperPipeline().run_daily()
-# via an inline -c. When __main__ lands, replace with:
-#   exec /usr/bin/python3 -m vesper_pipeline
-exec /usr/bin/python3 -c "
-import logging, sys
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(name)s %(levelname)s %(message)s')
-from vesper_pipeline_runtime import build_pipeline_from_env
-pipe = build_pipeline_from_env()
-pipe.run_daily()
-" >> "$LOG_FILE" 2>&1
+exec /usr/bin/python3 -m vesper_pipeline >> "$LOG_FILE" 2>&1
