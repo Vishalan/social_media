@@ -108,6 +108,17 @@ class GmailClient:
         )
         self._service = build("gmail", "v1", credentials=creds, cache_discovery=False)
 
+    def get_profile(self) -> Optional[dict]:
+        """Return the authenticated user's Gmail profile, or None on error.
+
+        Used by the health_ping job to verify the OAuth token is still valid
+        end-to-end (exercises credential refresh + a real API round-trip).
+        """
+        try:
+            return self._service.users().getProfile(userId="me").execute()
+        except Exception:
+            return None
+
     def fetch_latest_newsletter(
         self,
         sender: str = "dan@tldrnewsletter.com",
