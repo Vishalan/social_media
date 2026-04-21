@@ -113,6 +113,11 @@ class VesperAssembler:
     caption_style: Optional[Any] = None
     # Injectable for tests: defaults to subprocess.run.
     ass_burn_runner: Optional[Any] = None
+    # Optional overlay pack (grain/dust/flicker/fog). When provided,
+    # runs a pre-caption FFmpeg pass so captions sit on top of the
+    # overlays. None → raw video.
+    overlay_pack: Optional[Any] = None
+    overlay_burner: Optional[Any] = None
 
     def assemble(self, *, job: VesperJob, output_path: str) -> str:
         """Produce a 9:16 MP4 at ``output_path``. Returns the path.
@@ -174,28 +179,79 @@ class VesperAssembler:
 
         final = _apply_audio(video, audio)
 
-        # If captions are active, write to a staging path first, then
-        # burn ASS in a second FFmpeg pass. The direct-to-output shortcut
-        # is preserved for tests / caption-disabled runs.
+        # Post-write passes run as FFmpeg subprocess steps so we can
+        # chain overlay → captions without going through MoviePy twice.
+        #
+        # Order matters:
+        #   1. MoviePy write → raw concat MP4 (staging_raw)
+        #   2. Overlay pass  → grain/dust/flicker/fog baked in (staging_ov)
+        #   3. Caption pass  → ASS subs ON TOP of overlays (output_path)
+        # Staging files are cleaned up regardless of which passes run.
         caption_segments = getattr(job, "caption_segments", None)
-        if self.caption_style is not None and caption_segments:
-            staging_path = output_path + ".nocap.mp4"
-            _write_file(final, staging_path, fps=self.fps)
-            self._burn_captions(staging_path, caption_segments, output_path)
-            try:
-                Path(staging_path).unlink(missing_ok=True)
-            except OSError:
-                pass
+        want_captions = bool(self.caption_style and caption_segments)
+        want_overlays = self.overlay_pack is not None
+        staging_raw: Optional[str] = None
+        staging_ov: Optional[str] = None
+
+        if want_overlays or want_captions:
+            staging_raw = output_path + ".stage0.mp4"
+            _write_file(final, staging_raw, fps=self.fps)
+            current = staging_raw
+
+            if want_overlays:
+                staging_ov = output_path + ".stage1.mp4"
+                applied = self._apply_overlays(current, staging_ov)
+                if applied:
+                    current = staging_ov
+                else:
+                    # Zero-layer pack: skip the overlay output and keep
+                    # the raw staging MP4 as current.
+                    try:
+                        Path(staging_ov).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    staging_ov = None
+
+            if want_captions:
+                self._burn_captions(current, caption_segments, output_path)
+            else:
+                # No captions — promote current to output.
+                import shutil as _sh
+                _sh.move(current, output_path)
+                current = output_path
+
+            # Clean up any staging files we're done with.
+            for p in (staging_raw, staging_ov):
+                if p and Path(p).exists() and p != output_path:
+                    try:
+                        Path(p).unlink(missing_ok=True)
+                    except OSError:
+                        pass
         else:
             _write_file(final, output_path, fps=self.fps)
 
         logger.info(
-            "VesperAssembler: wrote %s (%d beats, %.1fs, captions=%s)",
+            "VesperAssembler: wrote %s (%d beats, %.1fs, overlays=%s, captions=%s)",
             output_path, len(clips),
             sum(b.duration_s for b in beats),
-            "yes" if (self.caption_style and caption_segments) else "no",
+            "yes" if want_overlays else "no",
+            "yes" if want_captions else "no",
         )
         return output_path
+
+    def _apply_overlays(self, input_mp4: str, output_mp4: str) -> bool:
+        """Run the overlay burner; return True when FFmpeg actually
+        wrote output_mp4, False when the pack had zero layers."""
+        burner = self.overlay_burner
+        if burner is None:
+            # Lazy-import so tests without ffmpeg don't pay the cost.
+            from .overlays import OverlayBurner
+            burner = OverlayBurner()
+        return burner.apply(
+            input_mp4=input_mp4,
+            output_mp4=output_mp4,
+            pack=self.overlay_pack,
+        )
 
     def _burn_captions(
         self,

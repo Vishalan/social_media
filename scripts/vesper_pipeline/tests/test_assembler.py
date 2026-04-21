@@ -454,6 +454,171 @@ class CaptionBurnTests(unittest.TestCase):
         self.assertFalse(staging.exists(), "staging file must be cleaned up")
 
 
+class OverlayPassTests(unittest.TestCase):
+    """Overlay pack runs as an FFmpeg pass between MoviePy write and
+    (optional) caption burn. Captions must land ON TOP of overlays."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp(prefix="vesper-ov-"))
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _job(self):
+        tl = _mixed_timeline()
+        return _job_for_timeline(tl, self.tmp)
+
+    def _fake_overlay_burner(self, *, applied: bool = True, raise_exc=None):
+        class _Burner:
+            def __init__(self):
+                self.calls: List[dict] = []
+
+            def apply(self, *, input_mp4, output_mp4, pack):
+                self.calls.append({
+                    "input_mp4": input_mp4,
+                    "output_mp4": output_mp4,
+                    "pack": pack,
+                })
+                if raise_exc is not None:
+                    raise raise_exc
+                if applied:
+                    Path(output_mp4).write_bytes(b"overlaid mp4")
+                return applied
+
+        return _Burner()
+
+    def _fake_ass_runner(self):
+        class _R:
+            def __init__(self):
+                self.calls: List[list] = []
+
+            def __call__(self, cmd, capture_output=False, **kw):
+                self.calls.append(list(cmd))
+
+                class _Res:
+                    returncode = 0
+                    stdout = b""
+                    stderr = b""
+
+                Path(cmd[-1]).write_bytes(b"captioned mp4")
+                return _Res()
+
+        return _R()
+
+    def _style(self):
+        from vesper_pipeline.captions import CaptionStyle
+        return CaptionStyle(
+            primary="#E8E2D4", accent="#8B1A1A", shadow="#2C2826",
+            font_name="CormorantGaramond-Bold",
+        )
+
+    def test_overlay_only_runs_when_pack_provided(self):
+        factory = _FakeClipFactory()
+        burner = self._fake_overlay_burner()
+        asm = VesperAssembler(
+            clip_factory=factory,
+            overlay_pack="fake-pack-sentinel",
+            overlay_burner=burner,
+        )
+        out = str(self.tmp / "final.mp4")
+        asm.assemble(job=self._job(), output_path=out)
+        self.assertEqual(len(burner.calls), 1)
+        self.assertEqual(burner.calls[0]["pack"], "fake-pack-sentinel")
+        # Output path written — overlay output promoted to final.
+        self.assertTrue(Path(out).exists())
+
+    def test_no_overlay_when_pack_none(self):
+        factory = _FakeClipFactory()
+        burner = self._fake_overlay_burner()
+        asm = VesperAssembler(
+            clip_factory=factory,
+            overlay_pack=None,
+            overlay_burner=burner,
+        )
+        asm.assemble(
+            job=self._job(),
+            output_path=str(self.tmp / "final.mp4"),
+        )
+        self.assertEqual(burner.calls, [])
+
+    def test_overlay_then_captions_chained(self):
+        """With both overlays + captions, overlay runs first, then
+        caption burn writes the final output. Captions sit on top."""
+        factory = _FakeClipFactory()
+        overlay = self._fake_overlay_burner()
+        ass_runner = self._fake_ass_runner()
+        job = self._job()
+        job.caption_segments = [
+            {"word": "hi", "start": 0.0, "end": 0.3},
+        ]
+        asm = VesperAssembler(
+            clip_factory=factory,
+            overlay_pack="sentinel",
+            overlay_burner=overlay,
+            caption_style=self._style(),
+            ass_burn_runner=ass_runner,
+        )
+        out = str(self.tmp / "final.mp4")
+        asm.assemble(job=job, output_path=out)
+
+        self.assertEqual(len(overlay.calls), 1)
+        self.assertEqual(len(ass_runner.calls), 1)
+
+        # Caption pass reads from the overlay's output (stage1), not
+        # the raw MoviePy stage0. Its -i argument proves the ordering.
+        ass_cmd = ass_runner.calls[0]
+        in_idx = ass_cmd.index("-i")
+        caption_input = ass_cmd[in_idx + 1]
+        self.assertIn(".stage1.mp4", caption_input)
+
+    def test_zero_layer_pack_falls_through_to_captions(self):
+        """If overlay burner returns False (pack had no wavs), caption
+        burn still runs against the raw MoviePy output."""
+        factory = _FakeClipFactory()
+        overlay = self._fake_overlay_burner(applied=False)
+        ass_runner = self._fake_ass_runner()
+        job = self._job()
+        job.caption_segments = [
+            {"word": "hi", "start": 0.0, "end": 0.3},
+        ]
+        asm = VesperAssembler(
+            clip_factory=factory,
+            overlay_pack="sentinel",
+            overlay_burner=overlay,
+            caption_style=self._style(),
+            ass_burn_runner=ass_runner,
+        )
+        asm.assemble(
+            job=job,
+            output_path=str(self.tmp / "final.mp4"),
+        )
+        # Overlay attempted but returned False → caption input is stage0
+        self.assertEqual(len(overlay.calls), 1)
+        self.assertEqual(len(ass_runner.calls), 1)
+        ass_cmd = ass_runner.calls[0]
+        caption_input = ass_cmd[ass_cmd.index("-i") + 1]
+        self.assertIn(".stage0.mp4", caption_input)
+        self.assertNotIn(".stage1.mp4", caption_input)
+
+    def test_overlay_without_captions_promotes_overlay_output(self):
+        """Pack applied + no captions → overlay output becomes final."""
+        factory = _FakeClipFactory()
+        overlay = self._fake_overlay_burner()
+        asm = VesperAssembler(
+            clip_factory=factory,
+            overlay_pack="sentinel",
+            overlay_burner=overlay,
+        )
+        out = str(self.tmp / "final.mp4")
+        asm.assemble(job=self._job(), output_path=out)
+        self.assertTrue(Path(out).exists())
+        # Staging files cleaned up.
+        self.assertFalse(Path(out + ".stage0.mp4").exists())
+        self.assertFalse(Path(out + ".stage1.mp4").exists())
+
+
 class KenBurnsDurationTests(unittest.TestCase):
     def setUp(self):
         import tempfile

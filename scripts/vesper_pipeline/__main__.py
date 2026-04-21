@@ -92,6 +92,7 @@ def build_pipeline_from_env():
     from . import VesperPipeline, VesperPipelineConfig
     from .assembler import VesperAssembler
     from .captions import caption_style_from_palette, transcribe_voice
+    from .overlays import build_overlay_pack
     from .parallax_adapter import VesperParallaxAdapter
     from .sfx_mix import SfxMixStage
     from .thumbnail_adapter import VesperThumbnailAdapter
@@ -205,7 +206,11 @@ def build_pipeline_from_env():
         profile.palette, profile.thumbnail,
     )
     sfx_mix_stage = SfxMixStage(pack_name="vesper")  # matches channels/vesper.py::_register_sfx_pack
-    assembler = VesperAssembler(caption_style=caption_style)
+    overlay_pack = build_overlay_pack("vesper")
+    assembler = VesperAssembler(
+        caption_style=caption_style,
+        overlay_pack=overlay_pack,
+    )
     thumbnails = VesperThumbnailAdapter(
         palette=profile.palette,
         thumbnail_style=profile.thumbnail,
