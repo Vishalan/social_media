@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 
 
 @dataclass
@@ -42,6 +42,9 @@ class VesperJob:
 
     # ─── Timeline + visuals ───
     beat_count: int = 0
+    # Populated by the timeline_planner stage when wired. Left Any so
+    # this module doesn't force importing still_gen at type-check time.
+    timeline: Optional[Any] = None
     still_paths: List[str] = field(default_factory=list)
     parallax_paths: List[str] = field(default_factory=list)
     i2v_paths: List[str] = field(default_factory=list)

@@ -41,8 +41,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Protocol, Sequence
 
-from ._types import VesperJob
-from .cost_telemetry import CostLedger, CostStage
+# Path bootstrap — absolute-import collaborators under scripts/.
+_SCRIPTS = Path(__file__).resolve().parent.parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from still_gen._types import Beat, BeatMode, Timeline  # noqa: E402
+
+from ._types import VesperJob  # noqa: E402
+from .cost_telemetry import CostLedger, CostStage  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +80,14 @@ class _ArchivistWriter(Protocol):
 class _VoiceGenerator(Protocol):
     def preflight(self) -> Any: ...
     def generate(self, text: str, output_path: str) -> Any: ...
+
+
+class _TimelinePlanner(Protocol):
+    """Emits a lint-clean :class:`Timeline` from the story text."""
+
+    def plan(
+        self, *, story_text: str, voice_duration_s: float,
+    ) -> Timeline: ...
 
 
 class _FluxBackend(Protocol):
@@ -194,6 +209,7 @@ class VesperPipeline:
         rate_ledger: _RateLedger,
         tracker: _AnalyticsTracker,
         async_runner: Callable[[Any], Any],
+        timeline_planner: Optional[_TimelinePlanner] = None,
         cost_ledger_factory: Callable[[], CostLedger] = CostLedger,
     ) -> None:
         self.config = config
@@ -209,6 +225,7 @@ class VesperPipeline:
         self.publisher = publisher
         self.rate_ledger = rate_ledger
         self.tracker = tracker
+        self.timeline_planner = timeline_planner
         self._run_async = async_runner
         self._cost_ledger_factory = cost_ledger_factory
 
@@ -320,27 +337,57 @@ class VesperPipeline:
         job.voice_duration_s = float(getattr(result, "duration_s", 0.0))
         return True
 
+    def plan_timeline(self, job: VesperJob) -> bool:
+        """Stage 4.5 — Beat list with modes + per-beat Flux prompts.
+
+        Optional: when ``self.timeline_planner`` is None, this stage is
+        a no-op and downstream stages fall back to the heuristic
+        (homogenous prompts from the story text, fixed mode ratios).
+        """
+        if self.timeline_planner is None:
+            return True
+        try:
+            timeline = self.timeline_planner.plan(
+                story_text=job.story_script or "",
+                voice_duration_s=job.voice_duration_s,
+            )
+        except Exception as exc:
+            self._fail(job, "plan_timeline", f"planner error: {exc}")
+            return False
+        job.timeline = timeline
+        job.beat_count = getattr(timeline, "count", 0) or len(
+            getattr(timeline, "beats", [])
+        )
+        return True
+
     def generate_stills(self, job: VesperJob, beat_count: int) -> bool:
         """Stage 5 — Flux stills for every beat.
 
-        Each still is a local-first call to the :class:`FluxRouter`
-        (injected as ``self.flux``). The router handles fallback
-        internally; we only record one fallback invocation per beat
-        that fell back (via the router's telemetry post-run).
+        When the timeline planner ran, uses the per-beat Flux prompt
+        from ``job.timeline.beats[i].prompt`` (hero I2V beats skip —
+        they get their motion-prompt elsewhere). Otherwise falls back
+        to the story-text placeholder for all beats.
         """
         job.beat_count = beat_count
+        timeline_beats = None
+        if job.timeline is not None:
+            timeline_beats = list(getattr(job.timeline, "beats", []))
+
         stills: List[str] = []
         for idx in range(beat_count):
+            beat = timeline_beats[idx] if timeline_beats else None
+            # Hero I2V beats don't use a Flux still — skip but preserve
+            # slot alignment by recording an empty path.
+            if beat is not None and beat.mode == BeatMode.HERO_I2V:
+                stills.append("")
+                continue
+            prompt = (
+                beat.prompt if (beat is not None and beat.prompt)
+                else (job.story_script or "")
+            )
             out = self._path("stills", f"{job.job_id}_{idx:03d}", ext="png")
             try:
-                # Actual prompt construction is the timeline-planner's
-                # job — the pipeline just forwards a placeholder here so
-                # downstream wiring works today. Unit 11 follow-up wires
-                # the per-beat prompts from the timeline planner.
-                self._run_async(self.flux.generate(
-                    job.story_script or "",  # placeholder; see note
-                    out,
-                ))
+                self._run_async(self.flux.generate(prompt, out))
             except Exception as exc:
                 self._fail(
                     job, "generate_stills",
@@ -353,15 +400,24 @@ class VesperPipeline:
 
     def animate_still_beats(self, job: VesperJob, ledger: CostLedger) -> bool:
         """Stage 6 — Parallax for ≥30% of beats. I2V for ~20% when the
-        backend is present AND the cost ledger isn't near ceiling."""
-        parallax_count = max(1, int(job.beat_count * 0.30))
-        # I2V target: 20% of beats, subject to cost gate + backend presence.
-        i2v_target = int(job.beat_count * 0.20)
+        backend is present AND the cost ledger isn't near ceiling.
+
+        When ``job.timeline`` is populated, per-beat mode routing is
+        driven by the timeline (still_parallax beats → parallax,
+        hero_i2v beats → i2v). Otherwise falls back to the heuristic:
+        first ~30% of beats parallax, next ~20% i2v.
+        """
+        timeline_beats = None
+        if job.timeline is not None:
+            timeline_beats = list(getattr(job.timeline, "beats", []))
+
+        # Cost + backend gate for hero_i2v (whether by timeline or
+        # heuristic — same policy).
+        heuristic_i2v_target = int(job.beat_count * 0.20)
         use_i2v = (
             self.i2v is not None
-            and i2v_target > 0
             and not ledger.should_skip_i2v(
-                i2v_target * self.config.i2v_fallback_est_usd
+                heuristic_i2v_target * self.config.i2v_fallback_est_usd
             )
         )
         if self.i2v is None:
@@ -376,10 +432,112 @@ class VesperPipeline:
         parallax_paths: List[str] = []
         i2v_paths: List[str] = []
 
-        # First `parallax_count` beats → parallax.
+        if timeline_beats is not None:
+            ok = self._animate_from_timeline(
+                job, timeline_beats, use_i2v, parallax_paths, i2v_paths,
+            )
+        else:
+            ok = self._animate_heuristic(
+                job, heuristic_i2v_target, use_i2v,
+                parallax_paths, i2v_paths,
+            )
+        if not ok:
+            return False
+
+        job.parallax_paths = parallax_paths
+        job.i2v_paths = i2v_paths
+        return True
+
+    def _animate_from_timeline(
+        self,
+        job: VesperJob,
+        beats: list,
+        use_i2v: bool,
+        parallax_paths: List[str],
+        i2v_paths: List[str],
+    ) -> bool:
+        """Drive animation by timeline mode. Kenburns beats are animated
+        later in MoviePy assembly (nothing to do here). Parallax beats
+        call the parallax backend. Hero_i2v beats call the i2v backend
+        when enabled; otherwise degrade to parallax on the same still."""
+        for idx, beat in enumerate(beats):
+            if beat.mode == BeatMode.STILL_KENBURNS:
+                continue  # handled in MoviePy
+            still_path = job.still_paths[idx]
+            if beat.mode == BeatMode.STILL_PARALLAX:
+                out = self._path(
+                    "parallax", f"{job.job_id}_{idx:03d}", ext="mp4",
+                )
+                try:
+                    self._run_async(self.parallax.animate(
+                        still_path, out, duration_s=beat.duration_s,
+                    ))
+                except Exception as exc:
+                    self._fail(
+                        job, "animate_still_beats",
+                        f"parallax beat {idx}: {exc}",
+                    )
+                    return False
+                parallax_paths.append(out)
+            elif beat.mode == BeatMode.HERO_I2V:
+                # Hero i2v beats skipped Flux stills — need a source.
+                # Use the still from the previous still-beat as the
+                # motion anchor (tried and true pattern: hero shots
+                # animate an adjacent establishing still).
+                source = self._nearest_still_before(job.still_paths, idx)
+                if use_i2v and source:
+                    out = self._path(
+                        "i2v", f"{job.job_id}_{idx:03d}", ext="mp4",
+                    )
+                    try:
+                        self._run_async(self.i2v.generate(  # type: ignore[union-attr]
+                            source, out,
+                            motion_hint=beat.motion_hint,
+                        ))
+                        i2v_paths.append(out)
+                        continue
+                    except Exception as exc:
+                        logger.warning(
+                            "i2v beat %d failed (%s) — degrading to parallax",
+                            idx, exc,
+                        )
+                # Degrade to parallax on the nearest still.
+                if not source:
+                    logger.warning(
+                        "i2v beat %d has no source still to degrade to parallax; skipping",
+                        idx,
+                    )
+                    continue
+                fb_out = self._path(
+                    "parallax", f"{job.job_id}_{idx:03d}_fb", ext="mp4",
+                )
+                try:
+                    self._run_async(self.parallax.animate(
+                        source, fb_out, duration_s=beat.duration_s,
+                    ))
+                except Exception as exc:
+                    self._fail(
+                        job, "animate_still_beats",
+                        f"i2v+parallax both failed on beat {idx}: {exc}",
+                    )
+                    return False
+                parallax_paths.append(fb_out)
+        return True
+
+    def _animate_heuristic(
+        self,
+        job: VesperJob,
+        i2v_target: int,
+        use_i2v: bool,
+        parallax_paths: List[str],
+        i2v_paths: List[str],
+    ) -> bool:
+        """Fallback path — preserves the pre-timeline behavior for
+        pipelines wired without a timeline planner (e.g. tests)."""
+        parallax_count = max(1, int(job.beat_count * 0.30))
         for idx in range(parallax_count):
             out = self._path(
-                "parallax", f"{job.job_id}_{idx:03d}", ext="mp4"
+                "parallax", f"{job.job_id}_{idx:03d}", ext="mp4",
             )
             try:
                 self._run_async(self.parallax.animate(
@@ -393,44 +551,51 @@ class VesperPipeline:
                 return False
             parallax_paths.append(out)
 
-        # Next `i2v_target` beats → i2v (when allowed).
-        if use_i2v:
-            for k in range(i2v_target):
-                idx = parallax_count + k
-                out = self._path(
-                    "i2v", f"{job.job_id}_{idx:03d}", ext="mp4"
+        if not use_i2v:
+            return True
+        for k in range(i2v_target):
+            idx = parallax_count + k
+            out = self._path("i2v", f"{job.job_id}_{idx:03d}", ext="mp4")
+            try:
+                self._run_async(self.i2v.generate(  # type: ignore[union-attr]
+                    job.still_paths[idx], out,
+                    motion_hint="subtle_dolly_in",
+                ))
+            except Exception as exc:
+                logger.warning(
+                    "i2v beat %d failed (%s) — degrading to parallax",
+                    idx, exc,
+                )
+                fb_out = self._path(
+                    "parallax", f"{job.job_id}_{idx:03d}_fb", ext="mp4",
                 )
                 try:
-                    self._run_async(self.i2v.generate(  # type: ignore[union-attr]
-                        job.still_paths[idx], out,
-                        motion_hint="subtle_dolly_in",
+                    self._run_async(self.parallax.animate(
+                        job.still_paths[idx], fb_out, duration_s=3.5,
                     ))
-                except Exception as exc:
-                    # Per plan: on I2V failure, degrade THAT BEAT to parallax.
-                    logger.warning(
-                        "i2v beat %d failed (%s) — degrading to parallax",
-                        idx, exc,
+                except Exception as exc2:
+                    self._fail(
+                        job, "animate_still_beats",
+                        f"i2v+parallax both failed on beat {idx}: {exc2}",
                     )
-                    fallback_out = self._path(
-                        "parallax", f"{job.job_id}_{idx:03d}_fb", ext="mp4",
-                    )
-                    try:
-                        self._run_async(self.parallax.animate(
-                            job.still_paths[idx], fallback_out, duration_s=3.5,
-                        ))
-                    except Exception as exc2:
-                        self._fail(
-                            job, "animate_still_beats",
-                            f"i2v+parallax both failed on beat {idx}: {exc2}",
-                        )
-                        return False
-                    parallax_paths.append(fallback_out)
-                    continue
-                i2v_paths.append(out)
-
-        job.parallax_paths = parallax_paths
-        job.i2v_paths = i2v_paths
+                    return False
+                parallax_paths.append(fb_out)
+                continue
+            i2v_paths.append(out)
         return True
+
+    @staticmethod
+    def _nearest_still_before(paths: List[str], idx: int) -> str:
+        """Walk backwards to find a non-empty still path (heroes skip
+        Flux, so we use the nearest established still as the source)."""
+        for j in range(idx - 1, -1, -1):
+            if paths[j]:
+                return paths[j]
+        # Fall back to the next still forward.
+        for j in range(idx + 1, len(paths)):
+            if paths[j]:
+                return paths[j]
+        return ""
 
     def assemble_video(self, job: VesperJob, ledger: CostLedger) -> bool:
         """Stage 7 — MoviePy assembly. Pre-gate on cost ledger."""
@@ -580,11 +745,18 @@ class VesperPipeline:
             self.log_analytics(job)
             return job
 
+        # Stage 4.5 — timeline (optional; no-op when no planner wired).
+        if not self.plan_timeline(job):
+            self.log_analytics(job)
+            return job
+        ledger.record(CostStage.LLM_TIMELINE, 0.0, note="uncharged — populate later")
+
         # Stages 5-6 — visuals.
-        # Beat count heuristic: ~4 words per beat (Vesper shorts are
-        # 150-200 words, so 35-50 beats is the shape — capped at 25
-        # per plan which matches the Flux budget).
-        beat_count = max(8, min(25, job.story_word_count // 6 or 15))
+        # Beat count: prefer the planner's output; fall back to the
+        # heuristic (~6 words/beat, clamped 8-25) when no timeline ran.
+        if job.beat_count == 0:
+            job.beat_count = max(8, min(25, job.story_word_count // 6 or 15))
+        beat_count = job.beat_count
         if not self.generate_stills(job, beat_count):
             self.log_analytics(job)
             return job
