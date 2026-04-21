@@ -75,11 +75,13 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CHATTERBOX_REF = "/app/refs/vesper/archivist.wav"
 DEFAULT_CHATTERBOX_NAME = "commoncreed_chatterbox"
-DEFAULT_EXAGGERATION = 0.5
-# Post-TTS tempo adjustment. Chatterbox reads fast (~230 wpm) from
-# macOS-say-generated refs — Archivist target is ~140-160 wpm. 0.72
-# stretches 40 s → 55 s which lands ~160 wpm on a 180-word script.
-DEFAULT_TEMPO = 0.72
+DEFAULT_EXAGGERATION = 0.6
+# Post-TTS tempo adjustment. With a real human narrator ref (e.g.,
+# a LibriVox Poe reading) chatterbox matches the source's natural
+# pace closely — only a mild 0.88 stretch is needed for Archivist
+# register. With a macOS-say ref the rate is closer to 230 wpm and
+# needs the more aggressive 0.72 stretch; override via --tempo.
+DEFAULT_TEMPO = 0.88
 # ComfyUI endpoint (server-side). Flux per-beat generation is ~6-8 s
 # on a 3090 with flux1-schnell-fp8 at 4 steps / CFG 1.0.
 DEFAULT_COMFYUI_URL = "http://localhost:8188"
