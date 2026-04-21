@@ -41,6 +41,8 @@ assets/spike/
 .claude/statsig/
 .claude/settings.local.json
 .claude/shell-snapshots/
+.claude/scheduled_tasks.lock
+.claude/*.lock
 
 # Node
 node_modules/
