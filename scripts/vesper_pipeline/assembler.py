@@ -56,6 +56,9 @@ DEFAULT_FPS = 30
 # slow_pan_*) we'll port across in a follow-up; MVP uses one direction.
 KEN_BURNS_ZOOM = 1.03
 
+# Dip-to-black fade duration at scene-change boundaries (Key Decision #10).
+SCENE_DIP_S = 0.25
+
 
 class AssemblyError(RuntimeError):
     """Raised on assembly failure — missing asset, clip-load error,
@@ -125,6 +128,12 @@ class VesperAssembler:
     # keyword_punches. Set False to disable the pass without removing
     # the burner.
     enable_zoom_bells: bool = True
+    # Dip-to-black on scene change (Key Decision #10). Fade boundary
+    # detection compares ``beat.tag`` between consecutive beats — a
+    # transition like hook→setup, rising→reveal, climax→tail fires
+    # the fade. Beats without tags don't trigger fades.
+    enable_scene_fades: bool = True
+    scene_fade_duration_s: float = SCENE_DIP_S
 
     def assemble(self, *, job: VesperJob, output_path: str) -> str:
         """Produce a 9:16 MP4 at ``output_path``. Returns the path.
@@ -175,6 +184,19 @@ class VesperAssembler:
                 parallax_idx += 1
             elif beat.mode == BeatMode.HERO_I2V:
                 i2v_idx += 1
+
+            # Dip-to-black on scene-change boundaries. Fade the PREVIOUS
+            # clip out + the CURRENT clip in when their tags differ.
+            if (
+                self.enable_scene_fades
+                and idx > 0
+                and _is_scene_change(beats[idx - 1], beat)
+                and clips
+            ):
+                clips[-1] = _apply_fade_out(
+                    clips[-1], self.scene_fade_duration_s,
+                )
+                clip = _apply_fade_in(clip, self.scene_fade_duration_s)
 
             clips.append(clip)
 
@@ -405,6 +427,58 @@ def _apply_duration(clip: Any, duration_s: float) -> Any:
         return clip.with_duration(duration_s)
     if hasattr(clip, "set_duration"):
         return clip.set_duration(duration_s)
+    return clip
+
+
+def _is_scene_change(prev_beat: Any, cur_beat: Any) -> bool:
+    """Return True when ``prev_beat`` and ``cur_beat`` have different,
+    non-empty ``tag`` attributes. Empty tags never fire a scene change
+    (the timeline planner may not emit tags for all beats)."""
+    prev_tag = (getattr(prev_beat, "tag", "") or "").strip()
+    cur_tag = (getattr(cur_beat, "tag", "") or "").strip()
+    if not prev_tag or not cur_tag:
+        return False
+    return prev_tag != cur_tag
+
+
+def _apply_fade_out(clip: Any, duration_s: float) -> Any:
+    """Fade the tail of ``clip`` to black over ``duration_s``.
+
+    Tries the MoviePy 2.x API (``with_effects([FadeOut(...)])``) first,
+    then the 1.x API (``fadeout(...)``), then returns the clip
+    unchanged. Real MoviePy is one of the two; test fakes may not
+    implement either — that's fine, the fade is best-effort polish."""
+    try:
+        from moviepy.video.fx import FadeOut  # type: ignore
+        if hasattr(clip, "with_effects"):
+            return clip.with_effects([FadeOut(duration_s)])
+    except ImportError:
+        pass
+    if hasattr(clip, "fadeout"):
+        return clip.fadeout(duration_s)
+    if hasattr(clip, "with_effects"):
+        # Record the intent on a test fake so asserts can see it.
+        marker = {"kind": "fade_out", "duration_s": duration_s}
+        applied = clip.with_effects([marker])
+        return applied if applied is not None else clip
+    return clip
+
+
+def _apply_fade_in(clip: Any, duration_s: float) -> Any:
+    """Fade the head of ``clip`` in from black. See :func:`_apply_fade_out`
+    for the API-shim rationale."""
+    try:
+        from moviepy.video.fx import FadeIn  # type: ignore
+        if hasattr(clip, "with_effects"):
+            return clip.with_effects([FadeIn(duration_s)])
+    except ImportError:
+        pass
+    if hasattr(clip, "fadein"):
+        return clip.fadein(duration_s)
+    if hasattr(clip, "with_effects"):
+        marker = {"kind": "fade_in", "duration_s": duration_s}
+        applied = clip.with_effects([marker])
+        return applied if applied is not None else clip
     return clip
 
 

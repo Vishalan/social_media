@@ -37,6 +37,7 @@ class _FakeClip:
         self.resized_calls: List[Any] = []
         self.duration_calls: List[float] = []
         self.write_calls: List[dict] = []
+        self.effects: List[dict] = []
 
     def with_duration(self, s):
         self.duration = s
@@ -49,6 +50,21 @@ class _FakeClip:
 
     def with_audio(self, audio):
         self.audio = audio
+        return self
+
+    def with_effects(self, effects):
+        for e in effects:
+            if isinstance(e, dict):
+                self.effects.append(e)
+            else:
+                # Record real MoviePy FX objects by class name so tests
+                # assert on "FadeIn"/"FadeOut" the same way they'd assert
+                # on {"kind": "fade_in"} markers.
+                cls = type(e).__name__
+                kind = "fade_in" if cls.lower() == "fadein" else (
+                    "fade_out" if cls.lower() == "fadeout" else cls.lower()
+                )
+                self.effects.append({"kind": kind, "class": cls})
         return self
 
     def write_videofile(self, path, **kw):
@@ -777,6 +793,148 @@ class ZoomBellPassTests(unittest.TestCase):
         # Empty keyword_punches — zoom check short-circuits, burner never called.
         asm.assemble(job=job, output_path=str(self.tmp / "final.mp4"))
         self.assertEqual(burner.calls, [])
+
+
+class SceneFadeTests(unittest.TestCase):
+    """Dip-to-black on scene change (Key Decision #10 transition vocab).
+
+    Fades fire when consecutive beats have different non-empty tags.
+    Missing tags never trigger fades — graceful fallback when the
+    timeline planner leaves tags blank."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp(prefix="vesper-fade-"))
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _beats_with_tags(self, tags: list[str]) -> list:
+        """Build Kenburns-only beats with the given tag sequence."""
+        motions = ["push_in", "pull_back", "slow_pan_left", "slow_pan_right"]
+        return [
+            Beat(
+                mode=BeatMode.STILL_KENBURNS,
+                motion_hint=motions[i % 4],  # type: ignore[arg-type]
+                duration_s=3.0,
+                shot_class="interior",  # type: ignore[arg-type]
+                prompt=f"beat {i}",
+                tag=tags[i],
+            )
+            for i in range(len(tags))
+        ]
+
+    def _job_for_beats(self, beats) -> VesperJob:
+        voice = self.tmp / "v.mp3"
+        voice.write_bytes(b"mp3")
+        stills = []
+        for i in range(len(beats)):
+            p = self.tmp / f"still_{i:03d}.png"
+            p.write_bytes(b"png")
+            stills.append(str(p))
+        tl = Timeline(beats=beats)
+        return VesperJob(
+            topic_title="x", subreddit="n", job_id="j",
+            story_script="x",
+            voice_path=str(voice), voice_duration_s=tl.total_duration_s,
+            still_paths=stills,
+            parallax_paths=[], i2v_paths=[],
+            timeline=tl, beat_count=tl.count,
+        )
+
+    def test_fade_applied_on_tag_transition(self):
+        beats = self._beats_with_tags([
+            "hook", "hook", "setup", "setup",
+        ])
+        factory = _FakeClipFactory()
+        asm = VesperAssembler(
+            clip_factory=factory,
+            enable_scene_fades=True,
+        )
+        asm.assemble(
+            job=self._job_for_beats(beats),
+            output_path=str(self.tmp / "final.mp4"),
+        )
+
+        image_clips = [c for c in factory.created if c.kind == "image"]
+        self.assertEqual(len(image_clips), 4)
+        # Boundary at beats[1]→beats[2]: fade_out on beats[1], fade_in on beats[2].
+        self.assertTrue(any(
+            e.get("kind") == "fade_out" for e in image_clips[1].effects
+        ), "fade_out not applied to beats[1] at scene boundary")
+        self.assertTrue(any(
+            e.get("kind") == "fade_in" for e in image_clips[2].effects
+        ), "fade_in not applied to beats[2] at scene boundary")
+        # Non-boundary beats (0→1, 2→3) don't carry fades.
+        self.assertFalse(any(
+            e.get("kind") in ("fade_in", "fade_out")
+            for e in image_clips[0].effects
+        ))
+        self.assertFalse(any(
+            e.get("kind") == "fade_in" for e in image_clips[1].effects
+        ))
+
+    def test_fade_skipped_when_tags_empty(self):
+        """All-blank tags is the timeline-planner-didn't-emit-tags
+        case. No fades should fire."""
+        beats = self._beats_with_tags(["", "", "", ""])
+        factory = _FakeClipFactory()
+        asm = VesperAssembler(
+            clip_factory=factory,
+            enable_scene_fades=True,
+        )
+        asm.assemble(
+            job=self._job_for_beats(beats),
+            output_path=str(self.tmp / "final.mp4"),
+        )
+        image_clips = [c for c in factory.created if c.kind == "image"]
+        for c in image_clips:
+            self.assertFalse(any(
+                e.get("kind") in ("fade_in", "fade_out")
+                for e in c.effects
+            ), f"unexpected fade on blank-tag beat")
+
+    def test_fade_skipped_when_disabled(self):
+        beats = self._beats_with_tags(["hook", "setup"])
+        factory = _FakeClipFactory()
+        asm = VesperAssembler(
+            clip_factory=factory,
+            enable_scene_fades=False,
+        )
+        asm.assemble(
+            job=self._job_for_beats(beats),
+            output_path=str(self.tmp / "final.mp4"),
+        )
+        image_clips = [c for c in factory.created if c.kind == "image"]
+        for c in image_clips:
+            self.assertFalse(any(
+                e.get("kind") in ("fade_in", "fade_out")
+                for e in c.effects
+            ))
+
+    def test_partial_tags_mid_timeline(self):
+        """Some beats tagged, others blank — fade only fires when BOTH
+        beats at the boundary have non-empty, distinct tags."""
+        beats = self._beats_with_tags(["hook", "", "setup", "setup"])
+        factory = _FakeClipFactory()
+        asm = VesperAssembler(
+            clip_factory=factory,
+            enable_scene_fades=True,
+        )
+        asm.assemble(
+            job=self._job_for_beats(beats),
+            output_path=str(self.tmp / "final.mp4"),
+        )
+        image_clips = [c for c in factory.created if c.kind == "image"]
+        # Boundary 0→1: prev="hook", cur="" → no fade
+        # Boundary 1→2: prev="", cur="setup" → no fade
+        # Boundary 2→3: both "setup" → no fade
+        for c in image_clips:
+            self.assertFalse(any(
+                e.get("kind") in ("fade_in", "fade_out")
+                for e in c.effects
+            ), "no fade expected when either side tag is blank or equal")
 
 
 class KenBurnsDurationTests(unittest.TestCase):
