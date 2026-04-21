@@ -439,7 +439,10 @@ def run_demo(
     # narrative phases, with a palette gradient by beat tag so the
     # Vesper horror palette escalates into climax rather than
     # front-loading at the hook.
-    aligned_prompts = build_flux_prompts(story_text, list(timeline.beats))
+    aligned_prompts = build_flux_prompts(
+        story_text, list(timeline.beats),
+        story_id=story_dict.get("id"),
+    )
     flux_t0 = time.monotonic()
     for idx, beat in enumerate(timeline.beats):
         out = stills_dir / f"beat_{idx:03d}.png"

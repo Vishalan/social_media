@@ -37,6 +37,91 @@ from typing import List, Optional, Sequence
 # top-scored candidate is index 0 by convention.
 
 
+# Per-story "visual bible": locked look, location, and canonical
+# character descriptions. Every beat's Flux prompt inherits these so
+# the 12 renders read as one film rather than 12 disconnected images.
+# Without this, Flux invents a different waitress, a different diner,
+# and different lighting on every beat.
+_STORY_VISUAL_BIBLE: dict = {
+    "2-47-diner": {
+        "look": (
+            "shot on CineStill 800T 35mm film, warm tungsten practical "
+            "highlights against deep teal shadows, high-ISO grain, "
+            "orange halation around light sources, handheld, shallow "
+            "depth of field, no text, no captions, no watermark"
+        ),
+        "location": (
+            "an empty roadside diner in the Texas panhandle at 2:47 am, "
+            "rainy asphalt parking lot, sodium streetlamps, red neon "
+            "diner sign reflecting in wet pavement, flat plains horizon"
+        ),
+        "characters": {
+            "narrator": (
+                "a mid-50s male long-haul truck driver, unshaven, "
+                "canvas jacket, kept off-camera or in silhouette"
+            ),
+            "waitress": (
+                "a tired mid-40s waitress in a white apron, shoulder-"
+                "length dark hair, head down, face mostly obscured "
+                "by her own shadow"
+            ),
+            "silent_man": (
+                "a motionless male figure seated at the counter, back "
+                "to camera, plain dark jacket, head slightly bowed, "
+                "never clearly visible, partially silhouetted"
+            ),
+        },
+    },
+    "room-four-night-shift": {
+        "look": (
+            "shot on grainy 35mm film, cold flickering fluorescent "
+            "overhead lighting, pale green-cyan wall tint, muted palette, "
+            "handheld, shallow depth of field, no text no watermark"
+        ),
+        "location": (
+            "a small rural hospital at 3:20 am, narrow linoleum "
+            "hallway, fluorescent tube ceiling lights, empty nurses' "
+            "station at the far end, doorways propped open"
+        ),
+        "characters": {
+            "narrator": (
+                "a late-30s male night-shift nurse, scrubs, tired eyes, "
+                "kept at the edge of frame"
+            ),
+            "room_four": (
+                "an unoccupied hospital room, empty bed with bare "
+                "mattress, untouched call-button on the nightstand, "
+                "no patient visible ever"
+            ),
+        },
+    },
+    "factory-ceiling": {
+        "look": (
+            "shot on 35mm film, industrial halogen work lights "
+            "against deep shadow, metallic blue-gray palette, "
+            "handheld from ground level looking up, wide-angle lens, "
+            "no text no watermark"
+        ),
+        "location": (
+            "the production floor of an aluminum-can plant at 4 am, "
+            "thirty-foot ceilings, exposed steel catwalks, pipes and "
+            "conduit, hydraulic lines, machinery idle"
+        ),
+        "characters": {
+            "narrator": (
+                "a male maintenance worker in coveralls and hi-vis "
+                "vest, kept in middle distance, looking up"
+            ),
+            "figure": (
+                "a crouched humanoid figure on a catwalk high above, "
+                "arms folded around its knees, motionless, never "
+                "clearly visible, silhouetted against overhead lights"
+            ),
+        },
+    },
+}
+
+
 _STORIES: List[dict] = [
     {
         "id": "2-47-diner",
@@ -316,33 +401,88 @@ def _phase_scene_summary(phase_text: str) -> str:
     return " ".join(words[:15]).strip()
 
 
+def _character_matches_for_phase(
+    phase_text: str, characters: dict,
+) -> List[str]:
+    """Return the subset of canonical character descriptions whose
+    keyword appears in the phase text. Keeps a character card visible
+    in only the beats where that character is mentioned, so Flux has
+    no excuse to invent a different one."""
+    matches: List[str] = []
+    lower = phase_text.lower()
+    # Simple keyword mapping. Can't hurt to overrun; Flux handles
+    # 200-300 token prompts fine.
+    keyword_map = {
+        "narrator": ("drove", "i pulled", "i paid", "i left", "i asked",
+                     "i took", "i worked", "i walked", "i reset",
+                     "i radioed"),
+        "waitress": ("waitress",),
+        "silent_man": ("man at the counter", "silhouette", "hadn't moved",
+                       "hadn't blinked", "didn't move", "behind you"),
+        "room_four": ("room four", "call light", "bed", "mattress",
+                      "nightstand", "doorway"),
+        "figure": ("figure", "catwalk", "crouched", "above me",
+                   "arms folded"),
+    }
+    for name, desc in characters.items():
+        triggers = keyword_map.get(name, ())
+        for trig in triggers:
+            if trig in lower:
+                matches.append(desc)
+                break
+    return matches
+
+
 def build_flux_prompts(
     story_text: str,
     beats: Sequence,
+    *,
+    story_id: Optional[str] = None,
 ) -> List[str]:
-    """Per-beat Flux prompts aligned with the story's narrative phases
-    and the Vesper palette gradient.
+    """Per-beat Flux prompts with locked story-level look + location +
+    character descriptions so the 12 renders read as one film.
 
-    Each beat gets:
-      1. A scene descriptor drawn from the story phase it accompanies.
-      2. Palette + mood + lighting phrases from the beat's tag.
-      3. The shared suffix (film grain, vertical, no text, etc.).
+    Each prompt structure:
+
+        <scene from phase>,
+        <characters present in this phase>,
+        <tag-based mood/palette modifier>,
+        LOCATION (locked for story),
+        LOOK (locked for story)
+
+    The bible for ``story_id`` is looked up in ``_STORY_VISUAL_BIBLE``.
+    Unknown story ids fall back to a generic horror look (matches the
+    old behavior — callers upgrading to bible-aware stories pass the
+    id explicitly).
     """
     n = len(beats)
     phases = split_story_into_phases(story_text, n)
+    bible = _STORY_VISUAL_BIBLE.get(story_id) if story_id else None
     prompts: List[str] = []
     for idx, beat in enumerate(beats):
         phase = phases[min(idx, len(phases) - 1)]
         scene = _phase_scene_summary(phase)
         tag = (getattr(beat, "tag", "") or "hook").lower()
         tmpl = _TAG_PROMPT_TEMPLATES.get(tag, _TAG_PROMPT_TEMPLATES["setup"])
-        parts = [
-            scene,
-            tmpl["mood"],
-            tmpl["palette"],
-            tmpl["light"],
-            _FLUX_SHARED_SUFFIX,
-        ]
+
+        parts: List[str] = [scene]
+        if bible:
+            chars = _character_matches_for_phase(
+                phase, bible.get("characters", {}),
+            )
+            parts.extend(chars)
+        # Tag modulator (mood) stays subtle — the locked look + location
+        # do the heavy lifting for consistency.
+        parts.append(tmpl["mood"])
+        if bible:
+            parts.append(bible["location"])
+            parts.append(bible["look"])
+        else:
+            # Fallback for stories without a bible — the old
+            # palette-gradient behavior.
+            parts.append(tmpl["palette"])
+            parts.append(tmpl["light"])
+            parts.append(_FLUX_SHARED_SUFFIX)
         prompts.append(", ".join(p for p in parts if p))
     return prompts
 

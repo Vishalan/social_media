@@ -183,10 +183,87 @@ class IntegrationTests(unittest.TestCase):
         ]
         prompts = build_flux_prompts(chosen["text"], beats)
         self.assertEqual(len(prompts), 12)
-        # Hook prompts must not contain blood imagery.
+        # Hook prompts (no story_id → fallback palette gradient)
+        # must not contain blood imagery.
         self.assertNotIn("oxidized", prompts[0].lower())
         # Climax prompts must.
         self.assertIn("oxidized", prompts[8].lower())
+
+
+class VisualBibleTests(unittest.TestCase):
+    """When story_id is passed, every prompt carries the locked
+    location + look from the visual bible — makes the 12 renders
+    consistent rather than 12 independent scenes."""
+
+    def test_bible_locks_look_into_every_prompt(self):
+        chosen = pick_best_story()  # 2-47-diner has a bible
+        beats = [_beat(t) for t in
+                 ("hook", "setup", "rising", "climax", "tail")]
+        prompts = build_flux_prompts(
+            chosen["text"], beats, story_id=chosen["id"],
+        )
+        # CineStill 800T is the locked film stock in the bible.
+        # It MUST appear in every prompt — this is what makes
+        # the 12 renders read as one film.
+        for idx, p in enumerate(prompts):
+            self.assertIn(
+                "cinestill 800t", p.lower(),
+                f"beat {idx} missing locked film stock",
+            )
+
+    def test_bible_locks_location_into_every_prompt(self):
+        chosen = pick_best_story()
+        beats = [_beat(t) for t in ("hook", "rising", "climax")]
+        prompts = build_flux_prompts(
+            chosen["text"], beats, story_id=chosen["id"],
+        )
+        # "Texas panhandle" is in the 2-47 diner location string.
+        for p in prompts:
+            self.assertIn("texas panhandle", p.lower())
+
+    def test_character_descriptions_appear_only_in_relevant_phases(self):
+        """The waitress card should show up on beats whose phase text
+        mentions the waitress, not on the hook beats before she's
+        introduced."""
+        # Force phases to be visible by picking just two beats so each
+        # takes half the story.
+        chosen = next(s for s in __import__(
+            "vesper_pipeline.story_library",
+            fromlist=["_STORIES"],
+        )._STORIES if s["id"] == "2-47-diner")
+        # With 12 beats the waitress appears in the middle phases;
+        # she shouldn't show up in beat 0.
+        beats = [_beat("hook"), _beat("hook"), _beat("setup"),
+                 _beat("setup"), _beat("rising"), _beat("rising"),
+                 _beat("reveal"), _beat("reveal"), _beat("climax"),
+                 _beat("climax"), _beat("tail"), _beat("tail")]
+        prompts = build_flux_prompts(
+            chosen["text"], beats, story_id=chosen["id"],
+        )
+        # waitress = "white apron" in the canonical card.
+        # Beat 0 phase = "I drove truck for fourteen years..." — no waitress.
+        self.assertNotIn("white apron", prompts[0].lower())
+        # At least ONE beat after the first quarter should carry
+        # the waitress card.
+        waitress_beats = [
+            i for i, p in enumerate(prompts) if "white apron" in p.lower()
+        ]
+        self.assertTrue(
+            waitress_beats, "no beat picked up the waitress card",
+        )
+
+    def test_unknown_story_id_falls_back_to_gradient(self):
+        """Passing an unknown story_id should silently use the old
+        palette-gradient behavior — back-compat."""
+        chosen = pick_best_story()
+        beats = [_beat("hook"), _beat("climax")]
+        prompts = build_flux_prompts(
+            chosen["text"], beats, story_id="does-not-exist",
+        )
+        self.assertNotIn("cinestill", prompts[0].lower())
+        # Fallback gradient — climax should still carry the old
+        # palette phrase.
+        self.assertIn("oxidized", prompts[1].lower())
 
 
 if __name__ == "__main__":
