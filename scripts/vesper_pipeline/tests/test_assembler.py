@@ -328,6 +328,132 @@ class AssembleErrorPathTests(unittest.TestCase):
         self.assertIn("missing still", str(cm.exception).lower())
 
 
+class CaptionBurnTests(unittest.TestCase):
+    """When caption_style + job.caption_segments are present, the
+    assembler runs a second FFmpeg pass to burn ASS subtitles."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp(prefix="vesper-cap-"))
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _job_with_captions(self):
+        tl = _mixed_timeline()
+        job = _job_for_timeline(tl, self.tmp)
+        job.caption_segments = [
+            {"word": "hello", "start": 0.0, "end": 0.5},
+            {"word": "world", "start": 0.5, "end": 1.0},
+        ]
+        return job
+
+    def _runner_stub(self, *, rc: int = 0, stderr: bytes = b""):
+        class _R:
+            def __init__(self):
+                self.calls = []
+
+            def __call__(self, cmd, capture_output=False, **kw):
+                self.calls.append(cmd)
+
+                class _Result:
+                    returncode = rc
+                    stdout = b""
+
+                _Result.stderr = stderr
+                # Simulate FFmpeg having written the final output.
+                out_path = cmd[-1]
+                Path(out_path).write_bytes(b"final mp4 with captions")
+                return _Result()
+
+        return _R()
+
+    def _style(self):
+        from vesper_pipeline.captions import CaptionStyle
+        return CaptionStyle(
+            primary="#E8E2D4",
+            accent="#8B1A1A",
+            shadow="#2C2826",
+            font_name="CormorantGaramond-Bold",
+        )
+
+    def test_burn_pass_invoked_when_segments_and_style_present(self):
+        runner = self._runner_stub()
+        factory = _FakeClipFactory()
+        asm = VesperAssembler(
+            clip_factory=factory,
+            caption_style=self._style(),
+            ass_burn_runner=runner,
+        )
+        out = str(self.tmp / "final.mp4")
+        asm.assemble(job=self._job_with_captions(), output_path=out)
+
+        self.assertEqual(len(runner.calls), 1)
+        cmd = runner.calls[0]
+        self.assertEqual(cmd[0], "ffmpeg")
+        self.assertEqual(cmd[-1], out)
+        vf_idx = cmd.index("-vf")
+        self.assertTrue(cmd[vf_idx + 1].startswith("ass="))
+
+    def test_no_burn_when_style_omitted(self):
+        runner = self._runner_stub()
+        factory = _FakeClipFactory()
+        asm = VesperAssembler(
+            clip_factory=factory,
+            caption_style=None,
+            ass_burn_runner=runner,
+        )
+        asm.assemble(
+            job=self._job_with_captions(),
+            output_path=str(self.tmp / "final.mp4"),
+        )
+        self.assertEqual(len(runner.calls), 0)
+
+    def test_no_burn_when_segments_empty(self):
+        runner = self._runner_stub()
+        factory = _FakeClipFactory()
+        asm = VesperAssembler(
+            clip_factory=factory,
+            caption_style=self._style(),
+            ass_burn_runner=runner,
+        )
+        tl = _mixed_timeline()
+        job = _job_for_timeline(tl, self.tmp)
+        job.caption_segments = []  # explicit empty
+        asm.assemble(job=job, output_path=str(self.tmp / "final.mp4"))
+        self.assertEqual(len(runner.calls), 0)
+
+    def test_ffmpeg_nonzero_becomes_assembly_error(self):
+        runner = self._runner_stub(rc=1, stderr=b"ffmpeg: bad filter")
+        factory = _FakeClipFactory()
+        asm = VesperAssembler(
+            clip_factory=factory,
+            caption_style=self._style(),
+            ass_burn_runner=runner,
+        )
+        with self.assertRaises(AssemblyError) as cm:
+            asm.assemble(
+                job=self._job_with_captions(),
+                output_path=str(self.tmp / "final.mp4"),
+            )
+        self.assertIn("ASS burn", str(cm.exception))
+        self.assertIn("bad filter", str(cm.exception))
+
+    def test_staging_file_cleaned_up_on_success(self):
+        runner = self._runner_stub()
+        factory = _FakeClipFactory()
+        asm = VesperAssembler(
+            clip_factory=factory,
+            caption_style=self._style(),
+            ass_burn_runner=runner,
+        )
+        out = str(self.tmp / "final.mp4")
+        asm.assemble(job=self._job_with_captions(), output_path=out)
+        staging = Path(out + ".nocap.mp4")
+        self.assertFalse(staging.exists(), "staging file must be cleaned up")
+
+
 class KenBurnsDurationTests(unittest.TestCase):
     def setUp(self):
         import tempfile

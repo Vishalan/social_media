@@ -107,6 +107,12 @@ class VesperAssembler:
     fps: int = DEFAULT_FPS
     output_width: int = OUTPUT_WIDTH
     output_height: int = OUTPUT_HEIGHT
+    # Optional caption style. When provided + ``job.caption_segments`` is
+    # populated, a second FFmpeg pass burns ASS subtitles onto the MP4.
+    # When ``None``, the assembler writes a raw video with no captions.
+    caption_style: Optional[Any] = None
+    # Injectable for tests: defaults to subprocess.run.
+    ass_burn_runner: Optional[Any] = None
 
     def assemble(self, *, job: VesperJob, output_path: str) -> str:
         """Produce a 9:16 MP4 at ``output_path``. Returns the path.
@@ -167,13 +173,79 @@ class VesperAssembler:
             raise AssemblyError(f"could not load audio: {exc}") from exc
 
         final = _apply_audio(video, audio)
-        _write_file(final, output_path, fps=self.fps)
+
+        # If captions are active, write to a staging path first, then
+        # burn ASS in a second FFmpeg pass. The direct-to-output shortcut
+        # is preserved for tests / caption-disabled runs.
+        caption_segments = getattr(job, "caption_segments", None)
+        if self.caption_style is not None and caption_segments:
+            staging_path = output_path + ".nocap.mp4"
+            _write_file(final, staging_path, fps=self.fps)
+            self._burn_captions(staging_path, caption_segments, output_path)
+            try:
+                Path(staging_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+        else:
+            _write_file(final, output_path, fps=self.fps)
+
         logger.info(
-            "VesperAssembler: wrote %s (%d beats, %.1fs)",
+            "VesperAssembler: wrote %s (%d beats, %.1fs, captions=%s)",
             output_path, len(clips),
             sum(b.duration_s for b in beats),
+            "yes" if (self.caption_style and caption_segments) else "no",
         )
         return output_path
+
+    def _burn_captions(
+        self,
+        staging_path: str,
+        caption_segments: list,
+        output_path: str,
+    ) -> None:
+        """Run ffmpeg with `-vf ass=...` to burn captions onto staging
+        MP4 and write the final output. Raises AssemblyError on non-zero
+        FFmpeg return."""
+        import subprocess
+        import tempfile
+
+        from .captions import build_ass_captions
+
+        ass_text = build_ass_captions(
+            list(caption_segments),
+            self.caption_style,  # type: ignore[arg-type]
+            output_width=self.output_width,
+            output_height=self.output_height,
+        )
+        with tempfile.NamedTemporaryFile(
+            suffix=".ass", delete=False, mode="w", encoding="utf-8",
+        ) as ass_tmp:
+            ass_tmp.write(ass_text)
+            ass_path = ass_tmp.name
+
+        runner = self.ass_burn_runner or subprocess.run
+        cmd = [
+            "ffmpeg", "-y", "-i", staging_path,
+            "-vf", f"ass={ass_path}",
+            "-c:a", "copy", output_path,
+        ]
+        try:
+            result = runner(cmd, capture_output=True)
+        finally:
+            try:
+                Path(ass_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+        rc = getattr(result, "returncode", 0)
+        if rc != 0:
+            stderr = getattr(result, "stderr", b"")
+            msg = stderr.decode("utf-8", errors="replace") if isinstance(
+                stderr, (bytes, bytearray)
+            ) else str(stderr)
+            raise AssemblyError(
+                f"FFmpeg ASS burn failed (rc={rc}): {msg[:500]}"
+            )
 
     # ─── Per-beat clip selection ───────────────────────────────────────
 

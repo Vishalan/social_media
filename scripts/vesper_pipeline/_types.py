@@ -39,6 +39,8 @@ class VesperJob:
     # ─── Voice (chatterbox) ───
     voice_path: Optional[str] = None              # mp3/wav on disk
     voice_duration_s: float = 0.0
+    # Word-level timings from faster-whisper: {word, start, end}
+    caption_segments: List[dict] = field(default_factory=list)
 
     # ─── Timeline + visuals ───
     beat_count: int = 0

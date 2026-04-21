@@ -210,6 +210,7 @@ class VesperPipeline:
         tracker: _AnalyticsTracker,
         async_runner: Callable[[Any], Any],
         timeline_planner: Optional[_TimelinePlanner] = None,
+        transcriber: Optional[Callable[[str], List[dict]]] = None,
         cost_ledger_factory: Callable[[], CostLedger] = CostLedger,
     ) -> None:
         self.config = config
@@ -226,6 +227,7 @@ class VesperPipeline:
         self.rate_ledger = rate_ledger
         self.tracker = tracker
         self.timeline_planner = timeline_planner
+        self.transcriber = transcriber
         self._run_async = async_runner
         self._cost_ledger_factory = cost_ledger_factory
 
@@ -335,6 +337,30 @@ class VesperPipeline:
             return False
         job.voice_path = out_path
         job.voice_duration_s = float(getattr(result, "duration_s", 0.0))
+        return True
+
+    def transcribe_voice(self, job: VesperJob) -> bool:
+        """Stage 4.25 — word-level timings via faster-whisper.
+
+        Optional: when :attr:`self.transcriber` is None, caption_segments
+        stay empty and the assembler renders without burned captions.
+        Plan Key Decision #15 calls captions a hard blocker, so the
+        orchestrator logs loudly when they're missing."""
+        transcriber = getattr(self, "transcriber", None)
+        if transcriber is None or not job.voice_path:
+            return True
+        try:
+            job.caption_segments = list(transcriber(job.voice_path))
+        except Exception as exc:
+            # Non-fatal — a caption failure degrades to no-caption render
+            # rather than aborting the whole short. Log at WARNING so
+            # ops notices and installs faster-whisper if missing.
+            logger.warning(
+                "transcribe_voice: whisper error for %s: %s — "
+                "continuing without captions",
+                job.job_id, exc,
+            )
+            job.caption_segments = []
         return True
 
     def plan_timeline(self, job: VesperJob) -> bool:
@@ -744,6 +770,9 @@ class VesperPipeline:
         if not self.voice_generate(job):
             self.log_analytics(job)
             return job
+
+        # Stage 4.25 — transcribe (optional; no-op when no transcriber).
+        self.transcribe_voice(job)
 
         # Stage 4.5 — timeline (optional; no-op when no planner wired).
         if not self.plan_timeline(job):
