@@ -83,10 +83,20 @@ class Settings(BaseSettings):
     # Lobste.rs source knobs
     LOBSTERS_MAX_ITEMS: int = 15
     LOBSTERS_MIN_SCORE: int = 10
-    # Meme reposter v0 (Reddit)
+    # Meme reposter v0 (Reddit). Niche = AI / tech humor.
+    # Pool split: programmer/dev humor (higher image density), AI-specific
+    # subs (higher video+meme density as the field moves fast), and
+    # hardware/data-viz fillers that round out the feed. The Haiku
+    # >=7 humor+relevance filter keeps quality high regardless of pool size.
     MEME_SOURCES: str = (
+        # Tier A — programmer/dev humor (images dominate)
         "reddit_programmerhumor,reddit_techhumor,"
         "reddit_cscareerquestions,reddit_webdev,"
+        "reddit_programminghorror,"
+        # Tier B — AI-specific (video + image mix, most on-niche)
+        "reddit_chatgpt,reddit_localllama,reddit_openai,"
+        "reddit_singularity,reddit_artificial,"
+        # Tier C — adjacent tech/data culture (round-out)
         "reddit_dataisbeautiful,reddit_homelab,"
         "reddit_mechanicalkeyboards"
     )
@@ -95,6 +105,12 @@ class Settings(BaseSettings):
         "reddit_techhumor:techhumor,"
         "reddit_cscareerquestions:cscareerquestions,"
         "reddit_webdev:webdev,"
+        "reddit_programminghorror:programminghorror,"
+        "reddit_chatgpt:ChatGPT,"
+        "reddit_localllama:LocalLLaMA,"
+        "reddit_openai:OpenAI,"
+        "reddit_singularity:singularity,"
+        "reddit_artificial:artificial,"
         "reddit_dataisbeautiful:DataIsBeautiful,"
         "reddit_homelab:homelab,"
         "reddit_mechanicalkeyboards:MechanicalKeyboards"
@@ -109,10 +125,13 @@ class Settings(BaseSettings):
     # relevance must be >= 7/10 for a candidate to surface.
     MEME_MIN_HUMOR_SCORE: int = 7
     MEME_MIN_RELEVANCE_SCORE: int = 7
-    # Meme autopilot — fires at slot-offset if no human tap landed
+    # Meme autopilot — fires at slot-offset if no human tap landed.
+    # Autopilot picks top-scoring candidates within each media type
+    # independently so videos don't get dominated by higher-karma images.
     MEME_AUTO_APPROVE_ENABLED: bool = True
     MEME_AUTO_APPROVE_OFFSET_MIN: int = 30
-    MEME_DAILY_AUTO_APPROVE_COUNT: int = 1
+    MEME_DAILY_AUTO_APPROVE_COUNT: int = 1        # top-N images per autopilot fire
+    MEME_VIDEO_DAILY_AUTO_APPROVE_COUNT: int = 1  # top-N videos per autopilot fire
     PIPELINE_RETENTION_DAYS: int = 14
 
     # --- Sidecar runtime paths --------------------------------------------

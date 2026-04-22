@@ -757,9 +757,14 @@ async def meme_auto_approve_action() -> dict:
         logger.info("meme_auto_approve_action: disabled, skipping")
         return {"ok": True, "skipped": True, "reason": "disabled"}
 
-    take = int(getattr(settings, "MEME_DAILY_AUTO_APPROVE_COUNT", 1) or 1)
+    take_img = int(getattr(settings, "MEME_DAILY_AUTO_APPROVE_COUNT", 1) or 0)
+    take_vid = int(getattr(settings, "MEME_VIDEO_DAILY_AUTO_APPROVE_COUNT", 1) or 0)
 
-    # Find the top N pending_review meme candidates by Reddit score.
+    # Find the top-N pending_review candidates PER MEDIA TYPE. Images and
+    # videos score differently on Reddit (images get ~3-10x more karma than
+    # videos on the same sub), so a single leaderboard lets images starve
+    # videos out of autopilot. Picking top-N in each pool independently is
+    # what lets videos land consistently.
     try:
         conn = db_module.connect(settings.SIDECAR_DB_PATH)
     except Exception as exc:
@@ -769,7 +774,7 @@ async def meme_auto_approve_action() -> dict:
     try:
         rows = conn.execute(
             """
-            SELECT id, engagement_json
+            SELECT id, media_type, engagement_json
               FROM meme_candidates
              WHERE status = 'pending_review'
              ORDER BY id DESC
@@ -788,14 +793,29 @@ async def meme_auto_approve_action() -> dict:
         except Exception:
             return 0
 
-    sorted_rows = sorted(rows, key=_score, reverse=True)
-    chosen_ids = [int(r["id"]) for r in sorted_rows[:take]]
-    skipped_ids = [int(r["id"]) for r in sorted_rows[take:]]
+    def _is_video_row(row) -> bool:
+        mt = (row["media_type"] or "").lower()
+        return mt in ("video", "gif")
 
+    images = sorted([r for r in rows if not _is_video_row(r)], key=_score, reverse=True)
+    videos = sorted([r for r in rows if _is_video_row(r)], key=_score, reverse=True)
+    chosen_ids = (
+        [int(r["id"]) for r in images[:take_img]]
+        + [int(r["id"]) for r in videos[:take_vid]]
+    )
+    chosen_set = set(chosen_ids)
+    skipped_ids = [int(r["id"]) for r in rows if int(r["id"]) not in chosen_set]
+
+    top_img = _score(images[0]) if images else 0
+    top_vid = _score(videos[0]) if videos else 0
     logger.info(
-        "meme_auto_approve_action: picked %d (top score=%d), skipping %d",
+        "meme_auto_approve_action: picked %d "
+        "(images=%d top_score=%d, videos=%d top_score=%d), skipping %d",
         len(chosen_ids),
-        _score(sorted_rows[0]) if sorted_rows else 0,
+        min(take_img, len(images)),
+        top_img,
+        min(take_vid, len(videos)),
+        top_vid,
         len(skipped_ids),
     )
 

@@ -24,6 +24,14 @@ _DEFAULT_SUBREDDITS = {
     # Unit 4 — widen the top-of-funnel for strict humor+relevance filtering
     "reddit_cscareerquestions": "cscareerquestions",
     "reddit_webdev": "webdev",
+    "reddit_programminghorror": "programminghorror",
+    # AI-niche tier — higher video density, most on-niche for @commoncreed
+    "reddit_chatgpt": "ChatGPT",
+    "reddit_localllama": "LocalLLaMA",
+    "reddit_openai": "OpenAI",
+    "reddit_singularity": "singularity",
+    "reddit_artificial": "artificial",
+    # Round-out
     "reddit_dataisbeautiful": "DataIsBeautiful",
     "reddit_homelab": "homelab",
     "reddit_mechanicalkeyboards": "MechanicalKeyboards",

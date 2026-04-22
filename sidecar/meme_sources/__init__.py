@@ -33,9 +33,20 @@ logger = logging.getLogger(__name__)
 _REGISTRY: dict[str, type] = {
     "reddit_programmerhumor": RedditMemeSource,
     "reddit_techhumor": RedditMemeSource,  # same class, subreddit via settings
-    # Unit 4 — additional Reddit sources
+    # Unit 4 — additional Reddit sources (programmer/dev humor tier)
     "reddit_cscareerquestions": RedditMemeSource,
     "reddit_webdev": RedditMemeSource,
+    "reddit_programminghorror": RedditMemeSource,
+    # AI-niche tier (added after the v0 7-source pool felt too dev-heavy —
+    # ChatGPT / LocalLLaMA / OpenAI / singularity / artificial bring
+    # video-heavy on-niche content that the quality filter still has to
+    # clear at humor+relevance >=7)
+    "reddit_chatgpt": RedditMemeSource,
+    "reddit_localllama": RedditMemeSource,
+    "reddit_openai": RedditMemeSource,
+    "reddit_singularity": RedditMemeSource,
+    "reddit_artificial": RedditMemeSource,
+    # Round-out tier
     "reddit_dataisbeautiful": RedditMemeSource,
     "reddit_homelab": RedditMemeSource,
     "reddit_mechanicalkeyboards": RedditMemeSource,
