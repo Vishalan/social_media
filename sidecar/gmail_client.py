@@ -17,6 +17,15 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+class GmailAuthExpired(Exception):
+    """Raised when the OAuth refresh_token itself has been revoked/expired.
+
+    Distinct from transient Gmail outages so callers can classify the
+    failure: ``invalid_grant`` is a config state ("user needs to re-auth"),
+    not a service outage.
+    """
+
+
 def _b64url_decode(data: str) -> bytes:
     if not data:
         return b""
@@ -109,14 +118,24 @@ class GmailClient:
         self._service = build("gmail", "v1", credentials=creds, cache_discovery=False)
 
     def get_profile(self) -> Optional[dict]:
-        """Return the authenticated user's Gmail profile, or None on error.
+        """Return the authenticated user's Gmail profile, or None on transient error.
 
         Used by the health_ping job to verify the OAuth token is still valid
         end-to-end (exercises credential refresh + a real API round-trip).
+
+        Raises :class:`GmailAuthExpired` when Google rejects the refresh
+        token with ``invalid_grant`` — the caller should treat that as a
+        known config state (needs re-auth), not a service outage.
         """
         try:
             return self._service.users().getProfile(userId="me").execute()
-        except Exception:
+        except Exception as exc:
+            # Google auth surfaces 'invalid_grant' either via google.auth.exceptions.
+            # RefreshError or as a string somewhere in the exception chain. Match
+            # on the text so we catch both library paths without tight coupling.
+            msg = str(exc).lower()
+            if "invalid_grant" in msg or "token has been expired" in msg or "token has been revoked" in msg:
+                raise GmailAuthExpired(str(exc)) from exc
             return None
 
     def fetch_latest_newsletter(

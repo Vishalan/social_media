@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from sidecar import db as db_module  # noqa: E402
+from sidecar.gmail_client import GmailAuthExpired  # noqa: E402
 from sidecar.jobs import health_ping as hp  # noqa: E402
 
 
@@ -161,3 +162,37 @@ def test_records_last_success_timestamps_in_settings_table(patched, monkeypatch)
     assert v
     # ISO-format-ish
     assert "T" in v
+
+
+def test_gmail_ping_treats_invalid_grant_as_skipped(patched, monkeypatch, tmp_path):
+    """Expired/revoked refresh token → 'skipped' (no alert noise), not False."""
+    # Point GMAIL_OAUTH_PATH at a real file so the ping doesn't skip-early.
+    fake_token = tmp_path / "token.json"
+    fake_token.write_text('{"refresh_token": "dummy"}')
+    patched.GMAIL_OAUTH_PATH = str(fake_token)
+
+    alert_mock = AsyncMock()
+    monkeypatch.setattr(hp, "_alert", alert_mock)
+    # Stub GmailClient so no real HTTP happens.
+    fake_client_cls = MagicMock()
+    fake_client = MagicMock()
+    fake_client.get_profile.side_effect = GmailAuthExpired(
+        "invalid_grant: Token has been expired or revoked."
+    )
+    fake_client_cls.return_value = fake_client
+    monkeypatch.setattr("sidecar.gmail_client.GmailClient", fake_client_cls)
+
+    # Other services stay healthy so only gmail's decision matters.
+    monkeypatch.setattr(hp, "_ping_postiz", AsyncMock(return_value=True))
+    monkeypatch.setattr(hp, "_ping_telegram", AsyncMock(return_value=True))
+    monkeypatch.setattr(hp, "_ping_anthropic", AsyncMock(return_value=True))
+
+    out = _run(hp.run_health_pings())
+    # Gmail must be classified as skipped, not unreachable.
+    assert out.get("gmail") == "skipped"
+    # And no alert for gmail.
+    for call in alert_mock.await_args_list:
+        args, _ = call
+        assert "gmail" not in (args[0] if args else ""), (
+            f"alert fired for gmail with args={args}"
+        )

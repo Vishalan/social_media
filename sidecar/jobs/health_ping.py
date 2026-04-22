@@ -131,12 +131,17 @@ async def _ping_telegram() -> bool:
 async def _ping_gmail():
     """Return True/False/'skipped'.
 
-    'skipped' means Gmail OAuth isn't configured yet (no path set, or the
-    token file doesn't exist) — this is a known-pending setup state, not a
-    failure. The health loop should NOT alert on it.
+    'skipped' covers three known-pending-config states that are NOT outages
+    and should not alert:
+      - OAuth path unset (Gmail integration not configured yet).
+      - Token file missing on disk.
+      - refresh_token has been revoked/expired (user needs to re-run the
+        OAuth bootstrap; alerting every hour until they do is noise).
+    A True/False return still distinguishes "Gmail reachable" from "Gmail
+    genuinely unreachable" — that's what earns the alert.
     """
     try:
-        from sidecar.gmail_client import GmailClient
+        from sidecar.gmail_client import GmailClient, GmailAuthExpired
 
         s = settings_manager.settings
         oauth_path = getattr(s, "GMAIL_OAUTH_PATH", "") if s else ""
@@ -148,7 +153,17 @@ async def _ping_gmail():
             return "skipped"
         oauth_json = _P(oauth_path).read_text()
         client = GmailClient(oauth_json)
-        profile = client.get_profile()
+        try:
+            profile = client.get_profile()
+        except GmailAuthExpired as exc:
+            # Known config state — user needs to re-auth. Log once per hour
+            # at INFO (not WARNING) so it doesn't light up error dashboards.
+            logger.info(
+                "health_ping: gmail token expired/revoked — silencing alert "
+                "(run .secrets/gmail_oauth_bootstrap.py to re-auth): %s",
+                exc,
+            )
+            return "skipped"
         return profile is not None
     except Exception as exc:
         logger.warning("health_ping: gmail ping raised: %s", exc)
