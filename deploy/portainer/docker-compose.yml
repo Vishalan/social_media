@@ -206,6 +206,13 @@ services:
       ES_VERSION: v7
       TEMPORAL_NAMESPACE: default
       LOG_LEVEL: warn
+      # Temporal is attached to BOTH temporal-network (its internal net for
+      # postgres + elasticsearch) AND commoncreed (so Postiz can reach the
+      # gRPC frontend on 7233). temporalio/auto-setup's default BIND_ON_IP
+      # picks only the first interface it sees — that leaves 7233 listening
+      # on 172.18.x.x only, and Postiz on 172.19.x.x gets ECONNREFUSED.
+      # Binding to 0.0.0.0 makes the frontend reachable from both networks.
+      BIND_ON_IP: 0.0.0.0
     volumes:
       # Mount the dynamicconfig file from Postiz's official repo into the
       # path Temporal expects to find it.
