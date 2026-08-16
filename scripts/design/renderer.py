@@ -40,6 +40,11 @@ DEFAULT_STYLE = {
     "accent": "#22D3EE",
     "muted": "#A8B8C5",
     "register": "premium tech-editorial, not generic corporate",
+    "palette": "",
+    "typography": "clean geometric sans",
+    "motifs": "",
+    "identity_rationale": "",
+    "reserved_zone": "none",
 }
 
 
@@ -61,11 +66,23 @@ Execute that one idea precisely. At most two moving elements at a time. If the
 catalog already has a primitive for it, reuse that vocabulary rather than
 inventing motion; if nothing fits, hand-author and say why.
 
-STYLE:
-- Background {background}, accent {accent}, secondary text {muted}.
-- Clean geometric sans. Register: {register}.
-- The hero must read at a glance on a phone. Support and context are secondary
-  and must never compete with it.
+VISUAL IDENTITY — borrow from the SOURCE, do not default to house style:
+- Palette: {palette}
+  (fallback if that is empty: background {background}, accent {accent}, secondary {muted})
+- Typography: {typography}
+- Motifs to build from: {motifs}
+- Why this identity belongs to this story: {identity_rationale}
+
+Use the motifs LITERALLY where you can. If the motif is "a terminal streaming an
+API response token by token", build an actual terminal with actual streaming
+tokens — not an abstract glow that gestures at one. A graphic that could belong
+to any tech story is a failure; this must look like it came from this source.
+
+Register: {register}. The hero must read at a glance on a phone; support and
+context are secondary and must never compete with it.
+
+RESERVED ZONE: {reserved_zone}
+Nothing important may be placed there — the presenter is composited into it.
 
 FORMAT:
 - {width}x{height} vertical, {fps}fps, exactly {duration:.1f}s.
