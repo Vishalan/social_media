@@ -21,7 +21,7 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from .brief import DesignBrief
 
@@ -54,10 +54,12 @@ skills (hyperframes-core, hyperframes-animation, motion-graphics, hyperframes-cl
 Deliverable: a {duration:.1f} second B-ROLL clip for a vertical short.
 
 CONTENT (use these strings exactly; do not invent or alter figures):
-- Hero / headline: "{headline}"
-- Support label:   "{support}"
-- Context line:    "{context}"
+- Hero / headline: "{headline}"{support_line}{context_line}
 - Graphic kind:    {kind}
+
+Render ONLY the lines given above. If a support or context line is absent from
+this list it does not exist — do not invent one, and never render a placeholder
+like "(none)" or "N/A" as visible copy.
 
 WHY THIS EXISTS: {rationale}
 
@@ -121,6 +123,8 @@ class HyperFramesRenderer:
         model: str = "sonnet",
         timeout_s: int = 1800,
         env: Optional[dict] = None,
+        reviewer: Optional[Any] = None,
+        max_attempts: int = 2,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.work_dir = Path(work_dir)
@@ -129,6 +133,13 @@ class HyperFramesRenderer:
         self.model = model
         self.timeout_s = timeout_s
         self.env = env
+        # A vision pass that looks at the rendered frames. HyperFrames' own
+        # `check` audits runtime errors, layout boxes and contrast, and still
+        # passed a card whose hero numeral overlapped its own support line and
+        # a terminal whose block cursor sat on the first letter of the word.
+        # Those are only visible by looking.
+        self.reviewer = reviewer
+        self.max_attempts = max(1, max_attempts)
 
         resolved = shutil.which(binary)
         if resolved is None:
@@ -141,7 +152,36 @@ class HyperFramesRenderer:
         self.work_dir.mkdir(parents=True, exist_ok=True)
 
     async def render(self, brief: DesignBrief) -> str:
-        """Render one brief. Returns the output path."""
+        """Render one brief, reviewing the result and retrying once if broken."""
+        notes = ""
+        last_path = ""
+        for attempt in range(1, self.max_attempts + 1):
+            last_path = await self._render_once(brief, extra_notes=notes)
+            if self.reviewer is None:
+                return last_path
+            verdict = await asyncio.to_thread(
+                self.reviewer, video=last_path, brief=brief.to_dict(),
+                work_dir=str(self.work_dir))
+            if verdict.get("ok", True):
+                return last_path
+            problems = verdict.get("problems") or [verdict.get("worst", "")]
+            if attempt >= self.max_attempts:
+                logger.warning(
+                    "Design %r still flawed after %d attempts, shipping it: %s",
+                    brief.slug, attempt, verdict.get("worst", ""))
+                return last_path
+            # Feed the specific defect back rather than asking for a vague
+            # improvement — "make it better" reliably produces a different
+            # arrangement with the same collision.
+            notes = ("A previous attempt was REJECTED on visual review. Fix "
+                     "exactly these and change nothing else that already "
+                     "works:\n" + "\n".join(f"- {p}" for p in problems))
+            logger.info("Re-rendering %r (attempt %d): %s",
+                        brief.slug, attempt + 1, verdict.get("worst", ""))
+        return last_path
+
+    async def _render_once(self, brief: DesignBrief, *,
+                           extra_notes: str = "") -> str:
         out = (self.output_dir / f"{brief.slug}.mp4").resolve()
         # Never shorter than the brief needs to be readable — see
         # DesignBrief.effective_duration_s().
@@ -149,8 +189,10 @@ class HyperFramesRenderer:
         prompt = _PROMPT.format(
             duration=duration,
             headline=brief.headline,
-            support=brief.support or "(none)",
-            context=brief.context or "(none)",
+            support_line=(f'\n- Support label:   "{brief.support}"'
+                          if brief.support else ""),
+            context_line=(f'\n- Context line:    "{brief.context}"'
+                          if brief.context else ""),
             kind=brief.kind,
             rationale=brief.rationale or "(not stated)",
             motion=brief.motion or "arrive with weight and settle; no bounce",
@@ -158,6 +200,8 @@ class HyperFramesRenderer:
             output_path=out,
             **self.style,
         )
+        if extra_notes:
+            prompt += "\n\nCORRECTIONS REQUIRED\n" + extra_notes
 
         proj = self.work_dir / brief.slug
         proj.mkdir(parents=True, exist_ok=True)

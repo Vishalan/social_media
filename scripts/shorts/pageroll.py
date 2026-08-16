@@ -1,21 +1,25 @@
-"""Page-roll b-roll: footage made from the source itself.
+"""Page-roll b-roll: footage made from the source page itself.
 
-Generic stock footage actively hurts a story. A clip of two strangers in a
-coworking space, dropped into a piece about a GitHub repository, tells the
-viewer nothing and signals that the video is assembled rather than made. The
-source page — the actual README, the actual article, the actual product UI —
-is both more relevant and more interesting to look at.
+Generic stock footage hurts a story — strangers in a coworking space, dropped
+into a piece about a repository, tell the viewer nothing. The source page is
+both more relevant and more interesting to look at.
 
-This module captures the source URL in headless Chrome at device-pixel-ratio 2
-and produces vertical clips from it:
+Two things make this work rather than merely function:
 
-``scroll``   slow vertical travel down the page, the way a reader scans it
-``pan``      a held region drifting slowly (Ken Burns without the zoom cliche)
-``zoom``     a slow push into a specific region — used for a named artifact
+REGION DETECTION, not blind cropping. A first version scaled the page to panel
+width and cropped the centre. Measured against a real GitHub capture, that
+discarded 606px of content from the left, because the page is laid out edge to
+edge rather than as a centred column. This version finds actual content blocks
+— contiguous bands of non-background pixels — and fits each one to the panel,
+so a region is shown whole instead of sliced.
 
-Requires Chrome on the rendering host. Falls back cleanly: if capture fails the
-caller gets an empty list and the pipeline proceeds without page-roll rather
-than dying.
+SCRIPT ALIGNMENT, not arbitrary order. Regions are returned with their bounds
+so a caller can match them to the narration beat they illustrate. Showing the
+commit list while the narration explains the file format is as disconnected as
+stock footage.
+
+Requires Chrome on the rendering host. Falls back cleanly: on failure the
+caller gets an empty list and the pipeline proceeds without page-roll.
 """
 from __future__ import annotations
 
@@ -30,11 +34,30 @@ from typing import Literal, Optional
 
 logger = logging.getLogger(__name__)
 
-RollKind = Literal["scroll", "pan", "zoom"]
+RollKind = Literal["scroll", "hold"]
 
 
 class PageRollError(RuntimeError):
-    """Raised when a page cannot be captured."""
+    """Raised when a page cannot be captured or rendered."""
+
+
+@dataclass
+class Region:
+    """A coherent block of page content."""
+    top: int
+    bottom: int
+    left: int
+    right: int
+    density: float          # fraction of pixels differing from background
+    index: int = 0
+
+    @property
+    def height(self) -> int:
+        return self.bottom - self.top
+
+    @property
+    def width(self) -> int:
+        return self.right - self.left
 
 
 @dataclass
@@ -44,6 +67,7 @@ class RollClip:
     duration: float
     source_url: str
     region: str = ""
+    region_index: int = 0
 
 
 def _chrome_binary() -> str:
@@ -52,24 +76,41 @@ def _chrome_binary() -> str:
         p = shutil.which(name)
         if p:
             return p
-    raise PageRollError(
-        "no Chrome/Chromium on PATH — page-roll needs a headless browser")
+    raise PageRollError("no Chrome/Chromium on PATH")
 
 
 def capture_page(url: str, out_png: str, *, width: int = 1280,
-                 max_height: int = 12000, timeout_s: int = 90,
-                 dark: bool = True) -> str:
+                 max_height: int = 12000, timeout_s: int = 180,
+                 dark: bool = True, attempts: int = 2,
+                 reuse: bool = True) -> str:
     """Full-page screenshot at DPR 2.
 
-    Dark mode by default: a full-white page against a vertical video is a
-    brightness slam, and most source sites (GitHub, docs, product pages) offer
-    a dark theme that sits far better next to a talking head.
+    Retries once: headless Chrome occasionally hangs on a slow third-party
+    asset and a second run usually lands. An existing capture is reused rather
+    than re-fetched, which also keeps re-runs of later stages cheap.
     """
+    if reuse and os.path.exists(out_png) and os.path.getsize(out_png) > 0:
+        logger.info("Reusing existing capture %s", out_png)
+        return out_png
+    last: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return _capture_once(url, out_png, width=width,
+                                 max_height=max_height, timeout_s=timeout_s,
+                                 dark=dark)
+        except (PageRollError, subprocess.TimeoutExpired) as exc:
+            last = exc
+            logger.warning("capture attempt %d/%d failed: %s",
+                           attempt, attempts, str(exc)[:160])
+    raise PageRollError(f"capture failed after {attempts} attempts: {last}")
+
+
+def _capture_once(url: str, out_png: str, *, width: int,
+                  max_height: int, timeout_s: int, dark: bool) -> str:
     chrome = _chrome_binary()
     Path(out_png).parent.mkdir(parents=True, exist_ok=True)
-    # --user-data-dir and --disable-dev-shm-usage are not optional on a headless
-    # server: without a writable profile dir Chrome hangs indefinitely rather
-    # than erroring, and the default /dev/shm is too small for real pages.
+    # --user-data-dir and --disable-dev-shm-usage are not optional headless:
+    # without them Chrome hangs indefinitely rather than erroring.
     profile = Path(out_png).parent / "_chrome_profile"
     profile.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -79,121 +120,124 @@ def capture_page(url: str, out_png: str, *, width: int = 1280,
         "--hide-scrollbars", "--force-device-scale-factor=2",
         f"--window-size={width},{min(max_height, 3000)}",
         "--screenshot=" + out_png,
-        "--virtual-time-budget=8000",   # let webfonts and lazy images settle
+        "--virtual-time-budget=8000",
     ]
     if dark:
-        cmd.append("--force-dark-mode")
-        cmd.append("--enable-features=WebContentsForceDark")
+        cmd += ["--force-dark-mode", "--enable-features=WebContentsForceDark"]
     cmd.append(url)
-
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
     if not os.path.exists(out_png) or os.path.getsize(out_png) == 0:
-        raise PageRollError(
-            f"chrome produced no screenshot for {url}: {r.stderr[-400:]}")
+        raise PageRollError(f"no screenshot for {url}: {r.stderr[-300:]}")
     logger.info("Captured %s (%d KB)", url, os.path.getsize(out_png) // 1024)
     return out_png
 
 
-def _probe_png(path: str) -> tuple[int, int]:
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=width,height", "-of", "csv=p=0", path],
-        capture_output=True, text=True).stdout.strip()
-    w, h = out.split(",")[:2]
-    return int(w), int(h)
+def detect_regions(png: str, *, panel_aspect: float = 998 / 1080,
+                   max_regions: int = 14, overlap: float = 0.5) -> list[Region]:
+    """Slice the page into panel-shaped windows and rank them by content.
 
+    A first version looked for whitespace gaps between blocks. That works on
+    article pages and fails completely on an application UI: a GitHub file
+    listing has no blank rows, so the whole 6000px page came back as one
+    region and the clip was a squeezed full-page smear.
 
-def make_scroll(png: str, out_mp4: str, *, duration: float = 3.0,
-                width: int = 1080, height: int = 1920, fps: int = 25,
-                start_frac: float = 0.0, end_frac: float = 0.6,
-                content_zoom: float = 1.0) -> str:
-    """Slow vertical travel over the captured page.
-
-    ``content_zoom`` magnifies before cropping. Fitting the full 1280px page
-    width into a 1080px panel renders body text at roughly 8px — legible on a
-    desktop monitor, unreadable on a phone, which made the page-roll look like
-    generic texture rather than a specific page. Zooming in trades width the
-    viewer cannot read for text they can.
-
-    Travel is linear and slow: eased or fast scrolling reads as a transition
-    effect rather than as reading.
+    Windows are sized so that scaling the page's full width to the panel width
+    fills the panel height exactly — the region is a natural screenful, shown
+    at the page's own proportions, with nothing cropped off the sides.
     """
-    src_w, src_h = _probe_png(png)
-    eff_w = int(width * content_zoom)
-    scaled_h = int(src_h * (eff_w / src_w))
-    frames = max(2, int(duration * fps))
+    from PIL import Image
+    import numpy as np
 
-    travel = max(0, scaled_h - height)
-    y0 = int(travel * max(0.0, min(1.0, start_frac)))
-    y1 = int(travel * max(0.0, min(1.0, end_frac)))
-    if y1 == y0:
-        y1 = min(travel, y0 + height // 2)
+    im = Image.open(png).convert("RGB")
+    a = np.asarray(im)
+    h, w = a.shape[:2]
+    bg = np.median(a.reshape(-1, 3), axis=0)
+    dev = np.abs(a.astype(np.int16) - bg.astype(np.int16)).sum(axis=2)
+    active = dev > 34
+    rowact = active.mean(axis=1)
 
-    # crop y is expressed per-frame via `n`; linear interpolation between y0/y1.
-    expr = f"{y0}+({y1}-{y0})*n/{frames - 1}"
-    # Crop x is centred on the content column, not on the page: sites lay out a
-    # centred body with wide empty gutters, and cropping from x=0 would show
-    # mostly margin.
-    x = max(0, (eff_w - width) // 2)
-    vf = (f"scale={eff_w}:-2:flags=lanczos,"
-          f"crop={width}:{height}:{x}:'{expr}',"
-          f"format=yuv420p")
-    cmd = ["ffmpeg", "-v", "error", "-y", "-loop", "1", "-framerate", str(fps),
-           "-t", f"{duration:.3f}", "-i", png, "-vf", vf, "-r", str(fps),
-           "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", out_mp4]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0:
-        raise PageRollError(f"scroll render failed: {r.stderr[-500:]}")
-    return out_mp4
+    win = max(200, int(w * panel_aspect))          # page px per screenful
+    # A 6000px page holds only ~2.5 screenfuls, so windows overlap heavily —
+    # otherwise there are not enough distinct regions to cover a 60s video.
+    step = max(1, int(win * (1.0 - overlap)))
+
+    windows: list[Region] = []
+    for top in range(0, max(1, h - win), step):
+        bottom = min(h, top + win)
+        density = float(rowact[top:bottom].mean())
+        # Ignore near-empty windows: page footers and long blank tails.
+        if density < 0.012:
+            continue
+        windows.append(Region(top=top, bottom=bottom, left=0, right=w,
+                              density=density))
+
+    if not windows:
+        windows = [Region(top=0, bottom=min(h, win), left=0, right=w,
+                          density=float(rowact[:win].mean()))]
+
+    # Keep the densest, then restore document order so the clips read as a
+    # progression down the page rather than a jumble.
+    windows.sort(key=lambda r: -r.density)
+    windows = windows[:max_regions]
+    windows.sort(key=lambda r: r.top)
+    for i, r in enumerate(windows):
+        r.index = i
+    logger.info("Detected %d content windows (%dpx each) in %s",
+                len(windows), win, Path(png).name)
+    return windows
 
 
-def make_zoom(png: str, out_mp4: str, *, duration: float = 3.0,
-              width: int = 1080, height: int = 1920, fps: int = 25,
-              focus_frac: float = 0.15, zoom_from: float = 1.0,
-              zoom_to: float = 1.18, content_zoom: float = 1.0) -> str:
-    """Slow push into a region of the page.
+def render_region(png: str, region: Region, out_mp4: str, *,
+                  duration: float, width: int, height: int,
+                  fps: int) -> RollKind:
+    """Fit one region to the panel and move gently within it.
 
-    zoompan is applied to an already-scaled still, so the motion is smooth
-    rather than stepping between integer crop positions.
+    The region is scaled so its FULL WIDTH fits the panel — nothing is cropped
+    horizontally, which is what previously sliced content off both edges. If
+    the scaled region is taller than the panel the crop window travels down it;
+    otherwise it is centred, padded, and given a slow push.
     """
-    src_w, src_h = _probe_png(png)
-    eff_w = int(width * content_zoom)
-    scaled_h = int(src_h * (eff_w / src_w))
     frames = max(2, int(duration * fps))
-    y = int(max(0, min(scaled_h - height, scaled_h * focus_frac)))
-    x = max(0, (eff_w - width) // 2)
+    scale = width / max(1, region.width)
+    scaled_h = int(region.height * scale)
 
-    # d=1, NOT d=frames. `d` is output frames PER INPUT FRAME, and the input is
-    # a still looped at `fps`, so d=frames produced frames^2 (5625 for a 3s
-    # clip) and a video 75x too long. With d=1 the `on` counter still ramps
-    # across the whole clip, so the zoom is unchanged.
-    vf = (f"scale={eff_w}:-2:flags=lanczos,"
-          f"crop={width}:{height}:{x}:{y},"
-          f"zoompan=z='{zoom_from}+({zoom_to}-{zoom_from})*on/{frames}':"
-          f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-          f"d=1:s={width}x{height}:fps={fps},format=yuv420p")
+    pre = (f"crop={region.width}:{region.height}:{region.left}:{region.top},"
+           f"scale={width}:-2:flags=lanczos")
+
+    if scaled_h > height + 20:
+        travel = scaled_h - height
+        # At most one panel-height of travel per clip: faster and the eye
+        # cannot read anything on the way past.
+        y1 = min(travel, height)
+        vf = (f"{pre},crop={width}:{height}:0:'0+({y1})*n/{frames - 1}',"
+              f"format=yuv420p")
+        kind: RollKind = "scroll"
+    else:
+        pad_y = max(0, (height - scaled_h) // 2)
+        vf = (f"{pre},pad={width}:{height}:0:{pad_y}:color=0x0D1117,"
+              f"zoompan=z='1.0+0.06*on/{frames}':x='iw/2-(iw/zoom/2)':"
+              f"y='ih/2-(ih/zoom/2)':d=1:s={width}x{height}:fps={fps},"
+              f"format=yuv420p")
+        kind = "hold"
+
     cmd = ["ffmpeg", "-v", "error", "-y", "-loop", "1", "-framerate", str(fps),
            "-t", f"{duration:.3f}", "-i", png, "-vf", vf, "-r", str(fps),
            "-frames:v", str(frames),
            "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", out_mp4]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
-        raise PageRollError(f"zoom render failed: {r.stderr[-500:]}")
-    return out_mp4
+        raise PageRollError(f"region render failed: {r.stderr[-500:]}")
+    return kind
 
 
 def build_rolls(url: str, out_dir: str, *, count: int = 4,
                 duration: float = 3.0, width: int = 1080, height: int = 1920,
                 fps: int = 25, half_height: Optional[int] = None,
-                content_zoom: float = 1.9) -> list[RollClip]:
-    """Capture the page once and cut several distinct clips from it.
+                pick: Optional[list[int]] = None) -> list[RollClip]:
+    """Capture the page and render one clip per selected content region.
 
-    Each clip covers a different band of the page, so four cut-ins are four
-    different parts of the source rather than the same header four times.
-
-    half_height: when the avatar occupies the lower half of frame, render at
-    that height instead — the clip only ever occupies the top panel, and
-    rendering it full-height then cropping would throw away resolution.
+    ``pick`` chooses region indices, letting a caller align regions to script
+    beats. Without it, regions are spread evenly down the page.
     """
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     png = os.path.join(out_dir, "page.png")
@@ -203,29 +247,40 @@ def build_rolls(url: str, out_dir: str, *, count: int = 4,
         logger.warning("page-roll capture failed for %s: %s", url, exc)
         return []
 
+    try:
+        regions = detect_regions(png, panel_aspect=(half_height or height) / width)
+    except Exception as exc:                      # noqa: BLE001 — optional stage
+        logger.warning("region detection failed: %s", exc)
+        return []
+    if not regions:
+        logger.warning("no content regions found in %s", url)
+        return []
+
+    json.dump([{"index": r.index, "top": r.top, "bottom": r.bottom,
+                "left": r.left, "right": r.right, "height": r.height,
+                "width": r.width, "density": round(r.density, 4)}
+               for r in regions],
+              open(os.path.join(out_dir, "regions.json"), "w"), indent=2)
+
+    if pick:
+        chosen = [regions[i] for i in pick if 0 <= i < len(regions)][:count]
+    else:
+        step = max(1, len(regions) // max(1, count))
+        chosen = regions[::step][:count]
+
     h = half_height or height
     clips: list[RollClip] = []
-    # Walk successive bands. The first is the top of the page (the part a
-    # reader actually lands on); later ones move down through the body.
-    bands = [(0.00, 0.18), (0.16, 0.38), (0.36, 0.60), (0.55, 0.85),
-             (0.80, 1.00)][:count]
-    for i, (a, b) in enumerate(bands):
+    for i, reg in enumerate(chosen):
         out = os.path.join(out_dir, f"roll_{i}.mp4")
         try:
-            if i % 3 == 2:
-                make_zoom(png, out, duration=duration, width=width, height=h,
-                          fps=fps, focus_frac=a, content_zoom=content_zoom)
-                kind: RollKind = "zoom"
-            else:
-                make_scroll(png, out, duration=duration, width=width, height=h,
-                            fps=fps, start_frac=a, end_frac=b,
-                            content_zoom=content_zoom)
-                kind = "scroll"
+            kind = render_region(png, reg, out, duration=duration, width=width,
+                                 height=h, fps=fps)
         except PageRollError as exc:
-            logger.warning("roll %d failed: %s", i, exc)
+            logger.warning("region %d failed: %s", reg.index, exc)
             continue
         clips.append(RollClip(path=out, kind=kind, duration=duration,
-                              source_url=url, region=f"{a:.0%}-{b:.0%}"))
-        logger.info("page-roll %d: %s over %s of the page", i, kind,
-                    clips[-1].region)
+                              source_url=url, region_index=reg.index,
+                              region=f"y{reg.top}-{reg.bottom}"))
+        logger.info("page-roll %d: %s region %d (%dx%d at y=%d)",
+                    i, kind, reg.index, reg.width, reg.height, reg.top)
     return clips

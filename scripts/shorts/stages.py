@@ -151,13 +151,62 @@ async def render_designs(self: ShortsPipeline, script: dict, *,
     # them in half — the SKILL.md graphic lost its own title. A graphic that
     # knows its real canvas composes for it.
     panel_h = cfg.content_height if cfg.layout == "half_stacked" else cfg.height
+    from .vision import review_design
     renderer = HyperFramesRenderer(
         output_dir=cfg.design_dir, work_dir=cfg.path("design_work"),
         width=cfg.width, height=panel_h, fps=cfg.fps, style=style,
-        model=cfg.intelligence_model, timeout_s=cfg.design_timeout_s)
+        model=cfg.intelligence_model, timeout_s=cfg.design_timeout_s,
+        reviewer=review_design if cfg.review_designs else None,
+        max_attempts=cfg.design_attempts)
     results = await renderer.render_all(briefs, concurrency=cfg.design_concurrency)
     self._save("designs.json", results)
     return results
+
+
+
+def _pick_regions(self: ShortsPipeline, url: str, panel_h: int):
+    """Choose which page regions illustrate which narration beats.
+
+    Without this the clips are an even walk down the page, which puts the
+    commit list under narration about the file format. Returns None on any
+    failure so the caller falls back to the even spread rather than losing
+    b-roll entirely.
+    """
+    cfg = self.cfg
+    try:
+        from .pageroll import capture_page, detect_regions
+        from .vision import make_region_thumbs, select_regions
+
+        png = os.path.join(cfg.broll_dir, "page.png")
+        capture_page(url, png)
+        regions = detect_regions(png, panel_aspect=panel_h / cfg.width)
+        if len(regions) < 2:
+            return None
+        thumbs = make_region_thumbs(png, regions,
+                                    os.path.join(cfg.work_dir, "regions"))
+        script = self._load("script.json")["script"]
+        caps = self._load("captions.json")
+        # Sample the narration at even points as stand-in beats; each becomes
+        # "what is being said around here".
+        n = min(cfg.broll_max_clips, len(regions))
+        cues = caps["cues"]
+        beats = []
+        for i in range(n):
+            idx = int(len(cues) * (i + 0.5) / n)
+            s0, e0, _ = cues[max(0, min(idx, len(cues) - 1))]
+            text = " ".join(c[2] for c in cues[max(0, idx - 2):idx + 3])
+            beats.append({"start": s0, "end": e0, "text": text})
+
+        matches = select_regions(thumbs=thumbs, script=script, beats=beats,
+                                 work_dir=cfg.work_dir,
+                                 model=cfg.intelligence_model)
+        if not matches:
+            return None
+        return [m["region"] for m in sorted(matches, key=lambda m: m["beat"])]
+    except Exception as exc:                       # noqa: BLE001 — optional
+        logger.warning("smart region selection failed (%s) — using even spread",
+                       str(exc)[:160])
+        return None
 
 
 # ---------------------------------------------------------------- b-roll
@@ -181,15 +230,20 @@ def fetch_broll(self: ShortsPipeline, queries: list[str], *,
     h = cfg.content_height if cfg.layout == "half_stacked" else cfg.height
 
     if cfg.broll_provider == "pageroll":
-        from .pageroll import build_rolls
+        from .pageroll import build_rolls, capture_page, detect_regions
         if not url:
             logger.warning("page-roll requested but the source has no URL — "
                            "skipping b-roll")
             self._save("broll.json", [])
             return []
+
+        pick = None
+        if cfg.smart_regions:
+            pick = _pick_regions(self, url, h)
         rolls = build_rolls(url, cfg.broll_dir, count=cfg.broll_max_clips,
                             duration=cfg.broll_clip_s, width=cfg.width,
-                            height=cfg.height, fps=cfg.fps, half_height=h)
+                            height=cfg.height, fps=cfg.fps, half_height=h,
+                            pick=pick)
         out = [{"path": r.path, "duration": r.duration, "kind": r.kind,
                 "region": r.region, "source": r.source_url} for r in rolls]
         self._save("broll.json", out)

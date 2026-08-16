@@ -67,6 +67,11 @@ class ShortsConfig:
     max_designs: int = 4
     design_concurrency: int = 4
     design_timeout_s: int = 1800
+    # Look at each rendered graphic and re-render once if it is visibly
+    # broken. HyperFrames' own lint/check passed a card whose hero overlapped
+    # its support line and a terminal whose cursor sat on a letter.
+    review_designs: bool = True
+    design_attempts: int = 2
     intelligence_model: str = "sonnet"
 
     # --- visuals --------------------------------------------------------
@@ -112,6 +117,9 @@ class ShortsConfig:
     # about a repository — which reads as filler, so it is not the default.
     broll_provider: str = "pageroll"     # pageroll | stock | none
     broll_enabled: bool = True
+    # Match page regions to narration beats by looking at them, rather than
+    # walking evenly down the page and hoping.
+    smart_regions: bool = True
     broll_max_clips: int = 5
     broll_clip_s: float = 3.0
 
