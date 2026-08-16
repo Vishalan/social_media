@@ -222,8 +222,13 @@ class ClaudeCliClient:
             raise ClaudeCliError(f"claude -p could not be launched: {exc}") from exc
 
         if proc.returncode != 0:
-            tail = (stderr or b"").decode("utf-8", "replace")[-800:]
-            raise ClaudeCliError(f"claude -p exited {proc.returncode}: {tail}")
+            # The CLI writes failures like "Not logged in - Please run /login"
+            # to STDOUT, not stderr. Reporting stderr alone produced the
+            # useless message "claude -p exited 1: " with nothing after it.
+            err = (stderr or b"").decode("utf-8", "replace").strip()
+            out = (stdout or b"").decode("utf-8", "replace").strip()
+            detail = " | ".join(x for x in (err[-600:], out[-600:]) if x) or "(no output)"
+            raise ClaudeCliError(f"claude -p exited {proc.returncode}: {detail}")
 
         raw = (stdout or b"").decode("utf-8", "replace").strip()
         if not raw:

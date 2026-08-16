@@ -103,13 +103,15 @@ def _circle_mask(path: Path, diameter: int, *, ring_px: int = 4) -> str:
     """
     from PIL import Image, ImageDraw
 
+    # LUMA-encoded, not alpha-encoded: ffmpeg's `alphamerge` takes the SECOND
+    # input's LUMA as the alpha channel. A white-with-alpha PNG has luma 255
+    # everywhere, so the mask was fully opaque and the PIP rendered as a SQUARE
+    # with a ring drawn on top. Black outside the circle, white inside.
     ss = 4
     big = Image.new("L", (diameter * ss, diameter * ss), 0)
     ImageDraw.Draw(big).ellipse([0, 0, diameter * ss - 1, diameter * ss - 1], fill=255)
-    alpha = big.resize((diameter, diameter), Image.LANCZOS)
-    rgba = Image.new("RGBA", (diameter, diameter), (255, 255, 255, 0))
-    rgba.putalpha(alpha)
-    rgba.save(path)
+    small = big.resize((diameter, diameter), Image.LANCZOS)
+    small.convert("RGB").save(path)
     return str(path)
 
 

@@ -189,8 +189,12 @@ class HyperFramesRenderer:
             raise RenderError(f"design of {brief.slug!r} exceeded {self.timeout_s}s")
 
         if proc.returncode != 0:
-            tail = (stderr or b"").decode("utf-8", "replace")[-600:]
-            raise RenderError(f"claude -p exited {proc.returncode}: {tail}")
+            # Same as the intelligence adapter: the CLI reports auth and
+            # config failures on stdout, so stderr alone is often empty.
+            err = (stderr or b"").decode("utf-8", "replace").strip()
+            out = (stdout or b"").decode("utf-8", "replace").strip()
+            detail = " | ".join(x for x in (err[-500:], out[-500:]) if x) or "(no output)"
+            raise RenderError(f"claude -p exited {proc.returncode}: {detail}")
 
         # The agent reports success in prose; the file on disk is the contract.
         if not out.exists() or out.stat().st_size == 0:

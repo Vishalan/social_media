@@ -26,10 +26,20 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# 480x854 @ 25fps, no audio — LatentSync's required input shape.
-_TARGET_W, _TARGET_H, _TARGET_FPS = 480, 854, 25
+# 1080x1920 @ 25fps, no audio — LatentSync's required input shape.
+#
+# Cut at delivery resolution, not at the 480x854 the benchmark used.
+# LatentSync regenerates the face at 512x512 internally and composites back
+# at SOURCE resolution, so a 1080p driving clip yields a 1080p master with
+# no upscale — the earlier videos were scaled 2.25x from 480x854 and were
+# visibly soft as a result. The extra cost is compositing and encoding, not
+# diffusion.
+_TARGET_W, _TARGET_H, _TARGET_FPS = 1080, 1920, 25
 
-# 9:16 crop from the 1920x1080 source, centred on the subject.
+# 9:16 crop from the 1920x1080 source, centred on the subject. The crop is
+# 608x1080; scaling that to 1080x1920 is a 1.78x upscale of the SOURCE, which
+# is unavoidable — a 9:16 window of a 1080p landscape frame simply has 608px
+# of width to work with. It still beats cutting to 480 and upscaling twice.
 _CROP = "crop=608:1080:656:0"
 
 
