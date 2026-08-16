@@ -1,0 +1,13 @@
+we have done a lot of work in this repo in the past to create an Avatar Channel which creates news shorts about AI and Tech 
+Its been 4-5 months since we have done deeper research on models and efficient workflows
+Intent is to create a vertical 9:16 reel, shorts format videos upto 60 seconds with my own Avatar sometimes in split screen, full screen or round PIP with asthetic cuts and b-rolls
+1. Do deep research on models which can run locally and create such Avatar from my footage or image with realistic precision
+2. Understand the latest standards of creating good hook video pipelines with quick cuts and gripping content
+3. For b-rolls, a-rolls and statistics cards, ensure we have the best in class pipeline
+4. Audio and caption generation should be spot ON
+5. We have done a bit in generating such pipeline in past, you can take learnings from it. But ensure not to get biased and stick to latest models, pipelines and skills available now.
+6. Ensure your research is done for upto last 3-4 weeks, so that we are on top of tech while building something like this
+
+
+Just to remind, I have a following GPU home server
+CommonCreed Server details: /Users/vishalan/Documents/Projects/social_media/docs/ideas/commoncreed-home-server.md
