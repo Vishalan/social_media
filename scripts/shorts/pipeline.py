@@ -213,6 +213,7 @@ class ShortsPipeline:
             self._post(f"{cfg.chatterbox_endpoint}/tts", {
                 "text": c, "reference_audio_path": cfg.voice_ref,
                 "exaggeration": cfg.exaggeration,
+                "cfg_weight": cfg.cfg_weight,
                 "output_filename": f"{cfg.run_id}_c{i}.wav",
             })
             local = cfg.path(f"chunk{i}.wav")

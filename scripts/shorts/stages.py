@@ -125,9 +125,16 @@ async def render_designs(self: ShortsPipeline, script: dict, *,
         source_text=source_with_identity, script=script["script"],
         source_kind="article", max_briefs=cfg.max_designs)
 
-    reserved = ("none" if cfg.layout != "pip_circle" else
-                "the LOWER-LEFT region: a circle of diameter 34% of frame width "
-                "whose bounding box spans x 5%-39% and y 60%-79%. Keep it empty.")
+    if cfg.layout == "pip_circle":
+        reserved = ("the LOWER-LEFT region: a circle of diameter 34% of frame "
+                    "width whose bounding box spans x 5%-39% and y 60%-79%. "
+                    "Keep it empty.")
+    else:
+        # Stacked: the graphic owns its whole canvas, which is landscape-ish
+        # rather than vertical. Composing for a tall frame here wastes the
+        # sides and pushes content out of the panel.
+        reserved = ("none — you own the whole canvas. Note it is roughly 1:1, "
+                    "NOT a tall 9:16 frame: compose for a squarish panel.")
     style = {
         "palette": ", ".join(vi["palette"]),
         "typography": vi["typography"],
@@ -139,9 +146,14 @@ async def render_designs(self: ShortsPipeline, script: dict, *,
         "accent": vi["palette"][2] if len(vi["palette"]) > 2 else "#22D3EE",
         "muted": vi["palette"][-1] if vi["palette"] else "#A8B8C5",
     }
+    # Render at the CONTENT PANEL's aspect, not the full frame. Designs were
+    # composed for 1080x1920 and then cropped to the 1080x998 panel, which cut
+    # them in half — the SKILL.md graphic lost its own title. A graphic that
+    # knows its real canvas composes for it.
+    panel_h = cfg.content_height if cfg.layout == "half_stacked" else cfg.height
     renderer = HyperFramesRenderer(
         output_dir=cfg.design_dir, work_dir=cfg.path("design_work"),
-        width=cfg.width, height=cfg.height, fps=cfg.fps, style=style,
+        width=cfg.width, height=panel_h, fps=cfg.fps, style=style,
         model=cfg.intelligence_model, timeout_s=cfg.design_timeout_s)
     results = await renderer.render_all(briefs, concurrency=cfg.design_concurrency)
     self._save("designs.json", results)
@@ -345,6 +357,8 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
             os.replace(seg, out)
         else:
             ct = os.path.join(span_dir, f"ct_{i:02d}.mp4")
+            # Loop if shorter than the span, trim if longer. No rescale here —
+            # content is already produced at the panel's dimensions.
             self._sh("ffmpeg", "-v", "error", "-y", "-stream_loop", "-1",
                      "-i", sp["content"], "-t", f"{L:.3f}", "-an",
                      "-c:v", "libx264", "-crf", "17", "-pix_fmt", "yuv420p", ct)
@@ -368,7 +382,7 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
             if not any(not (e <= a or s >= z) for a, z in dspans)]
 
     from .branding import CAPTIONS
-    df = [CAPTIONS.drawtext(t, s, e, y_frac=cfg.caption_y_frac)
+    df = [CAPTIONS.drawtext(t, s, e, y_frac=cfg.caption_y())
           for s, e, t in cues]
     self._sh("ffmpeg", "-v", "error", "-y", "-i", cfg.path("v_layout.mp4"),
              "-vf", ",".join(df), "-c:v", "libx264", "-crf", "17",

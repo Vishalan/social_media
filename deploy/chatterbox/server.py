@@ -7,7 +7,9 @@ Exposes two endpoints:
     body: {
       "text": str,
       "reference_audio_path": str | null,   # path inside the container
-      "exaggeration": float = 0.3,           # 0.0 neutral → 1.0 dramatic
+      "exaggeration": float = 0.5,           # 0.0 neutral → 1.0 dramatic
+      "cfg_weight": float = 0.5,             # lower = slower, more deliberate
+      "temperature": float = 0.8,
       "output_filename": str | null,         # defaults to timestamp.wav
     }
     200: { output_path: str, duration_ms: float, sample_rate: int }
@@ -81,7 +83,15 @@ def _get_model():
 class TTSRequest(BaseModel):
     text: str = Field(min_length=1, max_length=10_000)
     reference_audio_path: Optional[str] = None
-    exaggeration: float = Field(default=0.3, ge=0.0, le=1.0)
+    # Stock ChatterboxTTS defaults are exaggeration=0.5, cfg_weight=0.5. The
+    # service previously defaulted exaggeration to 0.3 — FLATTER than stock —
+    # and never passed cfg_weight at all, leaving it at whatever the library
+    # chose. The two interact by design: higher exaggeration speeds speech up,
+    # lower cfg_weight slows it into something more deliberate. Vendor-
+    # documented expressive preset is exaggeration 0.7 / cfg_weight 0.3.
+    exaggeration: float = Field(default=0.5, ge=0.0, le=1.0)
+    cfg_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    temperature: float = Field(default=0.8, ge=0.05, le=1.5)
     output_filename: Optional[str] = Field(default=None, max_length=200)
 
 
@@ -188,6 +198,8 @@ def tts(req: TTSRequest) -> TTSResponse:
             text,
             audio_prompt_path=ref,
             exaggeration=req.exaggeration,
+            cfg_weight=req.cfg_weight,
+            temperature=req.temperature,
         )
         torchaudio.save(str(output_path), wav.cpu(), model.sr)
         dur_ms = (time.time() - t0) * 1000

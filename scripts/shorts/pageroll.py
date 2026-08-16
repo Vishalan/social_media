@@ -105,15 +105,22 @@ def _probe_png(path: str) -> tuple[int, int]:
 
 def make_scroll(png: str, out_mp4: str, *, duration: float = 3.0,
                 width: int = 1080, height: int = 1920, fps: int = 25,
-                start_frac: float = 0.0, end_frac: float = 0.6) -> str:
+                start_frac: float = 0.0, end_frac: float = 0.6,
+                content_zoom: float = 1.0) -> str:
     """Slow vertical travel over the captured page.
 
-    The page is scaled so its width fills the frame, then the crop window walks
-    down it. Travel is linear and slow — an eased or fast scroll reads as a
-    transition effect rather than as reading.
+    ``content_zoom`` magnifies before cropping. Fitting the full 1280px page
+    width into a 1080px panel renders body text at roughly 8px — legible on a
+    desktop monitor, unreadable on a phone, which made the page-roll look like
+    generic texture rather than a specific page. Zooming in trades width the
+    viewer cannot read for text they can.
+
+    Travel is linear and slow: eased or fast scrolling reads as a transition
+    effect rather than as reading.
     """
     src_w, src_h = _probe_png(png)
-    scaled_h = int(src_h * (width / src_w))
+    eff_w = int(width * content_zoom)
+    scaled_h = int(src_h * (eff_w / src_w))
     frames = max(2, int(duration * fps))
 
     travel = max(0, scaled_h - height)
@@ -124,8 +131,12 @@ def make_scroll(png: str, out_mp4: str, *, duration: float = 3.0,
 
     # crop y is expressed per-frame via `n`; linear interpolation between y0/y1.
     expr = f"{y0}+({y1}-{y0})*n/{frames - 1}"
-    vf = (f"scale={width}:-2:flags=lanczos,"
-          f"crop={width}:{height}:0:'{expr}',"
+    # Crop x is centred on the content column, not on the page: sites lay out a
+    # centred body with wide empty gutters, and cropping from x=0 would show
+    # mostly margin.
+    x = max(0, (eff_w - width) // 2)
+    vf = (f"scale={eff_w}:-2:flags=lanczos,"
+          f"crop={width}:{height}:{x}:'{expr}',"
           f"format=yuv420p")
     cmd = ["ffmpeg", "-v", "error", "-y", "-loop", "1", "-framerate", str(fps),
            "-t", f"{duration:.3f}", "-i", png, "-vf", vf, "-r", str(fps),
@@ -139,23 +150,25 @@ def make_scroll(png: str, out_mp4: str, *, duration: float = 3.0,
 def make_zoom(png: str, out_mp4: str, *, duration: float = 3.0,
               width: int = 1080, height: int = 1920, fps: int = 25,
               focus_frac: float = 0.15, zoom_from: float = 1.0,
-              zoom_to: float = 1.18) -> str:
+              zoom_to: float = 1.18, content_zoom: float = 1.0) -> str:
     """Slow push into a region of the page.
 
     zoompan is applied to an already-scaled still, so the motion is smooth
     rather than stepping between integer crop positions.
     """
     src_w, src_h = _probe_png(png)
-    scaled_h = int(src_h * (width / src_w))
+    eff_w = int(width * content_zoom)
+    scaled_h = int(src_h * (eff_w / src_w))
     frames = max(2, int(duration * fps))
     y = int(max(0, min(scaled_h - height, scaled_h * focus_frac)))
+    x = max(0, (eff_w - width) // 2)
 
     # d=1, NOT d=frames. `d` is output frames PER INPUT FRAME, and the input is
     # a still looped at `fps`, so d=frames produced frames^2 (5625 for a 3s
     # clip) and a video 75x too long. With d=1 the `on` counter still ramps
     # across the whole clip, so the zoom is unchanged.
-    vf = (f"scale={width}:-2:flags=lanczos,"
-          f"crop={width}:{height}:0:{y},"
+    vf = (f"scale={eff_w}:-2:flags=lanczos,"
+          f"crop={width}:{height}:{x}:{y},"
           f"zoompan=z='{zoom_from}+({zoom_to}-{zoom_from})*on/{frames}':"
           f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
           f"d=1:s={width}x{height}:fps={fps},format=yuv420p")
@@ -171,7 +184,8 @@ def make_zoom(png: str, out_mp4: str, *, duration: float = 3.0,
 
 def build_rolls(url: str, out_dir: str, *, count: int = 4,
                 duration: float = 3.0, width: int = 1080, height: int = 1920,
-                fps: int = 25, half_height: Optional[int] = None) -> list[RollClip]:
+                fps: int = 25, half_height: Optional[int] = None,
+                content_zoom: float = 1.9) -> list[RollClip]:
     """Capture the page once and cut several distinct clips from it.
 
     Each clip covers a different band of the page, so four cut-ins are four
@@ -200,11 +214,12 @@ def build_rolls(url: str, out_dir: str, *, count: int = 4,
         try:
             if i % 3 == 2:
                 make_zoom(png, out, duration=duration, width=width, height=h,
-                          fps=fps, focus_frac=a)
+                          fps=fps, focus_frac=a, content_zoom=content_zoom)
                 kind: RollKind = "zoom"
             else:
                 make_scroll(png, out, duration=duration, width=width, height=h,
-                            fps=fps, start_frac=a, end_frac=b)
+                            fps=fps, start_frac=a, end_frac=b,
+                            content_zoom=content_zoom)
                 kind = "scroll"
         except PageRollError as exc:
             logger.warning("roll %d failed: %s", i, exc)

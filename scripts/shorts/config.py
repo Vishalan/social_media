@@ -25,7 +25,15 @@ class ShortsConfig:
     target_words_min: int = 190
     target_words_max: int = 210
 
-    voice_ref: str = "vishalan_voice_ref_v2.wav"
+    # v3 is cut from IMG_1774_4 (the owner's stated preference); v2 came from
+    # _3. The two files have different audio despite identical duration and
+    # transcript, so they are separate captures rather than re-encodes.
+    voice_ref: str = "vishalan_voice_ref_v3.wav"
+    # cfg_weight was NOT exposed by the service until 2026-08-17, so it sat at
+    # the library default while exaggeration was tuned alone. They interact:
+    # higher exaggeration speeds speech up, lower cfg_weight slows it into
+    # something more deliberate.
+    cfg_weight: float = 0.5
     # Stock default is 0.5. The deployed service defaults to 0.3, which is
     # FLATTER than stock on a channel that needs punchy delivery.
     exaggeration: float = 0.5
@@ -76,7 +84,25 @@ class ShortsConfig:
     fill_gaps_with_pageroll: bool = True
     # Caption look lives in branding.CaptionStyle — the channel constant — so a
     # restyle happens in one place rather than in the assembler.
-    caption_y_frac: float = 0.615
+    #
+    # Position is layout-dependent and set at assembly time, not here:
+    #   half_stacked -> just BELOW the panel seam, so the caption reads as a
+    #                   band between the content and the presenter rather than
+    #                   sitting on the presenter's face.
+    #   pip_circle   -> lower third, clear of the PIP.
+    # Leave None to derive; set a float to override.
+    caption_y_frac: Optional[float] = None
+
+    def caption_y(self) -> float:
+        """Vertical position of the caption baseline, as a fraction of frame."""
+        if self.caption_y_frac is not None:
+            return self.caption_y_frac
+        if self.layout == "half_stacked":
+            # The seam is at content_frac (0.52). Sitting the caption just
+            # under it keeps it off the face and out of the bottom UI strip,
+            # and puts it near the optical centre where the eye already is.
+            return (self.content_height / self.height) + 0.015
+        return 0.78
     whisper_model: str = "large-v3"
 
     # --- b-roll ---------------------------------------------------------
