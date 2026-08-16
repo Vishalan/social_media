@@ -184,13 +184,25 @@ def half_stacked_filter(
     avatar_label: str = "1:v",
     out_label: str = "vout",
 ) -> str:
-    """FFmpeg filter_complex stacking content over presenter."""
+    """FFmpeg filter_complex stacking content over presenter.
+
+    The presenter crop is FACE-anchored, not centre-anchored. A centred crop of
+    a 1080x1920 talking head into a 1080x922 panel starts at y=499, which lands
+    below the eyes and leaves a panel of mouth and hands — the same mistake the
+    circular PIP made before it was corrected.
+    """
     ch, ph = spec.content_height, spec.presenter_height
+    # Face centre in the source, as a fraction of its height. The gesture
+    # library frames the head in the upper quarter.
+    fy = spec.pip_face_y_frac
     return ";".join([
         f"[{content_label}]scale={spec.width}:{ch}:force_original_aspect_ratio=increase,"
         f"crop={spec.width}:{ch},setsar=1[top]",
-        f"[{avatar_label}]scale={spec.width}:{ph}:force_original_aspect_ratio=increase,"
-        f"crop={spec.width}:{ph},setsar=1[bot]",
+        # Scale to width first so the crop window walks the full-height frame,
+        # then place that window on the face and clamp inside the picture.
+        f"[{avatar_label}]scale={spec.width}:-2,"
+        f"crop={spec.width}:{ph}:0:'clip(ih*{fy}-{ph}/2,0,ih-{ph})',"
+        f"setsar=1[bot]",
         f"[top][bot]vstack=inputs=2[{out_label}]",
     ])
 

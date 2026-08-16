@@ -65,18 +65,29 @@ class ShortsConfig:
     width: int = 1080
     height: int = 1920
     fps: int = 25
-    layout: str = "pip_circle"      # pip_circle | half_stacked | full
-    caption_font: str = "/opt/commoncreed/assets/fonts/Inter-Bold.ttf"
-    caption_size: int = 54
-    # 0.80H keeps captions clear of the PIP (which sits 0.60-0.79H) and above
-    # the bottom UI strip.
-    caption_y_frac: float = 0.80
+    # half_stacked is the default and "full" is deliberately NOT offered as a
+    # channel default: the presenter alone filling the frame for seconds at a
+    # time is dead screen time in short-form. Every span carries content in the
+    # top panel — a designed graphic at an anchor, the source page-roll
+    # otherwise.
+    layout: str = "half_stacked"    # half_stacked | pip_circle
+    # When no design covers a span, fill the content panel with source page-roll
+    # rather than letting the avatar go full-frame.
+    fill_gaps_with_pageroll: bool = True
+    # Caption look lives in branding.CaptionStyle — the channel constant — so a
+    # restyle happens in one place rather than in the assembler.
+    caption_y_frac: float = 0.615
     whisper_model: str = "large-v3"
 
     # --- b-roll ---------------------------------------------------------
+    # "pageroll" captures the actual source page; "stock" searches Pexels.
+    # Stock reliably returns footage that is topically adjacent but
+    # substantively unrelated — strangers in a coworking space for a story
+    # about a repository — which reads as filler, so it is not the default.
+    broll_provider: str = "pageroll"     # pageroll | stock | none
     broll_enabled: bool = True
-    broll_max_clips: int = 4
-    broll_clip_s: float = 2.2
+    broll_max_clips: int = 5
+    broll_clip_s: float = 3.0
 
     @property
     def work_dir(self) -> str:
@@ -93,6 +104,11 @@ class ShortsConfig:
         # silently produced a video with no stock footage. Deriving every path
         # from work_dir makes that class of mistake impossible.
         return os.path.join(self.work_dir, "broll")
+
+    @property
+    def content_height(self) -> int:
+        """Height of the content panel in a stacked layout (even for h264)."""
+        return int(self.height * 0.52) // 2 * 2
 
     def path(self, *parts: str) -> str:
         return os.path.join(self.work_dir, *parts)

@@ -150,26 +150,60 @@ async def render_designs(self: ShortsPipeline, script: dict, *,
 
 # ---------------------------------------------------------------- b-roll
 def fetch_broll(self: ShortsPipeline, queries: list[str], *,
-                force: bool = False) -> list[dict]:
+                url: str = "", force: bool = False) -> list[dict]:
+    """Supply non-presenter footage via the configured provider.
+
+    Default is page-roll: capture the actual source page and travel over it.
+    Stock search is retained but off by default — see ShortsConfig.broll_provider
+    for why.
+    """
     cfg = self.cfg
     if self._done("broll.json") and not force:
         return self._load("broll.json")
-    if not cfg.broll_enabled:
+    if not cfg.broll_enabled or cfg.broll_provider == "none":
         self._save("broll.json", [])
         return []
 
+    # Content only ever occupies the top panel in a stacked layout, so render
+    # at that height rather than full-frame and cropping resolution away.
+    h = cfg.content_height if cfg.layout == "half_stacked" else cfg.height
+
+    if cfg.broll_provider == "pageroll":
+        from .pageroll import build_rolls
+        if not url:
+            logger.warning("page-roll requested but the source has no URL — "
+                           "skipping b-roll")
+            self._save("broll.json", [])
+            return []
+        rolls = build_rolls(url, cfg.broll_dir, count=cfg.broll_max_clips,
+                            duration=cfg.broll_clip_s, width=cfg.width,
+                            height=cfg.height, fps=cfg.fps, half_height=h)
+        out = [{"path": r.path, "duration": r.duration, "kind": r.kind,
+                "region": r.region, "source": r.source_url} for r in rolls]
+        self._save("broll.json", out)
+        return out
+
+    return _fetch_stock(self, queries, height=h)
+
+
+def _fetch_stock(self: ShortsPipeline, queries: list[str], *,
+                 height: int) -> list[dict]:
+    """Keyword stock search. Kept for sources with no capturable page."""
+    cfg = self.cfg
     key = os.environ.get("PEXELS_API_KEY", "")
     if not key:
-        logger.warning("PEXELS_API_KEY not in environment — skipping stock b-roll")
+        logger.warning("PEXELS_API_KEY not set — skipping stock b-roll")
         self._save("broll.json", [])
         return []
 
     def search(q: str) -> dict:
-        url = ("https://api.pexels.com/videos/search?" + urllib.parse.urlencode(
-            {"query": q, "per_page": 5, "orientation": "portrait", "size": "medium"}))
+        u = ("https://api.pexels.com/videos/search?" + urllib.parse.urlencode(
+            {"query": q, "per_page": 5, "orientation": "portrait",
+             "size": "medium"}))
         # Cloudflare returns 403 "error code: 1010" to default library agents.
-        req = urllib.request.Request(url, headers={
-            "Authorization": key, "User-Agent": _UA, "Accept": "application/json"})
+        req = urllib.request.Request(u, headers={
+            "Authorization": key, "User-Agent": _UA,
+            "Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=30) as r:
             return json.load(r)
 
@@ -192,13 +226,14 @@ def fetch_broll(self: ShortsPipeline, queries: list[str], *,
         with urllib.request.urlopen(req, timeout=120) as r, open(raw, "wb") as f:
             f.write(r.read())
         clip = os.path.join(cfg.broll_dir, f"broll_{i}.mp4")
-        self._sh("ffmpeg", "-v", "error", "-y", "-t", str(cfg.broll_clip_s), "-i", raw,
-                 "-vf", f"scale={cfg.width}:{cfg.height}:force_original_aspect_ratio=increase,"
-                        f"crop={cfg.width}:{cfg.height},fps={cfg.fps}",
+        self._sh("ffmpeg", "-v", "error", "-y", "-t", str(cfg.broll_clip_s),
+                 "-i", raw, "-vf",
+                 f"scale={cfg.width}:{height}:force_original_aspect_ratio=increase,"
+                 f"crop={cfg.width}:{height},fps={cfg.fps}",
                  "-an", "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", clip)
         out.append({"query": q, "path": clip, "duration": self._dur(clip),
-                    "author": v.get("user", {}).get("name", "")})
-        logger.info("b-roll %d: %r -> %s", i, q, os.path.basename(clip))
+                    "kind": "stock", "author": v.get("user", {}).get("name", "")})
+        logger.info("stock b-roll %d: %r", i, q)
     self._save("broll.json", out)
     return out
 
@@ -268,15 +303,33 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
     for p in placed:
         logger.info("  content %-26s %6.2fs +%.2fs", p["slug"], p["t"], p["len"])
 
+    # Gap filling: the presenter must never occupy the whole frame. Any span
+    # without a designed graphic gets source page-roll in the content panel,
+    # cycling through the captured bands so consecutive gaps are different
+    # parts of the page rather than the same header repeated.
+    gap_fill = [b["path"] for b in broll] if cfg.fill_gaps_with_pageroll else []
+    gap_i = 0
+
     spans, cursor = [], 0.0
+
+    def add_gap(start: float, end: float) -> None:
+        nonlocal gap_i
+        if end - start <= 0.25:
+            return
+        if gap_fill:
+            spans.append({"mode": "content", "start": start, "end": end,
+                          "content": gap_fill[gap_i % len(gap_fill)]})
+            gap_i += 1
+        else:
+            # Only reachable when capture failed outright.
+            spans.append({"mode": "full", "start": start, "end": end})
+
     for p in placed:
-        if p["t"] - cursor > 0.25:
-            spans.append({"mode": "full", "start": cursor, "end": p["t"]})
-        spans.append({"mode": "pip", "start": p["t"], "end": p["t"] + p["len"],
-                      "content": p["path"]})
+        add_gap(cursor, p["t"])
+        spans.append({"mode": "content", "start": p["t"],
+                      "end": p["t"] + p["len"], "content": p["path"]})
         cursor = p["t"] + p["len"]
-    if dur - cursor > 0.1:
-        spans.append({"mode": "full", "start": cursor, "end": dur})
+    add_gap(cursor, dur)
 
     span_dir = cfg.path("spans")
     Path(span_dir).mkdir(exist_ok=True)
@@ -288,7 +341,7 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
                  "-t", f"{L:.3f}", "-i", av, "-an", "-c:v", "libx264",
                  "-crf", "17", "-pix_fmt", "yuv420p", seg)
         out = os.path.join(span_dir, f"sp_{i:02d}.mp4")
-        if sp["mode"] == "full" or cfg.layout == "full":
+        if sp["mode"] == "full":
             os.replace(seg, out)
         else:
             ct = os.path.join(span_dir, f"ct_{i:02d}.mp4")
@@ -314,14 +367,9 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
     cues = [(s, e, t) for s, e, t in caps["cues"]
             if not any(not (e <= a or s >= z) for a, z in dspans)]
 
-    def esc(x: str) -> str:
-        return (x.replace("\\", "\\\\").replace(":", "\\:")
-                 .replace("'", "’").replace("%", "\\%"))
-
-    df = [f"drawtext=fontfile={cfg.caption_font}:text='{esc(t)}':"
-          f"fontsize={cfg.caption_size}:fontcolor=white:borderw=5:"
-          f"bordercolor=black@0.85:x=(w-text_w)/2:y=h*{cfg.caption_y_frac}:"
-          f"enable='between(t,{s:.3f},{e:.3f})'" for s, e, t in cues]
+    from .branding import CAPTIONS
+    df = [CAPTIONS.drawtext(t, s, e, y_frac=cfg.caption_y_frac)
+          for s, e, t in cues]
     self._sh("ffmpeg", "-v", "error", "-y", "-i", cfg.path("v_layout.mp4"),
              "-vf", ",".join(df), "-c:v", "libx264", "-crf", "17",
              "-pix_fmt", "yuv420p", "-an", cfg.path("v_caps.mp4"))
@@ -334,11 +382,48 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
     return final
 
 
+
+# ------------------------------------------------------------- thumbnail
+def make_thumbnail(self: ShortsPipeline, script: dict, *,
+                   force: bool = False) -> str:
+    """Render the channel-standard cover frame.
+
+    A cover is not the video's first frame. The first frame of a talking head
+    is whatever the camera caught — the previous video opened on a dark,
+    downward-looking frame, which is a poor thing to represent it in a feed.
+    """
+    cfg = self.cfg
+    out = cfg.path("thumbnail.jpg")
+    if os.path.exists(out) and not force:
+        return out
+
+    from .branding import extract_best_frame, make_thumbnail as _render
+
+    src = cfg.path("avatar_1080.mp4")
+    if not os.path.exists(src):
+        src = cfg.path("avatar_full.mp4")
+    frame = extract_best_frame(src, cfg.path("thumb_frame.png"), at_s=6.0)
+
+    kicker = {"github_repo": "GitHub · Deep Dive",
+              "article": "AI News",
+              "text": "Explainer"}.get(script.get("source_kind", ""), "AI · Tech")
+    accent = None
+    vi = script.get("visual_identity") or {}
+    if vi.get("palette") and len(vi["palette"]) > 2:
+        # Borrow the story's accent so the cover ties to its graphics, while
+        # the template itself stays constant.
+        accent = vi["palette"][2]
+
+    return _render(title=script["title"], kicker=kicker, avatar_frame=frame,
+                   out_path=out, accent=accent)
+
+
 # Attach as methods.
 ShortsPipeline.render_avatar = render_avatar
 ShortsPipeline.render_designs = render_designs
 ShortsPipeline.fetch_broll = fetch_broll
 ShortsPipeline.assemble = assemble
+ShortsPipeline.make_thumbnail = make_thumbnail
 
 
 async def run(cfg: ShortsConfig, source_spec: str, *,
@@ -354,9 +439,14 @@ async def run(cfg: ShortsConfig, source_spec: str, *,
     pipe.plan_segments()
 
     # Designs are CPU/Chrome-bound and the avatar is GPU-bound, so they overlap.
+    # Page-roll capture is quick and the assembler needs it to fill gaps, so
+    # it runs before the long renders rather than after.
+    pipe.fetch_broll(script.get("broll_queries", []), url=src.url)
+
     designs_task = asyncio.create_task(pipe.render_designs(script))
     await asyncio.to_thread(pipe.render_avatar)
     await designs_task
 
-    pipe.fetch_broll(script.get("broll_queries", []))
-    return pipe.assemble()
+    out = pipe.assemble()
+    pipe.make_thumbnail(script)
+    return out
