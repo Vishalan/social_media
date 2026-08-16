@@ -19,6 +19,7 @@ import logging
 from .base import AvatarClient
 from .heygen_client import HeyGenAvatarClient
 from .kling_client import KlingAvatarClient
+from .latentsync_client import LatentSyncClient
 from .veed_client import VeedFabricClient
 
 logger = logging.getLogger(__name__)
@@ -90,13 +91,27 @@ def make_avatar_client(config: dict) -> AvatarClient:
             output_dir=output_dir,
         )
 
+    if provider == "latentsync":
+        # Local lip-sync over the owner's real footage. Unlike the hosted
+        # backends this needs no fal/HeyGen key and never uploads the audio
+        # anywhere — see LatentSyncClient for the measured cost/speed case.
+        logger.info("Avatar provider: LatentSync 1.6 (local, RTX 3090)")
+        return LatentSyncClient(
+            endpoint=config.get("latentsync_endpoint", "http://commoncreed_latentsync:7778"),
+            default_clip=config.get("latentsync_default_clip", "clip_07.mp4"),
+            inference_steps=int(config.get("latentsync_steps", 20)),
+            guidance_scale=float(config.get("latentsync_guidance", 1.5)),
+            seed=int(config.get("latentsync_seed", 1247)),
+            timeout_s=float(config.get("latentsync_timeout_s", 5400)),
+        )
+
     if provider == "ltx":
         raise NotImplementedError(
             "LTX-2.3 avatar provider is planned but not yet implemented. "
-            "Use 'veed' or 'kling' instead."
+            "Use 'latentsync' (local) or 'veed' instead."
         )
 
     raise ValueError(
         f"Unknown avatar_provider {provider!r}. "
-        f"Supported values: 'veed', 'kling', 'heygen'."
+        f"Supported values: 'latentsync', 'veed', 'kling', 'heygen'."
     )

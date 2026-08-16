@@ -70,6 +70,11 @@ volumes:
   # boot pays the download cost.
   commoncreed_chatterbox_cache:
     name: commoncreed_chatterbox_cache
+  # LatentSync weights (~5 GB: latentsync_unet.pt + whisper/tiny.pt) plus the
+  # faster-whisper large-v3 download used for caption timing. Persisted so only
+  # the first boot pays for it — the server is on WiFi and a cold pull is slow.
+  commoncreed_latentsync_cache:
+    name: commoncreed_latentsync_cache
 
 services:
 
@@ -294,6 +299,10 @@ services:
       LINKEDIN_CLIENT_SECRET: ${LINKEDIN_CLIENT_SECRET:-}
       TIKTOK_CLIENT_ID: ${TIKTOK_CLIENT_ID:-}
       TIKTOK_CLIENT_SECRET: ${TIKTOK_CLIENT_SECRET:-}
+      # Google OAuth — login provider (NOT a posting platform). Enables the
+      # "Continue with Google" button on /auth/login. Added 2026-06-15.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
 
       # --- Misc -------------------------------------------------------------
       NX_ADD_PLUGINS: "false"
@@ -321,9 +330,17 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1200M
+          # Bumped from 1200M → 3072M on 2026-06-15 after diagnosing that
+          # the orchestrator (one of 4 PM2 procs sharing this budget) was
+          # being OOM-killed every ~25s. The crash loop blocked it from
+          # registering the integration-refresh schedule, which is why all
+          # Instagram OAuth tokens silently expired after 60 days with no
+          # auto-refresh. 3GB gives the 4 procs ~750MB each — enough room
+          # for the orchestrator's webpack bundle (3MB) plus the temporal
+          # SDK to load without thrashing.
+          memory: 3072M
         reservations:
-          memory: 512M
+          memory: 1024M
 
   # ===========================================================================
   # CommonCreed sidecar — FastAPI control plane (Plan 002 Unit 2 + downstream).
@@ -482,6 +499,65 @@ services:
             # Grants the container one NVIDIA GPU with full capabilities.
             # Requires nvidia-container-toolkit on the host (confirmed
             # present on the Ubuntu server via `docker info`).
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # ===========================================================================
+  # LatentSync — local avatar lip-sync over real footage (replaces VEED/fal.ai)
+  #
+  # Added 2026-08-16 after the spike measured LatentSync 1.6 at 105s for a 5s
+  # clip (21 s of compute per second of video, ~21 min for a 60s short) versus
+  # $4.80-9.00 per short on the metered VEED path.
+  #
+  # VRAM: peaks at 16.6 GB *inside a job subprocess* and returns to ~0 when the
+  # job exits. It must never be co-resident with a warm Chatterbox (3.64 GB
+  # pinned, never released) plus its own peak — the pipeline sequences the two
+  # stages, and this service holding no CUDA context at idle is what makes that
+  # safe.
+  # ===========================================================================
+  commoncreed_latentsync:
+    build:
+      context: ../..
+      dockerfile: deploy/latentsync/Dockerfile
+    image: commoncreed/latentsync:0.1.0
+    container_name: commoncreed_latentsync
+    restart: unless-stopped
+    networks:
+      - commoncreed
+    environment:
+      LATENTSYNC_PORT: "7778"
+      LATENTSYNC_OUTPUT: "/app/output"
+      LATENTSYNC_CLIPS: "/app/clips"
+      LATENTSYNC_CACHE: "/root/.cache/latentsync"
+      # 90 min: a 60s short is ~21 min warm, and a cold run adds the weight pull.
+      LATENTSYNC_TIMEOUT_S: "5400"
+      HF_HOME: "/root/.cache/latentsync/hf"
+    volumes:
+      # Shared with the sidecar so generated video is picked up by path.
+      - commoncreed_output:/app/output
+      # Gesture-clip library (12 clips / 59.25s, motion-tagged) — read-only.
+      - /opt/commoncreed/assets/gesture_clips:/app/clips:ro
+      # Voice reference clips, same mount the chatterbox service uses.
+      - /opt/commoncreed/assets:/app/refs:ro
+      - commoncreed_latentsync_cache:/root/.cache/latentsync
+    expose:
+      - "7778"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:7778/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Weights download on first request, not at boot, so startup is fast.
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          # Inference peaks ~6 GB RSS host-side; headroom for ffmpeg muxing.
+          memory: 12288M
+        reservations:
+          memory: 2048M
+          devices:
             - driver: nvidia
               count: 1
               capabilities: [gpu]

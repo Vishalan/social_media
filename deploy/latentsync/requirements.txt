@@ -1,0 +1,48 @@
+# LatentSync 1.6 service deps.
+#
+# torch/torchvision/torchaudio come from the pytorch base image (2.5.1 + cu121)
+# and are deliberately NOT pinned here — re-pinning them triggers a multi-GB
+# reinstall of wheels the base image already ships.
+#
+# mediapipe is pinned by upstream to 0.10.11, which has no wheel for Python
+# 3.12; the base image is 3.11, and 0.10.14 is the earliest release with a
+# 3.11 wheel that still exposes the face-mesh API LatentSync uses.
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+python-multipart==0.0.20
+
+# --- LatentSync inference ---
+diffusers==0.32.2
+transformers==4.48.0
+decord==0.6.0
+accelerate==0.26.1
+einops==0.7.0
+omegaconf==2.3.0
+opencv-python-headless==4.9.0.80
+mediapipe==0.10.14
+python_speech_features==0.6
+librosa==0.10.1
+scenedetect==0.6.1
+ffmpeg-python==0.2.0
+imageio==2.31.1
+imageio-ffmpeg==0.5.1
+lpips==0.1.4
+face-alignment==1.4.1
+numpy==1.26.4
+kornia==0.8.0
+insightface==0.7.3
+# CPU build on purpose. The 2026-08-16 benchmark that produced the 105s figure
+# ran with insightface on CPU — the host's onnxruntime-gpu could not load
+# (libnvrtc.so.12 missing) and silently fell back. Pinning CPU here reproduces
+# the configuration that was actually measured, and drops a CUDA-library
+# dependency from the image. Face detection is a small fraction of the runtime;
+# the UNet diffusion is what needs the GPU, and that runs under torch.
+# (onnxruntime-gpu 1.20.1 does not exist on PyPI — only 1.20.0 and 1.20.2.)
+onnxruntime==1.20.1
+DeepCache==0.1.1
+huggingface-hub==0.30.2
+
+# --- GPU Whisper (caption timing + TTS validation share one GPU-resident model) ---
+faster-whisper==1.2.1
