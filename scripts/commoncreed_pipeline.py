@@ -53,6 +53,7 @@ during the one-time avatar setup script (scripts/avatar_gen/setup_heygen_avatar.
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -62,6 +63,7 @@ from typing import Optional
 
 from analytics.tracker import AnalyticsTracker
 from anthropic import AsyncAnthropic
+from intelligence import make_intelligence_client
 from approval.telegram_bot import TelegramApprovalBot
 from avatar_gen import AvatarLayout, AvatarQualityError, make_avatar_client
 from broll_gen import BrollError, make_broll_generator
@@ -178,7 +180,9 @@ class CommonCreedPipeline:
         # Avatar client — provider selected by config["avatar_provider"]
         self.avatar_client = make_avatar_client(config)
         # B-roll selector — AI-driven type selection (uses haiku, cheap)
-        _anthropic = AsyncAnthropic(api_key=config["anthropic_api_key"])
+        # Intelligence layer: `claude -p` by default (subscription-billed),
+        # or the metered Anthropic API when intelligence_backend='anthropic'.
+        _anthropic = make_intelligence_client(config)
         self.broll_selector = BrollSelector(_anthropic)
         self.video_editor = VideoEditor()
         self.telegram = TelegramApprovalBot(
@@ -301,15 +305,24 @@ class CommonCreedPipeline:
         # Voiceover (ElevenLabs API)
         audio_path = await self._generate_voice(script["script"], topic)
 
-        # Upload audio to Ayrshare to get a public URL for the avatar API
-        audio_url = await asyncio.to_thread(self.poster.upload_media, audio_path)
-        logger.info("[Phase 1] Audio uploaded for '%s': %s", topic["title"], audio_url)
+        # Local avatar backends (LatentSync) read the audio straight off disk.
+        # Skipping the upload for them is not just an optimisation: it keeps the
+        # owner's cloned voice off a third-party host entirely.
+        audio_url = ""
+        if not getattr(self.avatar_client, "accepts_local_audio", False):
+            audio_url = await asyncio.to_thread(self.poster.upload_media, audio_path)
+            logger.info("[Phase 1] Audio uploaded for '%s': %s", topic["title"], audio_url)
+        else:
+            logger.info(
+                "[Phase 1] Local avatar backend — skipping audio upload for '%s'",
+                topic["title"],
+            )
 
-        # Avatar generation (cloud API — no GPU)
+        # Avatar generation — local GPU (LatentSync) or hosted API
         avatar_layout = AvatarLayout.HALF_SCREEN
         avatar_path = ""
         try:
-            avatar_path = await self._generate_avatar(audio_url, topic)
+            avatar_path = await self._generate_avatar(audio_url, topic, audio_path=audio_path)
         except AvatarQualityError:
             logger.error(
                 "Avatar generation failed twice for '%s' — using b-roll-only",
@@ -432,7 +445,7 @@ class CommonCreedPipeline:
 
         # kwargs for generators that need clients
         gen_kwargs = {
-            "anthropic_client": AsyncAnthropic(api_key=self.config["anthropic_api_key"]),
+            "anthropic_client": make_intelligence_client(self.config),
             "pexels_api_key": self.config.get("pexels_api_key", ""),
             "bing_api_key": self.config.get("bing_api_key", ""),
             "comfyui_client": self.comfyui,
@@ -523,9 +536,7 @@ class CommonCreedPipeline:
             punches = await extract_keyword_punches(
                 script_text=script_text,
                 caption_segments=caption_segments,
-                anthropic_client=AsyncAnthropic(
-                    api_key=self.config["anthropic_api_key"]
-                ),
+                anthropic_client=make_intelligence_client(self.config),
             )
             job.keyword_punches = list(punches)
             logger.info(
@@ -664,14 +675,36 @@ class CommonCreedPipeline:
 
     # ─── Private: generation helpers ──────────────────────────────────────
 
-    async def _generate_avatar(self, audio_url: str, topic: dict) -> str:
+    async def _generate_avatar(
+        self, audio_url: str, topic: dict, *, audio_path: str = ""
+    ) -> str:
         """
-        Generate avatar A-roll from a public audio URL.
+        Generate avatar A-roll.
+
+        Hosted backends (VEED/Kling/HeyGen) take a public ``audio_url``.
+        Local backends (LatentSync) take ``audio_path`` off disk instead, and
+        additionally need a driving video — the gesture clip whose motion the
+        finished shot will carry.
+
         Retries once automatically on AvatarQualityError before raising.
-        Uses make_avatar_client-selected backend (HeyGen or Kling).
         """
         output_path = f"output/avatar/{_safe(topic['title'])}_avatar.mp4"
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+        if getattr(self.avatar_client, "accepts_local_audio", False):
+            clip = self._select_gesture_clip(topic)
+            try:
+                return await self.avatar_client.generate_local(
+                    audio_path, output_path, driving_video=clip
+                )
+            except AvatarQualityError:
+                logger.warning(
+                    "Local avatar failed for '%s' — retrying once", topic["title"]
+                )
+                retry_path = f"output/avatar/{_safe(topic['title'])}_avatar_retry.mp4"
+                return await self.avatar_client.generate_local(
+                    audio_path, retry_path, driving_video=clip
+                )
 
         try:
             return await self.avatar_client.generate(audio_url, output_path)
@@ -705,6 +738,46 @@ class CommonCreedPipeline:
             logger.warning("faster-whisper not installed — captions and silence trimming disabled")
             return []
 
+        # Prefer the GPU service. This process runs inside the sidecar
+        # container, which has NO GPU (ctranslate2 reports 0 CUDA devices) —
+        # hence the CPU/int8 fallback below. The LatentSync sidecar is the only
+        # component with the 3090 attached, so large-v3/float16 lives there.
+        #
+        # Deliberately a SYNCHRONOUS request: _transcribe is called from inside
+        # the running loop in _finalize_job, so asyncio.run() here would raise
+        # "cannot be called from a running event loop".
+        endpoint = self.config.get("latentsync_endpoint")
+        if endpoint:
+            model_name = self.config.get("whisper_model", "large-v3")
+            try:
+                import httpx as _httpx
+
+                resp = _httpx.post(
+                    f"{endpoint.rstrip('/')}/transcribe",
+                    json={"audio_path": audio_path, "model": model_name},
+                    timeout=1800.0,
+                )
+                if resp.status_code == 200:
+                    words = resp.json().get("words", [])
+                    if words:
+                        logger.info(
+                            "Transcribed %d words via GPU %s", len(words), model_name
+                        )
+                        return words
+                    logger.warning(
+                        "GPU transcription returned no words — falling back to CPU"
+                    )
+                else:
+                    logger.warning(
+                        "GPU transcription HTTP %s — falling back to CPU",
+                        resp.status_code,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "GPU transcription unavailable (%s) — falling back to CPU base/int8",
+                    exc,
+                )
+
         model = WhisperModel("base", device="cpu", compute_type="int8")
         segments, _ = model.transcribe(audio_path, word_timestamps=True)
         words = []
@@ -712,6 +785,51 @@ class CommonCreedPipeline:
             for w in (seg.words or []):
                 words.append({"word": w.word.strip(), "start": w.start, "end": w.end})
         return words
+
+    def _select_gesture_clip(self, topic: dict) -> str:
+        """Pick the driving clip whose gesture energy suits the beat.
+
+        The library is motion-tagged (calm / moderate / animated), measured as
+        mean frame difference over the lower 45% of frame — i.e. hands and
+        torso, not head. A hook wants energy; a stat-heavy beat wants stillness
+        so the number is what moves.
+
+        Config ``latentsync_clip_preference`` overrides the tag; ``None`` or an
+        unknown tag falls through to the client's default clip.
+        """
+        pref = str(self.config.get("latentsync_clip_preference", "animated")).lower()
+        manifest_path = Path(
+            self.config.get(
+                "gesture_clips_manifest",
+                "/opt/commoncreed/assets/gesture_clips/manifest.json",
+            )
+        )
+        if not manifest_path.exists():
+            logger.info("No gesture manifest at %s — using backend default clip",
+                        manifest_path)
+            return ""
+
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Gesture manifest unreadable (%s) — using default clip", exc)
+            return ""
+
+        candidates = [c for c in manifest.get("clips", []) if c.get("tag") == pref]
+        if not candidates:
+            logger.info("No clips tagged %r — using backend default clip", pref)
+            return ""
+
+        # Highest motion within the preferred tag, and deterministic: the same
+        # topic must pick the same clip across reruns, or a retry silently
+        # changes the shot.
+        chosen = max(candidates, key=lambda c: (c.get("motion", 0.0), c["clip"]))
+        logger.info(
+            "Gesture clip: %s (tag=%s motion=%.3f) for '%s'",
+            chosen["clip"], chosen.get("tag"), chosen.get("motion", 0.0),
+            topic.get("title", "?"),
+        )
+        return chosen["clip"]
 
     def _select_affiliates(self) -> list[str]:
         """Return up to 3 affiliate links from config/settings.py AFFILIATES dict."""

@@ -80,6 +80,7 @@ logger = logging.getLogger("smoke_e2e")
 
 _PASS = "✓"
 _FAIL = "✗"
+_WARN = "⚠"
 
 # ── Pricing constants ──────────────────────────────────────────────────────────
 
@@ -436,6 +437,92 @@ def _extract_avatar_segments(
     return seg_paths
 
 
+async def _avatar_latentsync(
+    topic: dict,
+    audio_path: str,
+    windows: list[tuple[float, float]],
+    seg_names: list[str],
+    safe: str,
+) -> list[str]:
+    """Generate avatar segments locally via the LatentSync service.
+
+    One driving clip per segment, cut to the segment's exact duration —
+    LatentSync pairs video and audio frame-for-frame, so a mismatch silently
+    truncates one of them.
+
+    Segment tags follow the editing-grammar research: the hook wants gesture
+    energy (it has ~2.0 s to survive TikTok's 2sVTR gate), the closing CTA
+    wants stillness so the words carry.
+    """
+    _section("4. Avatar generation (LatentSync — local, RTX 3090)")
+    from avatar_gen import make_avatar_client
+    from avatar_gen.gesture_library import (
+        GestureLibrary,
+        GestureLibraryError,
+        load_windows_from_manifest,
+    )
+    from video_edit.video_editor import FFMPEG
+
+    client = make_avatar_client({
+        "avatar_provider": "latentsync",
+        "latentsync_endpoint": os.environ.get(
+            "LATENTSYNC_ENDPOINT", "http://commoncreed_latentsync:7778"),
+        "latentsync_steps": int(os.environ.get("LATENTSYNC_STEPS", "20")),
+    })
+
+    manifest = os.environ.get(
+        "GESTURE_CLIPS_MANIFEST",
+        "/opt/commoncreed/assets/gesture_clips/manifest.json")
+    library = GestureLibrary(
+        source=os.environ.get("GESTURE_SOURCE_VIDEO",
+                              "/opt/commoncreed/assets/input_media/IMG_1774_3.mp4"),
+        windows=load_windows_from_manifest(manifest),
+        output_dir=os.environ.get("GESTURE_OUTPUT_DIR", "output/gesture"),
+    )
+
+    total_needed = sum(end - start for start, end in windows)
+    if total_needed > library.total_usable_s:
+        print(f"  {_WARN}  Need {total_needed:.1f}s of footage but only "
+              f"{library.total_usable_s:.1f}s is usable — clips will be reused")
+
+    # Energy per beat. Anything past the named beats falls back to moderate.
+    tag_for = {"hook": "animated", "pip1": "moderate",
+               "pip2": "moderate", "cta": "calm"}
+
+    seg_audio_paths = _extract_avatar_segments(audio_path, windows)
+    out_paths: list[str] = []
+
+    for i, (start, end) in enumerate(windows):
+        dur = end - start
+        name = seg_names[i]
+
+        # LatentSync requires 16 kHz mono; the extracted segments are MP3.
+        wav16 = f"output/avatar/{safe}_{name}_16k.wav"
+        subprocess.run(
+            [FFMPEG, "-y", "-v", "error", "-i", seg_audio_paths[i],
+             "-ac", "1", "-ar", "16000", wav16],
+            check=True, capture_output=True,
+        )
+
+        try:
+            clip = library.cut(dur, prefer_tag=tag_for.get(name, "moderate"),
+                               name=f"{safe}_{name}_drive")
+        except GestureLibraryError as exc:
+            print(f"  {_FAIL}  No usable footage for '{name}' ({dur:.2f}s): {exc}")
+            raise
+
+        out = f"output/avatar/{safe}_avatar_{name}.mp4"
+        produced = await client.generate_local(
+            os.path.abspath(wav16), out, driving_video=os.path.abspath(clip)
+        )
+        out_paths.append(produced)
+        print(f"  {_PASS}  {name}: {dur:.2f}s  clip={Path(clip).name}  -> {produced}")
+
+    print(f"  {_PASS}  {len(out_paths)} segments generated locally "
+          f"({total_needed:.1f}s total, $0 marginal cost)")
+    return out_paths
+
+
 async def step_avatar(topic: dict, audio_path: str, audio_duration: float) -> list[str]:
     """Generate avatar clips — one per visible segment for perfect lip sync.
 
@@ -447,6 +534,14 @@ async def step_avatar(topic: dict, audio_path: str, audio_duration: float) -> li
 
     windows = _compute_avatar_windows(audio_duration)
     seg_names = ["hook", "pip1", "pip2", "cta"][:len(windows)]
+
+    # --- Local path: LatentSync lip-sync over the owner's real footage -------
+    # Preferred over VEED. Measured 2026-08-16 on the RTX 3090: ~21 s of
+    # compute per second of video and $0 marginal cost, against $0.08-0.15/sec
+    # on VEED. Gestures and head motion come from the driving footage, so this
+    # path also needs a gesture clip per segment, cut to the exact duration.
+    if os.environ.get("SMOKE_USE_LATENTSYNC"):
+        return await _avatar_latentsync(topic, audio_path, windows, seg_names, safe)
 
     # Skip VEED unless explicitly opted in
     if not os.environ.get("SMOKE_USE_VEED"):
