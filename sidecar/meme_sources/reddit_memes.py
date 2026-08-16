@@ -1,18 +1,24 @@
 """
 Reddit meme source — fetches top posts from a configured subreddit via
-the public JSON API. No auth needed for the non-commercial listings tier.
+the Reddit OAuth2 API. Anonymous JSON access stopped working 2026-05-28,
+so this module now requires REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET and a
+script-app password grant (REDDIT_USERNAME / REDDIT_PASSWORD).
 
 The source returns a candidate dict per fetched image/video post, with
 enough metadata for the media-pipeline to download + credit-overlay + repost.
 
 Subreddit is resolved per-source-name via the ``MEME_SUBREDDIT_MAP`` setting
-(comma-separated ``name:subreddit`` pairs). Defaults:
-    reddit_programmerhumor:ProgrammerHumor
-    reddit_techhumor:techhumor
+(comma-separated ``name:subreddit`` pairs). Defaults below.
+
+When OAuth creds are missing fetch_candidates returns [] and logs a
+single warning per source — the trigger flow tolerates empty source lists
+without raising.
 """
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from datetime import datetime
 from typing import Any
 
@@ -37,6 +43,75 @@ _DEFAULT_SUBREDDITS = {
     "reddit_mechanicalkeyboards": "MechanicalKeyboards",
 }
 
+# Module-level token cache shared across all RedditMemeSource instances —
+# every trigger fetches ~13 subreddits, so caching the bearer avoids 13x
+# auth roundtrips per run. Reddit tokens expire after 3600s; we refresh
+# 60s before expiry to be safe.
+_TOKEN_LOCK = threading.Lock()
+_TOKEN_CACHE: dict[str, tuple[str, float]] = {}  # client_id -> (token, expires_at_epoch)
+
+
+def _get_access_token(settings: Any) -> str | None:
+    """Return a valid Reddit OAuth bearer token, refreshing if expired.
+
+    Uses the script-app password grant: needs CLIENT_ID/CLIENT_SECRET
+    (from reddit.com/prefs/apps) plus the developer USERNAME/PASSWORD.
+    Returns None if creds are missing or auth fails.
+    """
+    client_id = getattr(settings, "REDDIT_CLIENT_ID", "") or ""
+    client_secret = getattr(settings, "REDDIT_CLIENT_SECRET", "") or ""
+    username = getattr(settings, "REDDIT_USERNAME", "") or ""
+    password = getattr(settings, "REDDIT_PASSWORD", "") or ""
+    if not (client_id and client_secret and username and password):
+        return None
+
+    now = time.time()
+    with _TOKEN_LOCK:
+        cached = _TOKEN_CACHE.get(client_id)
+        if cached and cached[1] > now + 60:
+            return cached[0]
+
+    user_agent_tpl = getattr(
+        settings, "REDDIT_USER_AGENT", "CommonCreedBot/0.2 by u/{username}"
+    ) or "CommonCreedBot/0.2 by u/{username}"
+    user_agent = user_agent_tpl.replace("{username}", username)
+
+    try:
+        import httpx
+
+        with httpx.Client(timeout=10.0) as client:
+            r = client.post(
+                "https://www.reddit.com/api/v1/access_token",
+                auth=(client_id, client_secret),
+                data={
+                    "grant_type": "password",
+                    "username": username,
+                    "password": password,
+                },
+                headers={"User-Agent": user_agent},
+            )
+            if r.status_code != 200:
+                logger.warning(
+                    "reddit oauth: token request HTTP %d body=%s",
+                    r.status_code,
+                    r.text[:200],
+                )
+                return None
+            payload = r.json()
+    except Exception as exc:
+        logger.warning("reddit oauth: token request raised: %s", exc)
+        return None
+
+    token = payload.get("access_token") or ""
+    expires_in = int(payload.get("expires_in") or 3600)
+    if not token:
+        logger.warning("reddit oauth: empty access_token in response")
+        return None
+
+    with _TOKEN_LOCK:
+        _TOKEN_CACHE[client_id] = (token, now + expires_in)
+    return token
+
 
 class RedditMemeSource:
     def __init__(self, source_name: str = "reddit_programmerhumor") -> None:
@@ -58,7 +133,12 @@ class RedditMemeSource:
         return self._subreddit
 
     def is_configured(self, settings: Any) -> bool:
-        return True  # public API, no credentials
+        return bool(
+            getattr(settings, "REDDIT_CLIENT_ID", "")
+            and getattr(settings, "REDDIT_CLIENT_SECRET", "")
+            and getattr(settings, "REDDIT_USERNAME", "")
+            and getattr(settings, "REDDIT_PASSWORD", "")
+        )
 
     def fetch_candidates(self, settings: Any) -> list[dict]:
         try:
@@ -67,20 +147,48 @@ class RedditMemeSource:
             logger.warning("reddit meme source: httpx missing: %s", exc)
             return []
 
-        subreddit = self._resolve_subreddit(settings)
-        time_filter = getattr(settings, "REDDIT_MEME_TIME_FILTER", "day") or "day"
-        limit = int(getattr(settings, "REDDIT_MEME_MAX_ITEMS", 25) or 25)
-        min_score = int(getattr(settings, "REDDIT_MEME_MIN_SCORE", 500) or 500)
+        token = _get_access_token(settings)
+        if not token:
+            logger.warning(
+                "reddit meme source %s: skipped (no OAuth creds; set "
+                "REDDIT_CLIENT_ID/SECRET/USERNAME/PASSWORD)",
+                self.name,
+            )
+            return []
 
-        url = (
-            f"https://www.reddit.com/r/{subreddit}/top.json"
-            f"?t={time_filter}&limit={limit}"
-        )
-        headers = {"User-Agent": "CommonCreedBot/0.1 (meme curator)"}
+        subreddit = self._resolve_subreddit(settings)
+        # See mastodon_memes.py note — `or N` fallback coerces 0 to N
+        time_filter = getattr(settings, "REDDIT_MEME_TIME_FILTER", "day") or "day"
+        limit = int(getattr(settings, "REDDIT_MEME_MAX_ITEMS", 25))
+        min_score = int(getattr(settings, "REDDIT_MEME_MIN_SCORE", 500))
+
+        username = getattr(settings, "REDDIT_USERNAME", "") or ""
+        user_agent_tpl = getattr(
+            settings, "REDDIT_USER_AGENT", "CommonCreedBot/0.2 by u/{username}"
+        ) or "CommonCreedBot/0.2 by u/{username}"
+        user_agent = user_agent_tpl.replace("{username}", username)
+
+        url = f"https://oauth.reddit.com/r/{subreddit}/top"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "User-Agent": user_agent,
+        }
+        params = {"t": time_filter, "limit": str(limit)}
 
         try:
             with httpx.Client(timeout=15.0, follow_redirects=True) as client:
-                r = client.get(url, headers=headers)
+                r = client.get(url, headers=headers, params=params)
+                if r.status_code == 401:
+                    # Token may have been revoked mid-flight; invalidate cache
+                    # and let next call refresh.
+                    with _TOKEN_LOCK:
+                        cid = getattr(settings, "REDDIT_CLIENT_ID", "") or ""
+                        _TOKEN_CACHE.pop(cid, None)
+                    logger.warning(
+                        "reddit meme source %s: HTTP 401 (token invalidated)",
+                        self.name,
+                    )
+                    return []
                 if r.status_code != 200:
                     logger.warning(
                         "reddit meme source %s: HTTP %d", self.name, r.status_code

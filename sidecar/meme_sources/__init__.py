@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from .mastodon_memes import MastodonMemeSource
 from .reddit_memes import RedditMemeSource
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,19 @@ _REGISTRY: dict[str, type] = {
     "reddit_dataisbeautiful": RedditMemeSource,
     "reddit_homelab": RedditMemeSource,
     "reddit_mechanicalkeyboards": RedditMemeSource,
+    # Mastodon — public API, no auth, free. Replaces Reddit when its
+    # anonymous JSON is blocked or its OAuth setup isn't available.
+    "mastodon_fosstodon_techmemes": MastodonMemeSource,
+    "mastodon_fosstodon_programmerhumor": MastodonMemeSource,
+    "mastodon_fosstodon_devhumor": MastodonMemeSource,
+    "mastodon_hachyderm_devhumor": MastodonMemeSource,
+    "mastodon_mastodonsocial_chatgpt": MastodonMemeSource,
+    "mastodon_mastodonsocial_ai": MastodonMemeSource,
+    # Mastodon video-leaning sources
+    "mastodon_fosstodon_aivideo": MastodonMemeSource,
+    "mastodon_hachyderm_aivideo": MastodonMemeSource,
+    "mastodon_fosstodon_aiart": MastodonMemeSource,
+    "mastodon_hachyderm_aiart": MastodonMemeSource,
 }
 
 
@@ -79,4 +93,8 @@ def load_enabled_meme_sources(settings: Any) -> list:
     return out
 
 
-__all__ = ["RedditMemeSource", "load_enabled_meme_sources"]
+__all__ = [
+    "MastodonMemeSource",
+    "RedditMemeSource",
+    "load_enabled_meme_sources",
+]

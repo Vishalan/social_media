@@ -21,3 +21,5 @@ Following are the requirement and my ideas
     g. anything and everything which has good view time on social media
 9. I want to extend it to at least 10 plus langauges, same video with different audio and captions and subtitles. see how youtube and instagram API contracts for postiz allow this
 10. postiz will remain the center to upload it, lemme know if we should create multiple accounts on postiz.
+
+

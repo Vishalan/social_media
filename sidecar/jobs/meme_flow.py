@@ -266,21 +266,37 @@ async def run_meme_trigger() -> dict:
         c["humor_score"] = scores.get("humor", 5.0)
         c["relevance_score"] = scores.get("relevance", 5.0)
 
-    # --- Unit 1: Hard filter — only humor >= 7 AND relevance >= 7 survive ---
-    min_humor = int(getattr(settings, "MEME_MIN_HUMOR_SCORE", 7) or 7)
-    min_relevance = int(getattr(settings, "MEME_MIN_RELEVANCE_SCORE", 7) or 7)
+    # --- Unit 1: Hard filter — per-media-type thresholds ---
+    # Images use the strict gate (7/7) because the image pool is dense and
+    # we can be picky. Videos use a looser gate (5/5) because the Mastodon
+    # tech-video pool is sparse; if we hold them to the image bar they all
+    # get filtered out and the feed goes 100% image.
+    # NOTE: no `or N` fallback — that pattern coerces a legit 0 to N.
+    min_humor = int(getattr(settings, "MEME_MIN_HUMOR_SCORE", 7))
+    min_relevance = int(getattr(settings, "MEME_MIN_RELEVANCE_SCORE", 7))
+    min_humor_video = int(getattr(settings, "MEME_MIN_HUMOR_SCORE_VIDEO", 5))
+    min_relevance_video = int(getattr(settings, "MEME_MIN_RELEVANCE_SCORE_VIDEO", 5))
+
+    def _passes_quality(c: dict) -> bool:
+        is_vid = (c.get("media_type") or "").lower() in ("video", "gif")
+        h_min = min_humor_video if is_vid else min_humor
+        r_min = min_relevance_video if is_vid else min_relevance
+        return (
+            c.get("humor_score", 0) >= h_min
+            and c.get("relevance_score", 0) >= r_min
+        )
+
     before_filter = len(all_candidates)
-    all_candidates = [
-        c for c in all_candidates
-        if c.get("humor_score", 0) >= min_humor
-        and c.get("relevance_score", 0) >= min_relevance
-    ]
+    all_candidates = [c for c in all_candidates if _passes_quality(c)]
     logger.info(
-        "meme_trigger: quality filter kept %d/%d (humor>=%d, relevance>=%d)",
+        "meme_trigger: quality filter kept %d/%d "
+        "(img humor>=%d relevance>=%d, vid humor>=%d relevance>=%d)",
         len(all_candidates),
         before_filter,
         min_humor,
         min_relevance,
+        min_humor_video,
+        min_relevance_video,
     )
 
     # --- Unit 2: Per-media-type surface limits ---

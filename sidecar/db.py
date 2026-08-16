@@ -590,8 +590,8 @@ def insert_meme_candidate(conn: sqlite3.Connection, candidate: dict) -> int:
         """
         INSERT INTO meme_candidates (
             source, source_url, author_handle, title, media_url, media_type,
-            engagement_json, published_at, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_review')
+            engagement_json, published_at, status, humor_score, relevance_score
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_review', ?, ?)
         """,
         (
             candidate["source"],
@@ -602,6 +602,8 @@ def insert_meme_candidate(conn: sqlite3.Connection, candidate: dict) -> int:
             candidate["media_type"],
             _json.dumps(candidate.get("engagement") or {}),
             candidate.get("published_at"),
+            candidate.get("humor_score"),
+            candidate.get("relevance_score"),
         ),
     )
     conn.commit()

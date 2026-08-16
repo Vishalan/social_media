@@ -89,6 +89,24 @@ class Settings(BaseSettings):
     # hardware/data-viz fillers that round out the feed. The Haiku
     # >=7 humor+relevance filter keeps quality high regardless of pool size.
     MEME_SOURCES: str = (
+        # Mastodon — free, no auth, currently the only working source until
+        # the Reddit OAuth account setup completes. fosstodon and hachyderm
+        # are the largest tech-focused instances; mastodon.social fills the
+        # AI niche.
+        # Image-leaning
+        "mastodon_fosstodon_techmemes,"
+        "mastodon_fosstodon_programmerhumor,"
+        "mastodon_fosstodon_devhumor,"
+        "mastodon_hachyderm_devhumor,"
+        "mastodon_mastodonsocial_chatgpt,"
+        "mastodon_mastodonsocial_ai,"
+        # Video-leaning — #aivideo and #aiart pulled via federation
+        "mastodon_fosstodon_aivideo,"
+        "mastodon_hachyderm_aivideo,"
+        "mastodon_fosstodon_aiart,"
+        "mastodon_hachyderm_aiart,"
+        # Reddit — kept enabled so the source loads when REDDIT_CLIENT_ID is
+        # set in .env, otherwise skipped silently (is_configured -> False).
         # Tier A — programmer/dev humor (images dominate)
         "reddit_programmerhumor,reddit_techhumor,"
         "reddit_cscareerquestions,reddit_webdev,"
@@ -121,10 +139,38 @@ class Settings(BaseSettings):
     REDDIT_MEME_TIME_FILTER: str = "day"
     REDDIT_MEME_MAX_ITEMS: int = 25
     REDDIT_MEME_MIN_SCORE: int = 500
+    # Mastodon meme source knobs. Engagement on Mastodon is ~2 orders of
+    # magnitude lower than Reddit, so MIN_SCORE has to be tiny — the Haiku
+    # humor+relevance >= 7 filter is the real quality gate here.
+    MASTODON_MEME_MAX_ITEMS: int = 30
+    # Mastodon engagement on niche tags (#aivideo especially) is sparse —
+    # most posts score 0-2 because the fediverse is small. Set to 0 so the
+    # Haiku humor+relevance >=7 filter is the real quality gate.
+    MASTODON_MEME_MIN_SCORE: int = 0   # favourites + reblogs
+    MASTODON_USER_AGENT: str = "CommonCreedBot/0.2 (+https://commoncreed.com)"
+    # Override the (instance, hashtag) pair for a source name:
+    #   name:instance|tag,name2:instance|tag,...
+    # Empty = use defaults bundled in meme_sources/mastodon_memes.py
+    MASTODON_SOURCE_MAP: str = ""
+    # Reddit OAuth (required since 2026-05-28 when anonymous JSON was blocked).
+    # Create a "script" app at https://reddit.com/prefs/apps. Empty creds
+    # leave the Reddit source disabled — fetch_candidates returns [] with a
+    # warning rather than raising.
+    REDDIT_CLIENT_ID: str = ""
+    REDDIT_CLIENT_SECRET: str = ""
+    REDDIT_USERNAME: str = ""
+    REDDIT_PASSWORD: str = ""
+    REDDIT_USER_AGENT: str = "CommonCreedBot/0.2 by u/{username}"
     # Quality thresholds for Haiku scoring (Unit 1) — both humor and
     # relevance must be >= 7/10 for a candidate to surface.
     MEME_MIN_HUMOR_SCORE: int = 7
     MEME_MIN_RELEVANCE_SCORE: int = 7
+    # Per-media-type override — Mastodon's tech-video pool is sparse and
+    # leans toward AI-generated art/animation (novelty value > pure humor).
+    # A looser 5/10 gate lets some video through so the feed isn't 100%
+    # image. Images stay strict at 7/10.
+    MEME_MIN_HUMOR_SCORE_VIDEO: int = 5
+    MEME_MIN_RELEVANCE_SCORE_VIDEO: int = 5
     # Meme autopilot — fires at slot-offset if no human tap landed.
     # Autopilot picks top-scoring candidates within each media type
     # independently so videos don't get dominated by higher-karma images.
