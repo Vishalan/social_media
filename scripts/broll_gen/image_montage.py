@@ -27,6 +27,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _PEXELS_SEARCH_URL = "https://api.pexels.com/v1/search"
+
+# Pexels sits behind Cloudflare, which rejects default library User-Agents with
+# HTTP 403 "error code: 1010" (browser-signature block) — NOT an auth failure.
+# Verified 2026-08-16: the same key that 403s without this header returns 5,186
+# results with it. Any client here must send a browser-like UA.
+_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
 _BING_SEARCH_URL = "https://api.bing.microsoft.com/v7.0/images/search"
 
 
@@ -151,7 +161,8 @@ class ImageMontageGenerator(BrollBase):
                     resp = await client.get(
                         _PEXELS_SEARCH_URL,
                         params={"query": query, "per_page": 6, "orientation": "landscape"},
-                        headers={"Authorization": self._pexels_key},
+                        headers={"Authorization": self._pexels_key,
+                                 "User-Agent": _UA},
                     )
                     resp.raise_for_status()
                     data = resp.json()

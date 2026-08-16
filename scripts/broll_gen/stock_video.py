@@ -31,6 +31,16 @@ _H = 1920
 _FPS = 30
 _PEXELS_VIDEO_URL = "https://api.pexels.com/videos/search"
 
+# Pexels sits behind Cloudflare, which rejects default library User-Agents with
+# HTTP 403 "error code: 1010" (browser-signature block) — NOT an auth failure.
+# Verified 2026-08-16: the same key that 403s without this header returns 5,186
+# results with it. Any client here must send a browser-like UA.
+_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+
 
 class StockVideoGenerator(BrollBase):
     """
@@ -148,7 +158,7 @@ class StockVideoGenerator(BrollBase):
         """
         params = {"query": query, "per_page": 5, "orientation": "portrait"}
         # Pexels video API uses the raw API key — NO "Bearer" prefix
-        headers = {"Authorization": self._pexels_key}
+        headers = {"Authorization": self._pexels_key, "User-Agent": _UA}
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             try:
