@@ -101,6 +101,15 @@ TYPE_CATALOG: dict[str, dict[str, str]] = {
                 "toggle — starting wide and landing tight. Use when the story "
                 "turns on one control or label."),
     },
+    "ai_video": {
+        "needs": ("a beat with NO concrete artifact — no page, no number, no "
+                  "quote, no file. Speculative, abstract or future-facing"),
+        "for": ("generated cinematic footage: a scene, shot like film. Use ONLY "
+                "when there is genuinely nothing real to show. If the source has "
+                "a page, a figure or a quote for this beat, that is always "
+                "stronger — generated footage of someone at a laptop is the same "
+                "irrelevant filler as stock. Describe a SCENE, never a concept."),
+    },
     "pageroll": {
         "needs": "a capturable source URL",
         "for": ("a held or slowly travelling view of the real page. The "
@@ -199,6 +208,8 @@ Payload shapes, exactly:
                     "label": "why this line matters, max 6 words"}
   macro            {"target": "exact visible text of the element to magnify",
                     "label": "what it does, max 6 words"}
+  ai_video         {"scene": "a wireframe human figure rotating slowly on a
+                    dark grid, volumetric light, shallow depth of field"}
   pageroll         {}
 
 Reply with JSON only."""
@@ -240,6 +251,14 @@ class BrollDirector:
         if len(self.source_text) > 600:
             types.insert(0, "highlight")
         types.append("mechanism")          # needs only a described process
+        # Generated footage is offered only if the host can actually make it,
+        # and the prompt tells the director it is a last resort.
+        try:
+            from .aivideo import available as _ai_ok
+            if _ai_ok():
+                types.append("ai_video")
+        except Exception:                  # noqa: BLE001 — optional capability
+            pass
         if self.source_url:
             types += ["pageroll", "annotate", "macro"]
         # tweet_reveal is offered only when the source plausibly quotes a
@@ -345,6 +364,20 @@ class BrollDirector:
                 words=synth_phrases(sent, slot.duration),
                 out_path=out, duration_s=slot.duration,
                 palette=self.palette, focus_paragraph=focus)
+
+        if k == "ai_video":
+            from .aivideo import build_ai_clip
+            scene = str(p.get("scene") or p.get("prompt") or "").strip()
+            if not scene:
+                raise DirectorError("ai_video needs a scene description")
+            # A consistent grade across every generated clip in one video, so
+            # two of them do not look like they came from different films.
+            suffix = ("cinematic, shallow depth of field, moody volumetric "
+                      "lighting, subtle film grain, no text")
+            return build_ai_clip(
+                prompt=scene, out_path=out, duration_s=slot.duration,
+                width=self.width, height=self.height, fps=self.fps,
+                style_suffix=suffix, seed=1000 + slot.index)
 
         if k in ("annotate", "macro"):
             from .annotate import build_annotated_clip
