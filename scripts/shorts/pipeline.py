@@ -279,7 +279,12 @@ class ShortsPipeline:
         # narration gave "GPT-5.6 sold" and "John Krapidze" on screen.
         from captions import align_words, group_cues
         aligned = align_words(tr["words"], script)
-        cues = group_cues(aligned)
+        # Use the channel's caption style rather than group_cues' defaults —
+        # the reference shorts run 2-4 words per cue and ours were running 3
+        # words / 28 chars, which reads as a subtitle rather than a caption.
+        from .branding import CAPTIONS
+        cues = group_cues(aligned, per_cue=CAPTIONS.words_per_cue,
+                          max_chars=CAPTIONS.max_chars)
         out = {"words": aligned, "cues": cues}
         self._save("captions.json", out)
         logger.info("Captions: %d cues from %d aligned words", len(cues), len(aligned))

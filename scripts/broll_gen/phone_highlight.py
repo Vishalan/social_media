@@ -608,10 +608,24 @@ async def _screenshot_html(
 
     async with async_playwright() as p:
         device = p.devices.get("iPhone 14 Pro", {})
-        browser = await p.chromium.launch(headless=True)
+        # Launch args are not optional on a headless server. Without
+        # --disable-dev-shm-usage the default 64 MB /dev/shm cannot hold the
+        # framebuffer and every screenshot fails with
+        # "Protocol error (Page.captureScreenshot): Unable to capture
+        # screenshot" — deterministically, so a retry does not help.
+        browser = await p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        )
         try:
+            # The iPhone descriptor carries device_scale_factor=3, which at a
+            # 1080x1920 viewport means a 3240x5760 (18.6 MP) capture. The video
+            # is 1080 wide, so the extra scale buys nothing and costs the
+            # framebuffer; pin it to 2.
+            dev = {k: v for k, v in device.items() if k != "viewport"}
+            dev["device_scale_factor"] = 2
             context = await browser.new_context(
-                **{k: v for k, v in device.items() if k != "viewport"},
+                **dev,
                 viewport={"width": _VIEWPORT_W, "height": _VIEWPORT_H},
             )
             page = await context.new_page()
