@@ -143,6 +143,19 @@ class ShortsConfig:
     # holds of 4.5s, 5.1s and 7.0s — the last is longer than either reference
     # holds ANY shot.
     broll_cadence_s: float = 4.5
+    # Generated cinematic footage is OFF, on measured quality rather than on
+    # principle. LTX-Video 2B installs and runs on this 3090 — 80-98s for a 3s
+    # clip at 1080x998, which would be affordable — but the output is unusable:
+    # two attempts, one terse prompt and one long LTX-style description at 40
+    # steps, both produced a near-black frame with a soft blue smear, no
+    # recognisable subject and almost no motion. The near-square panel geometry
+    # is likely well outside what a 2B model handles.
+    #
+    # Left wired and gated rather than deleted: the renderer, the subprocess
+    # isolation and the capability check are all correct and worth keeping for a
+    # stronger local model. Set True to re-enable, and LOOK at the clip before
+    # trusting it — a garbled b-roll shot is worse than a page panel.
+    ai_video_enabled: bool = False
     # Ceiling on designed clips per video. Each one costs a claude -p call plus
     # a render, so this bounds the per-video cost, not the aesthetics.
     broll_max_designed: int = 10

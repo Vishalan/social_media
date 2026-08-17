@@ -308,7 +308,8 @@ async def _direct_broll(self: ShortsPipeline, *, url: str,
         width=cfg.width, height=height, fps=cfg.fps,
         palette=(script.get("visual_identity") or {}).get("palette") or [],
         source_url=url, source_text=src_text,
-        source_title=script.get("title", ""))
+        source_title=script.get("title", ""),
+        allow_ai_video=cfg.ai_video_enabled)
 
     try:
         slots = await d.plan(beats, max_slots=cfg.broll_max_designed,

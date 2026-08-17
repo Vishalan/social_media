@@ -228,7 +228,8 @@ class BrollDirector:
                  width: int = 1080, height: int = 998, fps: int = 25,
                  palette: Optional[list[str]] = None,
                  source_url: str = "", source_text: str = "",
-                 source_title: str = "") -> None:
+                 source_title: str = "",
+                 allow_ai_video: bool = False) -> None:
         self.llm = intelligence
         self.work_dir = Path(work_dir)
         self.work_dir.mkdir(parents=True, exist_ok=True)
@@ -237,6 +238,7 @@ class BrollDirector:
         self.source_url = source_url
         self.source_text = source_text
         self.source_title = source_title
+        self.allow_ai_video = allow_ai_video
 
     # -- capability gating ------------------------------------------------
     def available_types(self) -> list[str]:
@@ -251,14 +253,19 @@ class BrollDirector:
         if len(self.source_text) > 600:
             types.insert(0, "highlight")
         types.append("mechanism")          # needs only a described process
-        # Generated footage is offered only if the host can actually make it,
-        # and the prompt tells the director it is a last resort.
-        try:
-            from .aivideo import available as _ai_ok
-            if _ai_ok():
-                types.append("ai_video")
-        except Exception:                  # noqa: BLE001 — optional capability
-            pass
+        # Generated footage needs BOTH a host that can make it and an explicit
+        # opt-in. The capability check alone is not enough: the weights are
+        # installed on this host and the check passes, but the measured output is
+        # a blue smear with no recognisable subject (see config.ai_video_enabled).
+        # "Can render" and "should render" are different questions, and only the
+        # second one protects the video.
+        if self.allow_ai_video:
+            try:
+                from .aivideo import available as _ai_ok
+                if _ai_ok():
+                    types.append("ai_video")
+            except Exception:              # noqa: BLE001 — optional capability
+                pass
         if self.source_url:
             types += ["pageroll", "annotate", "macro"]
         # tweet_reveal is offered only when the source plausibly quotes a
