@@ -96,16 +96,23 @@ if not torch.cuda.is_available():
 # Weights must be COMPLETE, not merely started: resolve the cache offline
 # and let it raise if anything the pipeline loads is absent.
 #
-# Scoped to what from_pretrained actually reads — configs, weights and
-# tokenizer files. A bare snapshot_download also demands the repo's README
-# and licence .txt files, which are never fetched by from_pretrained, so an
-# unscoped check reports "unavailable" for a model that renders perfectly.
+# Scoped by ALLOW-list to the diffusers component tree, because the repo
+# carries far more than the pipeline loads. Two rounds of over-demanding:
+#
+#   1. unscoped        -> demanded README.md and licence .txt files
+#   2. ignore docs     -> still demanded ltx-video-2b-v0.9*.safetensors,
+#                         the root-level single-file ComfyUI checkpoints
+#
+# from_pretrained reads model_index.json plus the per-component subfolders
+# (transformer, vae, text_encoder, tokenizer, scheduler) and nothing else —
+# which is exactly the 18 files the fetch reports. Allow-listing that tree
+# cannot drift as the repo accumulates alternative checkpoint formats.
 from huggingface_hub import snapshot_download
 snapshot_download(
     "Lightricks/LTX-Video",
     local_files_only=True,
-    ignore_patterns=["*.md", "*.txt", "*.png", "*.jpg", "*.jpeg", "*.gif",
-                     "*.mp4", "*.bin", "*.onnx", ".gitattributes"],
+    allow_patterns=["model_index.json", "*/*.json", "*/*.safetensors",
+                    "*/*.model", "*/*.txt"],
 )
 print("READY")
 '''
