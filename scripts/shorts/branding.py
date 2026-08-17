@@ -141,7 +141,22 @@ def make_thumbnail(*, title: str, kicker: str, avatar_frame: str,
     """
     from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
-    acc = accent or brand.accent
+    # The story palette's first entries are its BACKGROUND and body colours, so
+    # passing one through as "accent" painted a near-black pill with near-black
+    # text on it and an invisible rule under the title. An accent has to contrast
+    # with both the dark scrim and the white type, so anything close to black or
+    # white falls back to the channel accent.
+    acc = brand.accent
+    if accent:
+        try:
+            r, g, b = brand.rgb(accent)
+            if 60 < (r + g + b) / 3 < 225:
+                acc = accent
+            else:
+                logger.info("Thumbnail accent %s is too close to black/white "
+                            "to read — using the channel accent", accent)
+        except (ValueError, IndexError):
+            pass
     W, H = brand.width, brand.height
 
     base = Image.open(avatar_frame).convert("RGB").resize((W, H), Image.LANCZOS)
@@ -176,22 +191,46 @@ def make_thumbnail(*, title: str, kicker: str, avatar_frame: str,
     d.text((px + 28 - kb[0], py + 17 - kb[1]), ktext, font=f_kick,
            fill=brand.rgb(brand.ink) + (255,))
 
-    # --- title, lower third, wrapped ---
-    f_title = ImageFont.truetype(brand.font_black, 96)
+    # --- title, lower third, wrapped and FITTED ---
+    #
+    # Shrink to fit rather than truncating. At a fixed 96px this title wrapped to
+    # four lines and the fourth was dropped, so the cover read "X Just Open
+    # Sourced The Algorithm That" — cutting "'Shadowbans' You", which is the
+    # entire hook. A thumbnail that ends mid-clause is worse than a smaller one.
     max_w = W - 128
-    words, lines, cur = title.split(), [], ""
-    for w in words:
-        trial = f"{cur} {w}".strip()
-        if d.textlength(trial, font=f_title) <= max_w or not cur:
-            cur = trial
-        else:
-            lines.append(cur)
-            cur = w
-    if cur:
-        lines.append(cur)
-    lines = lines[:3]
+    max_lines = 4
 
-    line_h = 112
+    def wrap(font) -> list[str]:
+        out, cur = [], ""
+        for w in title.split():
+            trial = f"{cur} {w}".strip()
+            if d.textlength(trial, font=font) <= max_w or not cur:
+                cur = trial
+            else:
+                out.append(cur)
+                cur = w
+        if cur:
+            out.append(cur)
+        return out
+
+    size = 96
+    f_title = ImageFont.truetype(brand.font_black, size)
+    lines = wrap(f_title)
+    while len(lines) > max_lines and size > 58:
+        size -= 6
+        f_title = ImageFont.truetype(brand.font_black, size)
+        lines = wrap(f_title)
+    if len(lines) > max_lines:
+        # Still too long at the floor: drop whole words from the end rather than
+        # a whole line, so the cut lands on a word boundary and is logged.
+        logger.warning("Thumbnail title too long even at %dpx — trimming: %r",
+                       size, title)
+        lines = lines[:max_lines]
+    if size != 96:
+        logger.info("Thumbnail title fitted at %dpx across %d lines",
+                    size, len(lines))
+
+    line_h = int(size * 1.17)
     block_h = line_h * len(lines)
     ty = int(H * 0.78) - block_h
     for i, ln in enumerate(lines):
