@@ -709,9 +709,13 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
                     pidx = -1
                 if pidx >= 0:
                     pr = reader_paras[pidx]
-                    # Centre the paragraph, biased slightly high so a long one
-                    # reveals downward rather than being cut off at the top.
-                    y0 = max(0, int(pr["y"] + pr["h"] / 2 - ph * 0.42))
+                    # Align to the paragraph's TOP edge with a small pad, rather
+                    # than centring it. Centring meant the frame always opened on
+                    # the tail of the previous paragraph, usually clipped through
+                    # the middle of a line, which reads as a rendering fault. A
+                    # paragraph gap at the top edge reads as a deliberate margin,
+                    # and a long paragraph is then readable from its first word.
+                    y0 = max(0, int(pr["y"] - 44))
                     travel = int(ph * 0.10)
                     speed = travel / max(L, 0.5)
                     y_expr = f"min(max(ih-{ph}\\,0)\\,{y0}+{speed:.2f}*t)"
