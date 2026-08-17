@@ -79,9 +79,12 @@ class CaptionStyle:
     shadow_color: str = "black@0.35"
     shadow_x: int = 0
     shadow_y: int = 2
-    # 2-3 words, ~18 chars. Was 3 words / 28 chars.
-    max_chars: int = 18
-    words_per_cue: int = 2
+    # The references run 2-4 words. 2 words at 18 chars proved too tight —
+    # it forced "and core" / "on GitHub" fragments because there was no budget
+    # left to reach a natural phrase end. 3 words at 24 chars allows a phrase
+    # while still fitting one line at 44px.
+    max_chars: int = 24
+    words_per_cue: int = 3
 
     def drawtext(self, text: str, start: float, end: float, *,
                  y_frac: Optional[float] = None) -> str:

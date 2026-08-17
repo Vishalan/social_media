@@ -118,30 +118,57 @@ def align_words(
     return [w for w in out if w is not None]
 
 
+# Words that should not end a cue: a caption ending on "the" or "a" reads as a
+# sentence cut in half. Grouping mechanically every N words produced fragments
+# like "posted its" and "a small" in a real video.
+_WEAK_TAIL = {
+    "a", "an", "the", "of", "to", "in", "on", "at", "for", "and", "or", "but",
+    "with", "from", "by", "as", "is", "was", "are", "were", "that", "this",
+    "its", "it", "his", "her", "their", "your", "our", "you", "we", "they",
+}
+
+
 def group_cues(
     words: list[dict],
     *,
     per_cue: int = 3,
     max_chars: int = 28,
 ) -> list[tuple[float, float, str]]:
-    """Group aligned words into caption cues.
+    """Group aligned words into caption cues at sensible boundaries.
 
-    Caps both word count and character count so a cue never wraps — a wrapped
+    Caps word count and character count so a cue never wraps — a wrapped
     caption costs a second eye fixation, which is the whole thing short-form
     captions exist to avoid.
+
+    Boundaries are chosen, not counted. A fixed every-N-words split produced
+    "posted its", "a small" and "year old." in a real video: grammatically
+    orphaned fragments that the eye has to hold and reassemble. A cue therefore
+    ends early at punctuation, and is extended past a weak tail word when the
+    character budget allows.
     """
     cues: list[tuple[float, float, str]] = []
     i = 0
-    while i < len(words):
+    n = len(words)
+    while i < n:
         grp = [words[i]]
         j = i + 1
-        while j < len(words) and len(grp) < per_cue:
-            candidate = " ".join(w["word"] for w in grp + [words[j]])
+        while j < n:
+            # A cue must never straddle a sentence break: "v2. If" makes the
+            # reader parse the end of one thought and the start of the next in
+            # one glance. Stop BEFORE taking the next word, not after.
+            if grp[-1]["word"].rstrip().endswith((".", "!", "?", ":", ";")):
+                break
+            candidate = " ".join(x["word"] for x in grp + [words[j]])
             if len(candidate) > max_chars:
                 break
+            if len(grp) >= per_cue:
+                # Over the word target — extend only to avoid a weak tail.
+                tail = grp[-1]["word"].strip(".,!?;:\"'").lower()
+                if tail not in _WEAK_TAIL:
+                    break
             grp.append(words[j])
             j += 1
-        text = " ".join(w["word"] for w in grp).strip()
+        text = " ".join(x["word"] for x in grp).strip()
         cues.append((grp[0]["start"], grp[-1]["end"], text))
-        i = j
+        i = j if j > i else i + 1
     return cues

@@ -417,7 +417,11 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
     busy = [(p["t"], p["t"] + p["len"]) for p in placed]
 
     for b in broll:
-        L = min(cfg.broll_clip_s, b["duration"])
+        # Use the clip's OWN duration. Capping at cfg.broll_clip_s silently
+        # truncated the types that need a build — a mechanism diagram rendered
+        # at 4.5s was played for 2.6s, cutting the flow off before it resolved,
+        # which is the whole content of that type.
+        L = b["duration"]
         # A director clip knows which beat it illustrates; honour that start and
         # only slide it when it would collide. A page-roll clip has no opinion,
         # so it is placed in the first free slot.
@@ -479,6 +483,22 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
         else:
             spans.append({"mode": "presenter", "start": start, "end": end})
 
+    # OPEN ON CONTENT, not on the presenter.
+    #
+    # Both reference shorts open on their strongest visual — Musk speaking, the
+    # product hero shot — with the presenter secondary. Ours opened on whatever
+    # frame the camera happened to be on at t=0, which in the last build was a
+    # dark, downward-looking frame. If the first placement starts late, pull it
+    # to the top of the video.
+    if placed and placed[0]["t"] > 1.2:
+        first = min(placed, key=lambda x: x["t"])
+        shift = first["t"]
+        first["t"] = 0.0
+        logger.info("Opening on %s (pulled from %.2fs) so the video does not "
+                    "start on the presenter", first["slug"], shift)
+        placed.sort(key=lambda x: x["t"])
+        busy = [(q["t"], q["t"] + q["len"]) for q in placed]
+
     for p in placed:
         add_gap(cursor, p["t"])
         spans.append({"mode": "content", "start": p["t"],
@@ -490,8 +510,28 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
     Path(span_dir).mkdir(exist_ok=True)
 
     # A single held frame of the source page for presenter-led spans.
+    #
+    # This must not depend on the b-roll provider having captured a page. It
+    # previously did, and with the director (which does not always use pageroll)
+    # no page.png existed, so every presenter span fell through to FULL FRAME —
+    # silently violating the rule that the avatar is never full-screen. Capture
+    # it here if nothing else has.
     still_panel = ""
     page_png = os.path.join(cfg.broll_dir, "page.png")
+    if cfg.fill_gaps_with_pageroll and not os.path.exists(page_png):
+        meta_path = cfg.path("source_meta.json")
+        url = ""
+        if os.path.exists(meta_path):
+            try:
+                url = json.loads(Path(meta_path).read_text()).get("url", "")
+            except (json.JSONDecodeError, OSError):
+                url = ""
+        if url:
+            try:
+                from .pageroll import capture_page
+                capture_page(url, page_png)
+            except Exception as exc:               # noqa: BLE001 — optional
+                logger.warning("panel still capture failed: %s", str(exc)[:140])
     if cfg.fill_gaps_with_pageroll and os.path.exists(page_png):
         still_panel = os.path.join(span_dir, "panel_still.png")
         ph = cfg.content_height if cfg.layout == "half_stacked" else cfg.height
@@ -528,6 +568,11 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
                                           height=cfg.height),
                           work_dir=span_dir)
             else:
+                # No panel still available: the presenter fills the frame. This
+                # breaks the never-full-screen rule, so it is logged rather
+                # than passing quietly.
+                logger.warning("span %d has no content panel — presenter will "
+                               "be full-frame", i)
                 os.replace(seg, out)
         elif sp["mode"] == "full":
             os.replace(seg, out)

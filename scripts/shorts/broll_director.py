@@ -207,6 +207,12 @@ Reply with JSON only."""
 class BrollDirector:
     """Plans and renders a varied b-roll slate for one short."""
 
+    # Types whose whole point is a sequential build need time for it. A 2.6s
+    # mechanism clip spent its first second on a bare title, because the flow
+    # had not started yet — a third of the clip was empty.
+    MIN_DURATION = {"mechanism": 4.5, "split_screen": 4.0,
+                    "cinematic_chart": 4.0, "code_walkthrough": 4.0}
+
     def __init__(self, *, intelligence: Any, work_dir: str,
                  width: int = 1080, height: int = 998, fps: int = 25,
                  palette: Optional[list[str]] = None,
@@ -281,9 +287,10 @@ class BrollDirector:
                 logger.warning("plan dropped: beat=%s kind=%r not available",
                                item.get("beat"), kind)
                 continue
+            dur = max(beats[b]["duration"], self.MIN_DURATION.get(kind, 0.0))
             slots.append(Slot(
                 index=len(slots), kind=kind, start=beats[b]["start"],
-                duration=beats[b]["duration"], narration=beats[b]["narration"],
+                duration=dur, narration=beats[b]["narration"],
                 payload=item.get("payload") or {}, why=str(item.get("why", ""))[:220],
             ))
 
