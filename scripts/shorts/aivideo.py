@@ -85,17 +85,57 @@ _NEGATIVE = ("worst quality, blurry, jittery, distorted, watermark, "
              "deformed hands, extra limbs, oversaturated")
 
 
+_REPO = "Lightricks/LTX-Video"
+_CACHE_DIR = "models--Lightricks--LTX-Video"
+
+_PROBE = r'''
+import sys, torch
+from diffusers import LTXPipeline           # noqa: F401  (import must work)
+if not torch.cuda.is_available():
+    sys.exit(1)
+# Weights must be COMPLETE, not merely started: resolve the cache offline
+# and let it raise if anything the pipeline loads is absent.
+#
+# Scoped to what from_pretrained actually reads — configs, weights and
+# tokenizer files. A bare snapshot_download also demands the repo's README
+# and licence .txt files, which are never fetched by from_pretrained, so an
+# unscoped check reports "unavailable" for a model that renders perfectly.
+from huggingface_hub import snapshot_download
+snapshot_download(
+    "Lightricks/LTX-Video",
+    local_files_only=True,
+    ignore_patterns=["*.md", "*.txt", "*.png", "*.jpg", "*.jpeg", "*.gif",
+                     "*.mp4", "*.bin", "*.onnx", ".gitattributes"],
+)
+print("READY")
+'''
+
+
 def available() -> bool:
-    """Whether generated footage can be produced on this host."""
+    """Whether generated footage can be produced on this host RIGHT NOW.
+
+    Checks three things, all of which have been false at some point on this
+    host: the torch venv exists, CUDA is usable, and the weights are fully
+    present.
+
+    The weights check is not incidental. An earlier version probed only the
+    imports and CUDA, and returned True while the 23 GB download was still
+    running — so the planner was offered a type whose renderer would then
+    block for half an hour on a partial cache. A capability gate that answers
+    "the library is installed" when the question is "can this render" is worse
+    than no gate, because the failure surfaces mid-video instead of at
+    planning time.
+    """
     if not os.path.exists(_TORCH_PYTHON):
         return False
-    probe = subprocess.run(
-        [_TORCH_PYTHON, "-c",
-         "import diffusers, torch; "
-         "from diffusers import LTXPipeline; "
-         "print(torch.cuda.is_available())"],
-        capture_output=True, text=True)
-    return probe.returncode == 0 and "True" in probe.stdout
+    probe = subprocess.run([_TORCH_PYTHON, "-c", _PROBE],
+                           capture_output=True, text=True, timeout=300)
+    ok = probe.returncode == 0 and "READY" in probe.stdout
+    if not ok:
+        logger.info("Generated footage unavailable: %s",
+                    (probe.stderr or probe.stdout or "").strip()[-160:]
+                    or "weights incomplete")
+    return ok
 
 
 def build_ai_clip(*, prompt: str, out_path: str, duration_s: float,
