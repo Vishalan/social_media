@@ -83,14 +83,23 @@ to any tech story is a failure; this must look like it came from this source.
 Register: {register}. The hero must read at a glance on a phone; support and
 context are secondary and must never compete with it.
 
+SCALE — this is the most common way these graphics fail:
+{scale_guidance}
+
+MOTION MUST LAST THE WHOLE CLIP. The build may not finish before {build_min:.1f}s
+of the {duration:.1f}s, and after it lands something must still be moving — a
+counter settling, a cursor blinking, a slow scale, a line drawing in. Measured
+failures on shipped clips: a 2.6s stats card whose last motion was at 0.52s and a
+2.6s headline whose last motion was at 0.72s, so 80% and 72% of their screen time
+was a STILL IMAGE. A frozen frame in a short reads as a stall, not as emphasis.
+
 RESERVED ZONE: {reserved_zone}
 Nothing important may be placed there — the presenter is composited into it.
 
 FORMAT:
 - {width}x{height} vertical, {fps}fps, exactly {duration:.1f}s.
 - Transparent background is NOT wanted; render on the solid background colour.
-- Keep all content inside the middle 70% vertically. Platform UI clips roughly
-  the top 8% and the bottom 20%.
+{safe_area}
 
 PROCESS:
 1. `npx hyperframes init` the project.
@@ -186,8 +195,51 @@ class HyperFramesRenderer:
         # Never shorter than the brief needs to be readable — see
         # DesignBrief.effective_duration_s().
         duration = brief.effective_duration_s()
+        # A PANEL render (roughly square) is composited into the top half of the
+        # frame, so platform UI never reaches it and it should be filled edge to
+        # edge. A FULL-FRAME render does get clipped top and bottom. Applying the
+        # full-frame safe area to a panel was squeezing content into 70% of an
+        # already half-height canvas: shipped clips had content spanning 26-29%
+        # of the panel with ink on 2-5% of pixels, which is unreadable at phone
+        # size and is the reason they did not hold attention.
+        is_panel = self.height < self.width * 1.3
+        if is_panel:
+            safe_area = (
+                "- You own the WHOLE canvas. It is composited into the top half "
+                "of the frame, so no platform UI overlaps it and there is no "
+                "safe-area inset to respect.\n"
+                "- FILL IT: content must span at least 85% of the canvas height "
+                "and 85% of its width. Margins no larger than 6% a side. Empty "
+                "background should be the minority of the frame.")
+            hero_px = int(self.height * 0.30)
+            solo_px = int(self.height * 0.42)
+            support_px = int(self.height * 0.062)
+            floor_px = int(self.height * 0.040)
+            scale_guidance = (
+                f"This {self.width}x{self.height} panel is viewed at about 6cm "
+                f"tall on a phone. Type that looks generous in a desktop preview "
+                f"is illegible there.\n"
+                f"- Hero text: at least {hero_px}px. A hero that is a single "
+                f"figure or one word (a number, a multiple, a price) should be "
+                f"{solo_px}px or larger and dominate the frame.\n"
+                f"- Support and context: at least {support_px}px.\n"
+                f"- NOTHING below {floor_px}px, including labels inside diagrams, "
+                f"code lines, chart ticks and step captions. If a diagram's rows "
+                f"do not fit at {floor_px}px, use fewer rows — four legible steps "
+                f"beat seven unreadable ones.")
+        else:
+            safe_area = (
+                "- Keep all content inside the middle 70% vertically. Platform "
+                "UI clips roughly the top 8% and the bottom 20%.")
+            scale_guidance = (
+                f"Hero text at least {int(self.height * 0.09)}px; nothing below "
+                f"{int(self.height * 0.022)}px.")
+
         prompt = _PROMPT.format(
             duration=duration,
+            safe_area=safe_area,
+            scale_guidance=scale_guidance,
+            build_min=max(0.6, duration * 0.7),
             headline=brief.headline,
             support_line=(f'\n- Support label:   "{brief.support}"'
                           if brief.support else ""),

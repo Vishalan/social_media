@@ -552,6 +552,68 @@ def _brief_for(slot: "Slot"):
         anchor_word="", duration_s=slot.duration, kind=kind)
 
 
+def _content_box(path: str, *, samples: int = 10) -> Optional[tuple]:
+    """Union bounding box of everything that is not background, over the clip.
+
+    Sampled across the WHOLE clip rather than from one frame: these graphics
+    build up element by element, so the first frame's box is just the first
+    element and cropping to it would cut off everything that arrives later.
+
+    Returns (x0, y0, x1, y1) in pixels, or None if it cannot be determined.
+    """
+    try:
+        from PIL import Image
+        import numpy as np
+    except ImportError:
+        return None
+
+    dur = _probe_duration(path)
+    if not dur:
+        return None
+
+    tmp = Path(path).with_name(Path(path).stem + "_box")
+    tmp.mkdir(exist_ok=True)
+    boxes = []
+    try:
+        for i in range(samples):
+            t = dur * (i + 0.5) / samples
+            frame = tmp / f"{i:02d}.png"
+            r = subprocess.run(
+                ["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.3f}", "-i", path,
+                 "-vframes", "1", str(frame)],
+                capture_output=True, text=True)
+            if r.returncode != 0 or not frame.exists():
+                continue
+            a = np.asarray(Image.open(frame).convert("L")).astype(np.int16)
+            # Background is whatever the corners agree on — these panels are a
+            # flat dark field, and a fixed threshold would fail on a light one.
+            bg = int(np.median([a[0, 0], a[0, -1], a[-1, 0], a[-1, -1]]))
+            mask = np.abs(a - bg) > 26
+            if mask.sum() < 200:
+                continue
+            ys, xs = np.nonzero(mask)
+            boxes.append((xs.min(), ys.min(), xs.max(), ys.max()))
+    finally:
+        for f in tmp.glob("*.png"):
+            f.unlink(missing_ok=True)
+        tmp.rmdir()
+
+    if not boxes:
+        return None
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes),
+            max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+
+def _probe_duration(path: str) -> float:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", path], capture_output=True, text=True).stdout.strip()
+    try:
+        return float(out)
+    except ValueError:
+        return 0.0
+
+
 def _normalise_clip(path: str, want: float, fps: int,
                     width: int, height: int) -> str:
     """Force a clip to exactly ``want`` seconds at exactly ``width``x``height``.
@@ -587,10 +649,40 @@ def _normalise_clip(path: str, want: float, fps: int,
 
     needs_geom = (have_w, have_h) != (width, height)
     needs_time = abs(have_d - want) >= 0.08
-    if not (needs_geom or needs_time):
-        return path
 
     filters = []
+
+    # AUTO-FRAME to the content.
+    #
+    # Measured on the shipped clips: content spanned only 26-29% of the panel
+    # height and ink covered 2-5% of pixels — a small caption floating in a large
+    # black field. In a half-panel on a phone that type is unreadable, which is
+    # the whole job of these graphics. The design system is also told to fill its
+    # canvas now, but this is the backstop that does not depend on it complying.
+    box = _content_box(path)
+    if box:
+        bx0, by0, bx1, by1 = box
+        bw, bh = max(1, bx1 - bx0), max(1, by1 - by0)
+        if bh < have_h * 0.72:
+            # Pad around the content so it does not touch the panel edge, then
+            # widen to the panel's aspect so nothing is stretched.
+            pad = int(min(have_w, have_h) * 0.045)
+            cx, cy = bx0 + bw / 2, by0 + bh / 2
+            target_ar = width / height
+            cw, ch = bw + 2 * pad, bh + 2 * pad
+            if cw / ch < target_ar:
+                cw = ch * target_ar
+            else:
+                ch = cw / target_ar
+            cw, ch = min(cw, have_w), min(ch, have_h)
+            cx0 = int(max(0, min(cx - cw / 2, have_w - cw)))
+            cy0 = int(max(0, min(cy - ch / 2, have_h - ch)))
+            filters.append(f"crop={int(cw)}:{int(ch)}:{cx0}:{cy0}")
+            logger.info("%s: auto-framed content from %d%% to ~%d%% of panel "
+                        "height", Path(path).name,
+                        int(bh / have_h * 100), int(bh / ch * 100))
+            needs_geom = True
+
     if needs_geom:
         if have_h > height * 1.3:
             # Tall source (phone mockup): scale to width, then take the top of
@@ -605,6 +697,24 @@ def _normalise_clip(path: str, want: float, fps: int,
         # Hold the last frame rather than looping: a loop restarts an animation
         # mid-beat, which reads as a glitch.
         filters.append(f"tpad=stop_mode=clone:stop_duration={want - have_d:.3f}")
+
+    # NEVER FREEZE. A slow continuous push across the whole clip, applied after
+    # the padding so the cloned tail moves too.
+    #
+    # Measured on the shipped clips, the animations stop long before the clip
+    # does: stats_card's last motion was at 0.52s of 2.60s and headline_burst's
+    # at 0.72s of 2.60s — 80% and 72% of their screen time was a still image.
+    # Some of that is clone-padding a short render, some is the graphic's own
+    # animation finishing early. Either way a static frame in a short reads as a
+    # stall, and the fix does not need to know which cause applied.
+    #
+    # 4% over the clip is deliberately below conscious notice: the intent is that
+    # the frame is never dead, not that the viewer sees a zoom.
+    frames = max(2, int(round(want * fps)))
+    filters.append(
+        f"zoompan=z='1+0.04*on/{frames}':x='iw/2-(iw/zoom/2)':"
+        f"y='ih/2-(ih/zoom/2)':d=1:s={width}x{height}:fps={fps}")
+
     vf = ",".join(filters) if filters else "null"
 
     fixed = str(Path(path).with_name(Path(path).stem + "_fit.mp4"))

@@ -197,6 +197,15 @@ Judge it as a viewer sees it on a phone. Fail it for any of:
 - a label or cursor sitting on top of a glyph it should sit beside
 - content that does not match the stated purpose
 - anything cut off by the frame edge
+- TYPE TOO SMALL to read comfortably at about 6cm tall — body labels, diagram
+  step captions, code lines and chart ticks included. This panel is half a phone
+  screen, not a slide.
+- THE FRAME MOSTLY EMPTY: content floating in a large field of background
+  instead of filling the canvas. Shipped clips had content spanning only about a
+  quarter of the panel height, which is the main reason they held no attention.
+- THE LAST FRAME LOOKING IDENTICAL to the middle one. The three frames given to
+  you are from 45%, 70% and 95% of the clip; if the final two are the same
+  picture, the graphic froze and the rest of its screen time is a still image.
 
 Do NOT fail it for taste — only for defects a viewer would notice as wrong.
 
