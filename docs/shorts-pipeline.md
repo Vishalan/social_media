@@ -50,12 +50,19 @@ without an author and quote.
 | `cinematic_chart` | comparable numbers | bars growing from a baseline |
 | `code_walkthrough` | code or config | editor pane, lines typing in |
 | `tweet_reveal` | a named person quoted | social-post card |
-| `ai_video` | **nothing concrete to show** | generated cinematic scene — last resort |
+| `ai_video` | opt-in + nothing concrete to show | generated scene — **off: see below** |
 | `pageroll` | a URL | held or travelling page view — the fallback |
 
 Types are **capability-gated before the planner sees them**: no URL means no
-`pageroll`, no quoted human means `tweet_reveal` is never offered, no local video
-model means no `ai_video`. The planner cannot choose something unrenderable.
+`pageroll`, no quoted human means `tweet_reveal` is never offered. The planner
+cannot choose something unrenderable.
+
+`ai_video` needs a second gate, and the distinction matters. LTX-Video 2B runs
+fine here (80–98s for a 3s clip) so the capability check passes — but the output
+is a blue smear with no recognisable subject, measured across a terse prompt at
+30 steps and a long LTX-style description at 40. "Can render" is not "should
+render", so it also requires `ai_video_enabled`, which is **off**. The renderer
+and its VRAM isolation stay wired for a stronger local model.
 
 Everything except `highlight`, `pageroll`, `annotate`, `macro` and `ai_video`
 becomes a HyperFrames brief, so one design system carries one quality bar.
@@ -76,15 +83,29 @@ the transcript put "GPT-5.6 sold" and "John Krapidze" on screen.
 the panel's exact geometry before assembly. Generators return whatever their
 content needed, and the assembler places clips at computed offsets.
 
+**The panel is never empty and never frozen.** Between designed graphics the
+panel frames one paragraph of the source at a time, highlighted with an accent
+bar, striding through the piece so consecutive views differ. It is rendered from
+the source text rather than captured from the publisher: the live page put an
+Oracle advert and a podcast promo carrying an unrelated headshot into the video,
+and no DOM rule reliably separated the article from an embedded transcript. The
+evidence types still use the real page, where the point is that the claim is
+visible on the publisher's own site.
+
 ## Measured against the references
 
 Analysis: `docs/reference/2026-08-17-competitor-frame-analysis.md`.
 
-| | One cut every | Median hold |
-|---|---|---|
-| Grok reference | 2.45s | 1.67s |
-| **This pipeline** | **2.55s** | 2.60s |
-| Researcher reference | 1.07s | 0.62s |
+Measured on the **content panel**, not the whole frame. Whole-frame scene
+detection cannot see change confined to the top half, where the continuous
+presenter dominates the score — it reported 3 cuts for a build whose panel
+turned over 20 times.
+
+| | One change every | Median | Max hold |
+|---|---|---|---|
+| Grok reference | 2.45s | 1.67s | — |
+| **This pipeline** | **2.66s** | 2.44s | 6.12s |
+| Researcher reference | 1.07s | 0.62s | — |
 
 The researcher video's ~1s cadence needs full-frame presenter alternation, which
 conflicts with the standing rule that the avatar is never full-screen. Grok tempo
