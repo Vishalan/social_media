@@ -56,30 +56,32 @@ BRAND = Brand()
 class CaptionStyle:
     """How burned-in captions look.
 
-    The previous style was white text with a 5px hard black outline. Outlines
-    at that weight read as amateur — they fringe every glyph and fight the
-    letterforms. A soft padded box is cleaner, holds legibility over any
-    background, and is one drawtext option rather than a filter stack.
+    Measured against the two reference shorts (2026-08-17): their captions are
+    far quieter than ours were. 2-4 words per cue, roughly 3.5% of frame height,
+    white on a black pill at ~70% opacity, bottom-centre. No karaoke, no
+    word-colouring, no bounce.
+
+    Ours were 58px (5.4% of a 1080-wide frame at 1920 tall) carrying up to 28
+    characters. The content panel is supposed to be doing the talking; a caption
+    competing with it splits attention.
     """
 
-    font: str = BRAND.font_black
-    size: int = 58
+    font: str = BRAND.font_bold
+    # ~3.5% of a 1920-tall frame, matching the references. Was 58.
+    size: int = 44
     color: str = "white"
-    # Padded rounded-ish box. boxborderw gives the padding; the alpha keeps the
-    # footage readable underneath rather than punching a solid hole in it.
     box: bool = True
-    box_color: str = "0x0B0D11@0.72"
-    box_pad: int = 26
-    # Sits above the bottom UI strip (12-20% is clipped) and clear of the
-    # presenter panel in a stacked layout.
+    # Slightly lighter than before: the reference pill reads as a scrim, not a
+    # solid block punched through the footage.
+    box_color: str = "0x0B0D11@0.70"
+    box_pad: int = 18
     y_frac: float = 0.615
-    # A thin shadow under the box separates it from busy footage without the
-    # fringing an outline causes.
-    shadow_color: str = "black@0.45"
+    shadow_color: str = "black@0.35"
     shadow_x: int = 0
-    shadow_y: int = 3
-    max_chars: int = 26
-    words_per_cue: int = 3
+    shadow_y: int = 2
+    # 2-3 words, ~18 chars. Was 3 words / 28 chars.
+    max_chars: int = 18
+    words_per_cue: int = 2
 
     def drawtext(self, text: str, start: float, end: float, *,
                  y_frac: Optional[float] = None) -> str:
@@ -100,7 +102,7 @@ class CaptionStyle:
             f"enable='between(t,{start:.3f},{end:.3f})'",
         ]
         if self.box:
-            parts += [f"box=1", f"boxcolor={self.box_color}",
+            parts += ["box=1", f"boxcolor={self.box_color}",
                       f"boxborderw={self.box_pad}"]
         return ":".join(parts)
 

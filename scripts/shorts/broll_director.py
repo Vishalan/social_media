@@ -81,6 +81,26 @@ TYPE_CATALOG: dict[str, dict[str, str]] = {
         "for": ("an animated chart. Use only when the numbers genuinely "
                 "compare; a single figure belongs in stats_card."),
     },
+    "mechanism": {
+        "needs": "a process the source describes in steps",
+        "for": ("a built diagram showing HOW the thing works — inputs flowing "
+                "through stages to an output, ending in a concrete result. The "
+                "single most valuable type when the story explains a mechanism, "
+                "because narration alone cannot show a flow."),
+    },
+    "annotate": {
+        "needs": "a capturable URL and one exact phrase or figure on that page",
+        "for": ("the real page with ONE phrase boxed and everything else dimmed. "
+                "Use when the proof is a specific line in a primary source — a "
+                "figure in a paper, a licence field, a clause. Far stronger than "
+                "scrolling past it."),
+    },
+    "macro": {
+        "needs": "a capturable URL and one small element worth magnifying",
+        "for": ("an extreme push into a single UI element — a button, a badge, a "
+                "toggle — starting wide and landing tight. Use when the story "
+                "turns on one control or label."),
+    },
     "pageroll": {
         "needs": "a capturable source URL",
         "for": ("a held or slowly travelling view of the real page. The "
@@ -172,6 +192,13 @@ Payload shapes, exactly:
   split_screen     {"left_title": "...", "left_lines": ["..."],
                     "right_title": "...", "right_lines": ["..."]}
   cinematic_chart  {"title": "...", "series": [{"label": "...", "value": 12}]}
+  mechanism        {"title": "How it works",
+                    "stages": ["Cortical signal", "Decoder model", "Text output"],
+                    "result": "i need more coffee"}
+  annotate         {"phrase": "exact phrase as it appears on the page",
+                    "label": "why this line matters, max 6 words"}
+  macro            {"target": "exact visible text of the element to magnify",
+                    "label": "what it does, max 6 words"}
   pageroll         {}
 
 Reply with JSON only."""
@@ -206,8 +233,9 @@ class BrollDirector:
                  "split_screen", "cinematic_chart"]
         if len(self.source_text) > 600:
             types.insert(0, "highlight")
+        types.append("mechanism")          # needs only a described process
         if self.source_url:
-            types.append("pageroll")
+            types += ["pageroll", "annotate", "macro"]
         # tweet_reveal is offered only when the source plausibly quotes a
         # person; the planner is told never to invent one, and this stops it
         # being tempted.
@@ -311,6 +339,17 @@ class BrollDirector:
                 out_path=out, duration_s=slot.duration,
                 palette=self.palette, focus_paragraph=focus)
 
+        if k in ("annotate", "macro"):
+            from .annotate import build_annotated_clip
+            return build_annotated_clip(
+                url=self.source_url, out_path=out,
+                phrase=str(p.get("phrase") or p.get("target") or ""),
+                label=str(p.get("label", "")),
+                mode=("box" if k == "annotate" else "macro"),
+                duration_s=slot.duration, width=self.width,
+                height=self.height, fps=self.fps,
+                work_dir=str(self.work_dir), palette=self.palette)
+
         if k == "pageroll":
             from .pageroll import build_rolls
             rolls = build_rolls(self.source_url, str(self.work_dir / "page"),
@@ -403,6 +442,18 @@ def _brief_for(slot: "Slot"):
                   "left/right in a narrow frame. Each panel titled with its "
                   "lines beneath; panels build in sequence, top first")
         kind = "comparison"
+    elif k == "mechanism":
+        stages = [str(x) for x in (p.get("stages") or [])][:5]
+        head = str(p.get("title", "How it works"))
+        sup = "  ->  ".join(stages)
+        if p.get("result"):
+            sup += f"   ==>   {p['result']}"
+        motion = ("build a left-to-right or top-to-bottom FLOW: each stage "
+                  "appears in order with a connector drawn between it and the "
+                  "previous one, then the final result types itself out "
+                  "character by character with a live cursor. Do not animate "
+                  "stages simultaneously — the order IS the explanation")
+        kind = "diagram"
     elif k == "cinematic_chart":
         series = p.get("series") or []
         head = str(p.get("title", ""))
