@@ -368,8 +368,9 @@ class BrollDirector:
         out = str(self.work_dir / f"broll_{slot.index:02d}_{slot.kind}.mp4")
         try:
             path = await self._dispatch(slot, out)
-            slot.path = _normalise_clip(path, slot.duration, self.fps,
-                                        self.width, self.height)
+            slot.path = _normalise_clip(
+                path, slot.duration, self.fps, self.width, self.height,
+                autoframe=slot.kind not in _SELF_FRAMED)
         except Exception as exc:                   # noqa: BLE001 — per-slot isolation
             slot.error = str(exc)[:300]
             logger.warning("b-roll %s failed: %s", slot.kind, slot.error)
@@ -614,8 +615,21 @@ def _probe_duration(path: str) -> float:
         return 0.0
 
 
+# Types that frame themselves and must NOT be auto-framed again.
+#
+# These crop to something specific: annotate and macro land on a located phrase,
+# highlight sweeps a sentence in a phone mockup, pageroll frames a page region.
+# Auto-framing on top of that fights the decision the generator already made —
+# and on annotate it actively broke the clip, because annotate DIMS everything
+# except the highlighted phrase, so the content detector saw only the bright band
+# and zoomed into it, clipping the surrounding words mid-letter. The dimmed
+# context is the point of that type: it shows the claim in place.
+_SELF_FRAMED = frozenset({"annotate", "macro", "highlight", "pageroll",
+                          "ai_video"})
+
+
 def _normalise_clip(path: str, want: float, fps: int,
-                    width: int, height: int) -> str:
+                    width: int, height: int, *, autoframe: bool = True) -> str:
     """Force a clip to exactly ``want`` seconds at exactly ``width``x``height``.
 
     Two separate lies to correct:
@@ -659,7 +673,7 @@ def _normalise_clip(path: str, want: float, fps: int,
     # black field. In a half-panel on a phone that type is unreadable, which is
     # the whole job of these graphics. The design system is also told to fill its
     # canvas now, but this is the backstop that does not depend on it complying.
-    box = _content_box(path)
+    box = _content_box(path) if autoframe else None
     if box:
         bx0, by0, bx1, by1 = box
         bw, bh = max(1, bx1 - bx0), max(1, by1 - by0)

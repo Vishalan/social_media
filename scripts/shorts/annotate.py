@@ -147,6 +147,29 @@ def _find_probe(png: str) -> dict:
             "w": float(xs.max() - xs.min()), "h": float(ys.max() - ys.min())}
 
 
+def _legible_accent(palette: Optional[list[str]]) -> str:
+    """A highlight colour that reads as a highlight, not a redaction.
+
+    This took palette[2] unconditionally. A palette's leading entries are the
+    source's background and body colours — for the X story palette[2] was
+    #0D1117, so the "highlight" painted a near-black bar over the phrase and the
+    frame looked like a redacted document rather than an emphasised claim.
+
+    Mid-luminance colours only, and never one so dark or so pale that black text
+    on it disappears. Same reasoning as the thumbnail accent.
+    """
+    for c in reversed(palette or []):
+        if not (isinstance(c, str) and c.startswith("#") and len(c) == 7):
+            continue
+        try:
+            r, g, b = (int(c[k:k + 2], 16) for k in (1, 3, 5))
+        except ValueError:
+            continue
+        if 70 < (r * 0.299 + g * 0.587 + b * 0.114) < 210:
+            return c
+    return "#FFD43B"          # amber: reads as a marker pen on any page
+
+
 def _recolour(png: str, out_png: str, accent: str) -> str:
     """Repaint the locator colour as the story's accent."""
     from PIL import Image
@@ -175,8 +198,7 @@ def build_annotated_clip(*, url: str, out_path: str, phrase: str, label: str,
     _capture_marked(url, phrase, raw, dim_others=(mode == "box"))
     box = _find_probe(raw)
 
-    accent = (palette[2] if palette and len(palette) > 2
-              else (palette[-1] if palette else "#22D3EE"))
+    accent = _legible_accent(palette)
     png = _recolour(raw, os.path.join(work_dir, f"hl_{tag}.png"), accent)
 
     src_w, src_h = _probe(png)
@@ -185,14 +207,27 @@ def build_annotated_clip(*, url: str, out_path: str, phrase: str, label: str,
 
     # How much context to keep around the highlight.
     #
-    # Capped in ABSOLUTE pixels, not as a multiple of the highlight. A phrase
-    # that spans a whole line is ~1300px wide; 3.4x that clamps to the full
-    # 2560px page width, and a full-width page scaled into a 1080px panel
-    # renders body text at about 8px — the exact unreadability this type exists
-    # to fix. 1500px of source is roughly 40 characters at panel scale.
-    factor = 1.35 if mode == "box" else 1.9
-    crop_w = int(max(box["w"] * factor, 700))
-    crop_w = min(crop_w, src_w, 1500 if mode == "box" else 1100)
+    # Derived from READABILITY rather than a fixed multiple of the phrase. The
+    # old rule took 1.35x the phrase width capped at 1500px, which on a real
+    # headline — 'shadowbanned', 575x85 in a 2560px capture — produced a 776px
+    # window and sliced the surrounding words mid-letter at both edges. The
+    # frame showed "rces its ranking / etting users see if", which reads as a
+    # broken render, and it defeats the point of the type: the claim is only
+    # evidence if you can read the sentence it sits in.
+    #
+    # The phrase's own height is a good proxy for the type size around it. Keep
+    # as much width as possible while the text still lands at MIN_TEXT_PX in the
+    # panel: big heading type therefore gets the full page width and stays
+    # whole, while body text still crops in far enough to be legible.
+    MIN_TEXT_PX = 30.0
+    line_h = max(box["h"], 8.0)
+    readable_w = line_h * width / MIN_TEXT_PX
+    if mode == "box":
+        crop_w = int(min(src_w, max(readable_w, box["w"] * 1.35, 700)))
+    else:
+        # macro deliberately pushes in tighter than readability alone requires —
+        # the point of that type is magnification.
+        crop_w = int(min(src_w, max(box["w"] * 1.9, 700), readable_w * 0.75))
     crop_h = min(src_h, max(int(crop_w * height / width), 240))
     x0 = int(max(0, min(cx - crop_w / 2, src_w - crop_w)))
     y0 = int(max(0, min(cy - crop_h / 2, src_h - crop_h)))
