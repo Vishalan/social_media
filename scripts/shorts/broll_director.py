@@ -269,7 +269,17 @@ class BrollDirector:
         return types
 
     # -- planning ---------------------------------------------------------
-    async def plan(self, beats: list[dict], *, max_slots: int = 5) -> list[Slot]:
+    async def plan(self, beats: list[dict], *, max_slots: int = 5,
+                   max_per_kind: int = 2) -> list[Slot]:
+        """Choose a type and build its payload for every beat worth filling.
+
+        ``max_per_kind`` is what actually keeps the video from becoming a tour
+        of one graphic. A total cap cannot express that: four clips of which
+        three are page-rolls is repetitive, while ten clips spread over eight
+        types is not. Capping per kind lets the slate grow without letting any
+        single look dominate — and page footage is the one it most often would,
+        because every story has a URL and not every story has a statistic.
+        """
         avail = self.available_types()
         beat_text = "\n".join(
             f'  beat {i} ({b["start"]:.1f}s, {b["duration"]:.1f}s): "{b["narration"]}"'
@@ -281,8 +291,13 @@ class BrollDirector:
             f"AVAILABLE B-ROLL TYPES:\n{_catalog_text(avail)}\n\n"
             f"BEATS TO FILL:\n{beat_text}\n\n"
             f"Choose a type and build its payload for each beat. At most "
-            f"{max_slots} slots; fewer is fine if some beats are better left "
-            f"on the presenter."
+            f"{max_slots} slots, and NO MORE THAN {max_per_kind} slots of any "
+            f"one kind — a video that cuts to the same kind of graphic four "
+            f"times feels like a tour of one template. Prefer a different kind "
+            f"for each beat, chosen for what that beat is actually about. "
+            f"Fewer slots is fine if a beat is genuinely better left on the "
+            f"presenter, but a beat with something concrete to show should get "
+            f"a graphic: a held shot lasting more than ~4s reads as a stall."
         )
         try:
             resp = await self.llm.messages.create(
@@ -296,7 +311,11 @@ class BrollDirector:
             raise DirectorError(f"planning failed: {exc}") from exc
 
         slots: list[Slot] = []
-        for item in (data.get("slots") or [])[:max_slots]:
+        used_kind: dict[str, int] = {}
+        used_beat: set[int] = set()
+        for item in (data.get("slots") or []):
+            if len(slots) >= max_slots:
+                break
             try:
                 b = int(item["beat"])
                 kind = str(item["kind"]).strip()
@@ -306,6 +325,21 @@ class BrollDirector:
                 logger.warning("plan dropped: beat=%s kind=%r not available",
                                item.get("beat"), kind)
                 continue
+            # The prompt asks for variety; this enforces it. A prompt-only rule
+            # is a request, and the one time it is ignored is the video that
+            # ships as four page-rolls.
+            if used_kind.get(kind, 0) >= max_per_kind:
+                logger.info("plan dropped: %s already used %d times",
+                            kind, max_per_kind)
+                continue
+            # Two graphics anchored to the same beat would be placed almost on
+            # top of each other, and the assembler would slide the second one
+            # into the next beat's narration — illustrating the wrong sentence.
+            if b in used_beat:
+                logger.info("plan dropped: beat %d already has a graphic", b)
+                continue
+            used_kind[kind] = used_kind.get(kind, 0) + 1
+            used_beat.add(b)
             dur = max(beats[b]["duration"], self.MIN_DURATION.get(kind, 0.0))
             slots.append(Slot(
                 index=len(slots), kind=kind, start=beats[b]["start"],
@@ -316,7 +350,8 @@ class BrollDirector:
         if not slots:
             raise DirectorError("planner returned no usable slots")
         kinds = ", ".join(s.kind for s in slots)
-        logger.info("B-roll plan: %d slots — %s", len(slots), kinds)
+        logger.info("B-roll plan: %d slots across %d kinds — %s",
+                    len(slots), len(used_kind), kinds)
         for s in slots:
             logger.info("  %-16s @%5.1fs  %s", s.kind, s.start, s.why)
         return slots

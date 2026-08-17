@@ -274,7 +274,19 @@ async def _direct_broll(self: ShortsPipeline, *, url: str,
 
     # Sample beats across the narration. Each beat carries the words spoken
     # around it, which is what the director reads to choose a type.
-    n = max(2, cfg.broll_max_clips)
+    #
+    # Beat COUNT is derived from how long the narration actually is, not from
+    # the clip cap. Using the cap meant beats were spread evenly across the
+    # whole video however long it was: on a 56s narration, 5 beats put the
+    # anchors 14s apart, so the director could not place a visual more often
+    # than that even when it had something worth showing. Density is a function
+    # of duration; the cap is a budget. Conflating them made the budget dictate
+    # the pacing.
+    narr_s = max(cues[-1][1] - cues[0][0], 1.0)
+    n = int(round(narr_s / max(cfg.broll_cadence_s, 1.0)))
+    n = max(3, min(n, cfg.broll_max_designed))
+    logger.info("Sampling %d b-roll beats across %.1fs of narration "
+                "(~one per %.1fs)", n, narr_s, narr_s / n)
     beats = []
     for i in range(n):
         idx = int(len(cues) * (i + 0.5) / n)
@@ -298,7 +310,8 @@ async def _direct_broll(self: ShortsPipeline, *, url: str,
         source_title=script.get("title", ""))
 
     try:
-        slots = await d.plan(beats, max_slots=cfg.broll_max_clips)
+        slots = await d.plan(beats, max_slots=cfg.broll_max_designed,
+                             max_per_kind=cfg.broll_max_per_kind)
         slots = await d.render_all(slots, concurrency=cfg.design_concurrency)
     except DirectorError as exc:
         logger.warning("director failed (%s) — falling back to page-roll", exc)
@@ -445,7 +458,16 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
     # without a designed graphic gets source page-roll in the content panel,
     # cycling through the captured bands so consecutive gaps are different
     # parts of the page rather than the same header repeated.
-    gap_fill = [b["path"] for b in broll] if cfg.fill_gaps_with_pageroll else []
+    # Only clips that were NOT already placed may fill a gap. Every director
+    # clip carries its own start time and is placed above, so feeding the same
+    # list in here replayed designed graphics as filler — the viewer sees the
+    # same stats card twice in one video, which reads as a rendering bug rather
+    # than a callback. Page-roll clips have no start of their own and are the
+    # legitimate filler.
+    already = {p["path"] for p in placed}
+    gap_fill = ([b["path"] for b in broll
+                 if b.get("path") and b["path"] not in already]
+                if cfg.fill_gaps_with_pageroll else [])
     gap_i = 0
     last_broll_end = -99.0
 
@@ -532,6 +554,12 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
                 capture_page(url, page_png)
             except Exception as exc:               # noqa: BLE001 — optional
                 logger.warning("panel still capture failed: %s", str(exc)[:140])
+    # The FULL-page capture, used for the slow drift. Kept separate from
+    # still_panel, which is a single pre-cropped frame: the drift needs the tall
+    # original so it has somewhere to travel to.
+    page_panel_src = page_png if (cfg.fill_gaps_with_pageroll
+                                  and os.path.exists(page_png)) else ""
+
     if cfg.fill_gaps_with_pageroll and os.path.exists(page_png):
         still_panel = os.path.join(span_dir, "panel_still.png")
         ph = cfg.content_height if cfg.layout == "half_stacked" else cfg.height
@@ -552,17 +580,49 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
                  "-crf", "17", "-pix_fmt", "yuv420p", seg)
         out = os.path.join(span_dir, f"sp_{i:02d}.mp4")
         if sp["mode"] == "presenter":
-            # Presenter-led span: the content panel holds a still frame of the
-            # source page rather than motion. Keeps the layout constant (the
-            # avatar is never full-frame) without adding another moving thing
-            # for the eye to track while someone is speaking.
-            if still_panel:
+            # Presenter-led span: the content panel shows the source page,
+            # drifting slowly rather than frozen.
+            #
+            # It used to be a single held frame, on the reasoning that a moving
+            # panel competes with the person speaking. That is true for a
+            # two-second span and false for a long one: measured on the previous
+            # build, three presenter spans ran 4.5s, 5.1s and 7.0s with a frozen
+            # screenshot on top, and scene detection found no cut across the
+            # whole 7s. Neither reference short holds ANY shot that long. A
+            # frozen frame does not read as calm, it reads as a stall.
+            #
+            # The drift is deliberately slower than the page-roll b-roll type —
+            # this is a bed, not the subject — and consecutive presenter spans
+            # start at different depths so they are not the same view twice.
+            # No extra webpage is introduced: the panel was already the page.
+            ct = os.path.join(span_dir, f"ct_{i:02d}.mp4")
+            if page_panel_src:
+                ph = cfg.content_height if cfg.layout == "half_stacked" else cfg.height
+                # Start depth cycles so successive holds are different regions;
+                # min() clamps against the real page height inside ffmpeg, so no
+                # probing is needed and a short page simply stays at its top.
+                y0 = int(ph * 0.55) * (i % 3)
+                travel = int(ph * 0.30)
+                speed = travel / max(L, 0.5)
+                y_expr = (f"min(max(ih-{ph}\\,0)\\,{y0}+{speed:.2f}*t)")
+                self._sh("ffmpeg", "-v", "error", "-y", "-loop", "1",
+                         "-framerate", str(cfg.fps), "-t", f"{L:.3f}",
+                         "-i", page_panel_src,
+                         "-vf", (f"scale={cfg.width}:-2:flags=lanczos,"
+                                 f"crop={cfg.width}:min(ih\\,{ph}):0:'{y_expr}',"
+                                 f"scale={cfg.width}:{ph},format=yuv420p"),
+                         "-frames:v", str(max(2, int(L * cfg.fps))),
+                         "-c:v", "libx264", "-crf", "18",
+                         "-pix_fmt", "yuv420p", ct)
+            if not os.path.exists(ct) and still_panel:
+                # Drift unavailable (no full-page capture) — a held frame is
+                # still far better than a full-frame presenter.
                 self._sh("ffmpeg", "-v", "error", "-y", "-loop", "1",
                          "-framerate", str(cfg.fps), "-t", f"{L:.3f}",
                          "-i", still_panel, "-c:v", "libx264", "-crf", "18",
-                         "-pix_fmt", "yuv420p",
-                         os.path.join(span_dir, f"ct_{i:02d}.mp4"))
-                composite(content=os.path.join(span_dir, f"ct_{i:02d}.mp4"),
+                         "-pix_fmt", "yuv420p", ct)
+            if os.path.exists(ct):
+                composite(content=ct,
                           avatar=seg, output=out, layout=cfg.layout,
                           spec=LayoutSpec(name=cfg.layout, width=cfg.width,
                                           height=cfg.height),

@@ -124,17 +124,42 @@ class ShortsConfig:
     # Match page regions to narration beats by looking at them, rather than
     # walking evenly down the page and hoping.
     smart_regions: bool = True
-    # Two page-roll clips per short, not five. Filling every gap with page
-    # footage made the video mostly webpage: the presenter is the reason to
-    # watch, and the page is evidence for a claim — evidence shown twice is
-    # supporting, shown five times it becomes the subject.
+    # Used by the older single-type paths (pageroll, stock, smart_regions).
+    # The director path uses the cadence knobs below instead.
+    #
+    # This was once the global cap for every path, set to 4 back when all
+    # b-roll was page footage: five webpage cutaways made the video mostly
+    # webpage. That reasoning was right about the PAGE and wrong as a total —
+    # once the director produces a different graphic type per beat, a total cap
+    # throttles variety rather than repetition. The concern is now expressed
+    # exactly, as a per-kind cap.
     broll_max_clips: int = 4
     broll_clip_s: float = 2.6
+
+    # Aim for a fresh visual roughly this often. Both reference shorts cut
+    # about every 2.5s; a designed graphic every ~4.5s plus presenter and page
+    # spans between them lands there. Measured on the previous build: 5 evenly
+    # spaced beats across 56s put anchors 14s apart, which left three static
+    # holds of 4.5s, 5.1s and 7.0s — the last is longer than either reference
+    # holds ANY shot.
+    broll_cadence_s: float = 4.5
+    # Ceiling on designed clips per video. Each one costs a claude -p call plus
+    # a render, so this bounds the per-video cost, not the aesthetics.
+    broll_max_designed: int = 10
+    # The real anti-repetition rule, replacing the old total cap: no single
+    # graphic type more than twice per video. Page footage shown twice is
+    # evidence; shown five times it becomes the subject.
+    broll_max_per_kind: int = 2
     # A gap must be at least this long to be worth cutting away for. Below it,
     # the cut costs more attention than the content returns.
     min_gap_for_broll_s: float = 3.5
-    # Never cut to page footage twice within this window.
-    min_broll_spacing_s: float = 12.0
+    # Never cut to page footage twice within this window. Was 12.0, which
+    # combined with 14s-apart anchors to thin the slate to one clip per 12s no
+    # matter how dense the plan was.
+    min_broll_spacing_s: float = 6.0
+    # No single shot may hold longer than this. Beyond it a held frame reads as
+    # a stall even when the narration is still moving.
+    max_static_hold_s: float = 4.5
 
     @property
     def work_dir(self) -> str:
