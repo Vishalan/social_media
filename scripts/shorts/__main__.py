@@ -24,6 +24,64 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shorts.config import ShortsConfig          # noqa: E402
 from shorts import stages                        # noqa: E402
 
+# Where a .env may live, in order of precedence. The repo root sits two levels
+# up from this file; /opt/commoncreed is the deployed location on the server.
+_ENV_CANDIDATES = (
+    Path(__file__).resolve().parent.parent.parent / ".env",
+    Path("/opt/commoncreed/.env"),
+    Path.home() / ".commoncreed.env",
+)
+
+
+def load_env_file(explicit: str = "") -> str:
+    """Load KEY=VALUE pairs from a .env into the environment.
+
+    The pipeline reads its secrets from os.environ, and nothing was populating
+    it: CLAUDE_CODE_OAUTH_TOKEN had to be exported by hand for every run, and a
+    .env sitting in the repo was silently ignored.
+
+    Existing environment variables WIN over the file, so an explicit export in
+    the shell still overrides a stale .env rather than being quietly replaced.
+
+    Values are never logged — only key names and the file path. A token that
+    reaches a log reaches every log reader.
+    """
+    paths = [Path(explicit)] if explicit else list(_ENV_CANDIDATES)
+    for path in paths:
+        try:
+            if not path.is_file():
+                continue
+            raw = path.read_text()
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        loaded, skipped = [], 0
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            if key.startswith("export "):
+                key = key[7:].strip()
+            if not key:
+                continue
+            val = val.strip()
+            # Strip one layer of matching quotes, as a shell would.
+            if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+                val = val[1:-1]
+            if key in os.environ and os.environ[key]:
+                skipped += 1
+                continue
+            os.environ[key] = val
+            loaded.append(key)
+        if loaded or skipped:
+            logging.info("Loaded %d key(s) from %s%s: %s", len(loaded), path,
+                         f" ({skipped} already set in the environment)"
+                         if skipped else "", ", ".join(sorted(loaded)) or "none")
+            return str(path)
+    return ""
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(prog="shorts", description=__doc__)
@@ -42,6 +100,9 @@ def main() -> int:
                     help="minimum script words (190 ~= 60s)")
     ap.add_argument("--resume", action="store_true",
                     help="reuse completed stages in the work dir")
+    ap.add_argument("--env-file", default="",
+                    help="path to a .env; otherwise the repo root, "
+                         "/opt/commoncreed/.env and ~/.commoncreed.env are tried")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -51,6 +112,8 @@ def main() -> int:
     )
     for noisy in ("httpx", "httpcore", "urllib3"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    load_env_file(args.env_file)
 
     cfg = ShortsConfig(
         run_id=args.id,
