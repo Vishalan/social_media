@@ -102,6 +102,33 @@ _XFADE_DURATION = 0.20
 # 55-alpha variant of SKY_BLUE used for the ``.past`` style
 _SKY_BLUE_PAST = f"{SKY_BLUE}55"
 
+# Palette actually handed to the template. Defaults to the CommonCreed brand
+# this generator was written for; a caller on another channel overrides it via
+# set_palette() so the highlight colour matches that story's visual identity
+# instead of importing CommonCreed navy into an unrelated video.
+_PALETTE: dict[str, str] = {
+    "highlight": SKY_BLUE,
+    "highlight_past": _SKY_BLUE_PAST,
+    "ink": NAVY,
+    "paper": WHITE,
+}
+
+
+def set_palette(*, highlight: str, ink: str, paper: str,
+                past_alpha: str = "55") -> None:
+    """Override the highlight/ink/paper colours for the next render.
+
+    Module-level rather than per-instance because the template renderer is a
+    module function the test suite monkeypatches; threading a palette through
+    every call site would break those seams for no gain.
+    """
+    _PALETTE.update({
+        "highlight": highlight,
+        "highlight_past": f"{highlight}{past_alpha}",
+        "ink": ink,
+        "paper": paper,
+    })
+
 # Asset paths (resolved once at import time for determinism)
 _PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent.parent
 _TEMPLATE_PATH: Path = _PROJECT_ROOT / "assets" / "templates" / "phone_article.html.j2"
@@ -554,10 +581,10 @@ def _render_template(
         publish_date=publish_date,
         paragraphs=paragraphs_ctx,
         scroll_offset_px=scroll_offset_px,
-        brand_sky_blue=SKY_BLUE,
-        brand_sky_blue_past=_SKY_BLUE_PAST,
-        brand_navy=NAVY,
-        brand_white=WHITE,
+        brand_sky_blue=_PALETTE["highlight"],
+        brand_sky_blue_past=_PALETTE["highlight_past"],
+        brand_navy=_PALETTE["ink"],
+        brand_white=_PALETTE["paper"],
     )
 
 

@@ -10,6 +10,7 @@ returning an empty body that would silently become a content-free script.
 """
 from __future__ import annotations
 
+import html
 import logging
 import re
 import urllib.error
@@ -62,7 +63,7 @@ class _Text(HTMLParser):
     def handle_data(self, data):
         if self._skip_depth:
             return
-        s = data.strip()
+        s = html.unescape(data).strip()
         if len(s) > 2:
             self.parts.append(s)
 
@@ -112,12 +113,16 @@ def load_source(spec: str, *, kind: SourceKind | None = None,
         return Source(kind="github_repo", title=facts.full_name,
                       text=facts.summary(), url=s)
 
-    html = _fetch(s)
+    raw_html = _fetch(s)
     p = _Text()
-    p.feed(html)
+    p.feed(raw_html)
     body = "\n".join(p.parts)
-    m = re.search(r"<title[^>]*>(.*?)</title>", html, re.S | re.I)
-    doc_title = title or (m.group(1).strip() if m else s)
+    m = re.search(r"<title[^>]*>(.*?)</title>", raw_html, re.S | re.I)
+    # Unescape: a raw title renders as "they&#039;ve been &#039;shadowbanned&#039;"
+    # wherever it is drawn on screen.
+    doc_title = title or (html.unescape(m.group(1)).strip() if m else s)
+    # Publishers append their own name; it is noise in a 140-char mockup title.
+    doc_title = re.sub(r"\s*[|\-–—]\s*[A-Z][\w .]{2,24}$", "", doc_title).strip()
     if len(body) < 400:
         raise SourceError(
             f"extracted only {len(body)} chars of text from {s} — the page is "
