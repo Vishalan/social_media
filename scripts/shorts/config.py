@@ -120,8 +120,17 @@ class ShortsConfig:
     # Match page regions to narration beats by looking at them, rather than
     # walking evenly down the page and hoping.
     smart_regions: bool = True
-    broll_max_clips: int = 5
-    broll_clip_s: float = 3.0
+    # Two page-roll clips per short, not five. Filling every gap with page
+    # footage made the video mostly webpage: the presenter is the reason to
+    # watch, and the page is evidence for a claim — evidence shown twice is
+    # supporting, shown five times it becomes the subject.
+    broll_max_clips: int = 2
+    broll_clip_s: float = 2.6
+    # A gap must be at least this long to be worth cutting away for. Below it,
+    # the cut costs more attention than the content returns.
+    min_gap_for_broll_s: float = 3.5
+    # Never cut to page footage twice within this window.
+    min_broll_spacing_s: float = 12.0
 
     @property
     def work_dir(self) -> str:

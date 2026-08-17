@@ -179,10 +179,39 @@ def tts(req: TTSRequest) -> TTSResponse:
     if not text:
         raise HTTPException(status_code=400, detail="text empty after preprocessing")
 
+    # Resolve the reference against REFS_ROOT.
+    #
+    # This was the single most damaging bug in the pipeline. The old code did
+    # `Path(ref).exists()` on a BARE FILENAME, which resolves against the
+    # container's working directory (/app) rather than the mounted refs volume
+    # (/app/refs). It therefore never found any reference, set ref=None, and
+    # generated with Chatterbox's DEFAULT VOICE — logging only a warning.
+    # Every video produced up to 2026-08-17 used a stranger's voice while the
+    # config, the client and the request payload all correctly named the
+    # owner's clip.
+    #
+    # Silent degradation is the whole problem: a missing reference is now a
+    # 400, because generating a video in the wrong voice is far worse than
+    # failing loudly.
     ref = req.reference_audio_path
-    if ref and not Path(ref).exists():
-        logger.warning("reference_audio_path %s not found; generating without cloning", ref)
-        ref = None
+    if ref:
+        candidate = Path(ref)
+        if not candidate.is_absolute():
+            candidate = REFS_ROOT / ref
+        try:
+            resolved = candidate.resolve()
+            resolved.relative_to(REFS_ROOT.resolve())
+        except (ValueError, OSError):
+            raise HTTPException(
+                status_code=400,
+                detail=f"reference_audio_path {ref!r} escapes {REFS_ROOT}")
+        if not resolved.exists():
+            raise HTTPException(
+                status_code=400,
+                detail=(f"reference_audio_path {ref!r} not found under "
+                        f"{REFS_ROOT}. Refusing to generate in the wrong voice; "
+                        f"see /refs/list for what is available."))
+        ref = str(resolved)
 
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     filename = req.output_filename or f"chatterbox_{int(time.time())}_{uuid.uuid4().hex[:8]}.wav"

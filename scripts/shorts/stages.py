@@ -375,20 +375,41 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
     # parts of the page rather than the same header repeated.
     gap_fill = [b["path"] for b in broll] if cfg.fill_gaps_with_pageroll else []
     gap_i = 0
+    last_broll_end = -99.0
 
     spans, cursor = [], 0.0
 
     def add_gap(start: float, end: float) -> None:
-        nonlocal gap_i
-        if end - start <= 0.25:
+        """Fill a gap between designed graphics.
+
+        Page footage is spent sparingly. A gap gets it only if the gap is long
+        enough to be worth a cut, enough time has passed since the last one,
+        and there is unused footage left. Otherwise the presenter holds the
+        content panel — a held shot of the person talking is not dead air, but
+        five webpage cutaways in a row make the page the subject of the video.
+        """
+        nonlocal gap_i, last_broll_end
+        length = end - start
+        if length <= 0.25:
             return
-        if gap_fill:
-            spans.append({"mode": "content", "start": start, "end": end,
-                          "content": gap_fill[gap_i % len(gap_fill)]})
+        worth_it = (gap_fill
+                    and gap_i < len(gap_fill)
+                    and length >= cfg.min_gap_for_broll_s
+                    and start - last_broll_end >= cfg.min_broll_spacing_s)
+        if worth_it:
+            clip_len = min(cfg.broll_clip_s, length)
+            mid = start + (length - clip_len) / 2
+            if mid > start + 0.2:
+                spans.append({"mode": "presenter", "start": start, "end": mid})
+            spans.append({"mode": "content", "start": mid, "end": mid + clip_len,
+                          "content": gap_fill[gap_i]})
+            if end > mid + clip_len + 0.2:
+                spans.append({"mode": "presenter", "start": mid + clip_len,
+                              "end": end})
             gap_i += 1
+            last_broll_end = mid + clip_len
         else:
-            # Only reachable when capture failed outright.
-            spans.append({"mode": "full", "start": start, "end": end})
+            spans.append({"mode": "presenter", "start": start, "end": end})
 
     for p in placed:
         add_gap(cursor, p["t"])
@@ -399,6 +420,20 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
 
     span_dir = cfg.path("spans")
     Path(span_dir).mkdir(exist_ok=True)
+
+    # A single held frame of the source page for presenter-led spans.
+    still_panel = ""
+    page_png = os.path.join(cfg.broll_dir, "page.png")
+    if cfg.fill_gaps_with_pageroll and os.path.exists(page_png):
+        still_panel = os.path.join(span_dir, "panel_still.png")
+        ph = cfg.content_height if cfg.layout == "half_stacked" else cfg.height
+        try:
+            self._sh("ffmpeg", "-v", "error", "-y", "-i", page_png,
+                     "-vf", f"crop=iw:min(ih\,iw*{ph}/{cfg.width}):0:0,"
+                            f"scale={cfg.width}:{ph}", "-frames:v", "1",
+                     still_panel)
+        except ShortsError:
+            still_panel = ""
     parts = []
     for i, sp in enumerate(spans):
         L = sp["end"] - sp["start"]
@@ -407,7 +442,25 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
                  "-t", f"{L:.3f}", "-i", av, "-an", "-c:v", "libx264",
                  "-crf", "17", "-pix_fmt", "yuv420p", seg)
         out = os.path.join(span_dir, f"sp_{i:02d}.mp4")
-        if sp["mode"] == "full":
+        if sp["mode"] == "presenter":
+            # Presenter-led span: the content panel holds a still frame of the
+            # source page rather than motion. Keeps the layout constant (the
+            # avatar is never full-frame) without adding another moving thing
+            # for the eye to track while someone is speaking.
+            if still_panel:
+                self._sh("ffmpeg", "-v", "error", "-y", "-loop", "1",
+                         "-framerate", str(cfg.fps), "-t", f"{L:.3f}",
+                         "-i", still_panel, "-c:v", "libx264", "-crf", "18",
+                         "-pix_fmt", "yuv420p",
+                         os.path.join(span_dir, f"ct_{i:02d}.mp4"))
+                composite(content=os.path.join(span_dir, f"ct_{i:02d}.mp4"),
+                          avatar=seg, output=out, layout=cfg.layout,
+                          spec=LayoutSpec(name=cfg.layout, width=cfg.width,
+                                          height=cfg.height),
+                          work_dir=span_dir)
+            else:
+                os.replace(seg, out)
+        elif sp["mode"] == "full":
             os.replace(seg, out)
         else:
             ct = os.path.join(span_dir, f"ct_{i:02d}.mp4")
