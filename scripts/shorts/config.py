@@ -159,7 +159,13 @@ class ShortsConfig:
     min_broll_spacing_s: float = 6.0
     # No single shot may hold longer than this. Beyond it a held frame reads as
     # a stall even when the narration is still moving.
-    max_static_hold_s: float = 4.5
+    #
+    # 3.5 rather than 4.5: at 4.5 the panel still measured four holds over the
+    # limit, because a subdivided span only reads as a cut if the two views
+    # differ enough, and two dense-text views sometimes do not. Splitting more
+    # finely gives each view a better chance of landing on visibly different
+    # material, and 3.5s is still above the ~2.5s cadence of both references.
+    max_static_hold_s: float = 3.5
 
     @property
     def work_dir(self) -> str:

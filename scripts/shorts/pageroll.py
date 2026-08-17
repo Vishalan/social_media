@@ -23,9 +23,11 @@ caller gets an empty list and the pipeline proceeds without page-roll.
 """
 from __future__ import annotations
 
+import html
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -130,6 +132,382 @@ def _capture_once(url: str, out_png: str, *, width: int,
         raise PageRollError(f"no screenshot for {url}: {r.stderr[-300:]}")
     logger.info("Captured %s (%d KB)", url, os.path.getsize(out_png) // 1024)
     return out_png
+
+
+_READER_JS = """
+() => {
+  const textLen = (el) => {
+    let n = 0;
+    for (const p of el.querySelectorAll('p, li, h2, h3, pre, code')) {
+      n += (p.innerText || '').trim().length;
+    }
+    return n;
+  };
+
+  // ANCHOR ON THE HEADLINE, then walk up to the block that contains the story.
+  //
+  // Picking the container with the most paragraph text instead captured the
+  // WRONG ARTICLE: a TechCrunch page embeds a full podcast transcript, which is
+  // longer than the piece itself, so "most text wins" produced a clean capture
+  // of an unrelated Zuckerberg interview. The headline is the one element
+  // guaranteed to belong to the story the URL is about.
+  // Take the SMALLEST ancestor that holds the body, not the largest. Climbing
+  // to the maximum re-absorbed the podcast transcript as a sibling: 13,743
+  // chars against the article's 8,004, and a 19,000px capture. The first
+  // ancestor to clear the threshold is the article container; everything above
+  // it is the page.
+  const ENOUGH = 2500;
+  const h1 = document.querySelector('article h1, main h1, h1');
+  let best = null, bestLen = 0;
+  if (h1) {
+    let node = h1.parentElement, depth = 0;
+    while (node && depth < 8 && node !== document.body) {
+      const n = textLen(node);
+      if (n > bestLen) { bestLen = n; best = node; }
+      if (n >= ENOUGH) break;
+      node = node.parentElement; depth++;
+    }
+  }
+  // Only if there is no usable headline do we fall back to the selector sweep.
+  if (!best || bestLen < 600) {
+    for (const el of document.querySelectorAll(
+        'article, [itemprop="articleBody"], [class*="article-content"], '
+        + '[class*="article-body"], [class*="entry-content"], '
+        + '[class*="post-content"], [class*="story-body"], main, [role="main"]')) {
+      const n = textLen(el);
+      if (n > bestLen) { bestLen = n; best = el; }
+    }
+  }
+  if (!best || bestLen < 400) return null;
+
+  // Strip page furniture LAST, and only from inside the chosen root. Removing
+  // it first deleted the article on pages whose body class happens to match a
+  // junk pattern, leaving whatever survived to be selected instead.
+  const junk = [
+    'iframe', 'ins', 'aside', 'nav', 'footer', 'form', 'video',
+    '[class*="ad-"]', '[class*="-ad"]', '[class*="ads"]', '[id*="ad-"]',
+    '[id*="google_ads"]', '[class*="advert"]', '[aria-label*="advert" i]',
+    '[class*="sponsor"]', '[class*="promo"]', '[class*="newsletter"]',
+    '[class*="subscribe"]', '[class*="related"]', '[class*="popular"]',
+    '[class*="recommend"]', '[class*="social"]', '[class*="share"]',
+    '[class*="comment"]', '[class*="paywall"]', '[class*="cookie"]',
+    '[data-testid*="ad"]',
+  ];
+  for (const sel of junk) {
+    for (const el of best.querySelectorAll(sel)) el.remove();
+  }
+  // Widen the column: a 700px measure inside a 1280px viewport leaves the
+  // capture half empty, and the panel then shows mostly margin.
+  best.style.margin = '0 auto';
+  best.style.maxWidth = 'none';
+  best.style.width = '100%';
+  best.style.padding = '28px 34px';
+  best.setAttribute('data-reader-root', '1');
+  const r = best.getBoundingClientRect();
+  return {
+    h: Math.round(r.height),
+    chars: textLen(best),
+    headline: (h1 ? (h1.innerText || '') : '').trim().slice(0, 90),
+  };
+}
+"""
+
+
+def capture_article(url: str, out_png: str, *, width: int = 1280,
+                    timeout_ms: int = 45000, reuse: bool = True) -> str:
+    """Capture ONLY the article body, with page furniture removed.
+
+    The plain full-page capture is the whole document, and on a news site most
+    of the document is not the story. Measured on the TechCrunch capture used
+    for the X ranking-algorithm short, the panel spent several seconds on an
+    Oracle advert, a "Most Popular" rail and a podcast promo carrying a stock
+    headshot of someone with no connection to the piece — the same irrelevant
+    footage that keyword stock search was dropped for. It recurred because the
+    drift revisits the same tall image.
+
+    Returns a tall PNG of the story text alone, which is both relevant and the
+    only version whose body text is readable once zoomed into a panel.
+    """
+    if reuse and os.path.exists(out_png) and os.path.getsize(out_png) > 0:
+        logger.info("Reusing existing article capture %s", out_png)
+        return out_png
+
+    Path(out_png).parent.mkdir(parents=True, exist_ok=True)
+    profile = Path(out_png).parent / "_reader_profile"
+    profile.mkdir(parents=True, exist_ok=True)
+    script = f'''
+import json, sys
+from playwright.sync_api import sync_playwright
+
+url, out, width, profile = sys.argv[1:5]
+width = int(width)
+with sync_playwright() as p:
+    b = p.chromium.launch_persistent_context(
+        profile,
+        args=["--no-sandbox", "--disable-dev-shm-usage", "--hide-scrollbars",
+              "--force-dark-mode", "--enable-features=WebContentsForceDark"],
+        viewport={{"width": width, "height": 1400}}, device_scale_factor=2,
+        color_scheme="dark")
+    pg = b.pages[0] if b.pages else b.new_page()
+    # domcontentloaded, not networkidle: ads and analytics keep a news site's
+    # network busy forever, so networkidle times out on a page that rendered
+    # in two seconds.
+    pg.goto(url, wait_until="domcontentloaded", timeout={timeout_ms})
+    pg.wait_for_timeout(2500)
+    pg.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
+    pg.wait_for_timeout(1500)
+    pg.evaluate("() => window.scrollTo(0, 0)")
+    pg.wait_for_timeout(500)
+    info = pg.evaluate({_READER_JS!r})
+    if not info:
+        print("NOROOT"); b.close(); sys.exit(3)
+    el = pg.query_selector("[data-reader-root]")
+    if el is None:
+        print("NOROOT"); b.close(); sys.exit(3)
+    el.screenshot(path=out)
+    print("OK", json.dumps(info))
+    b.close()
+'''
+    r = subprocess.run(["python3", "-c", script, url, out_png, str(width),
+                        str(profile)],
+                       capture_output=True, text=True,
+                       timeout=timeout_ms / 1000 + 120)
+    if "NOROOT" in (r.stdout or ""):
+        raise PageRollError(f"no article body found on {url}")
+    if not os.path.exists(out_png) or os.path.getsize(out_png) == 0:
+        raise PageRollError(
+            f"article capture failed for {url}: "
+            f"{(r.stderr or r.stdout or '')[-300:]}")
+    logger.info("Article capture %s (%d KB) %s", url,
+                os.path.getsize(out_png) // 1024,
+                (r.stdout or "").strip()[:80])
+    return out_png
+
+
+_READER_CSS = """
+:root { color-scheme: dark; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  width: 1080px; background: %(bg)s; color: %(fg)s;
+  font-family: Inter, -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding: 54px 62px 80px;
+}
+.kicker {
+  font-size: 24px; font-weight: 700; letter-spacing: .16em;
+  text-transform: uppercase; color: %(accent)s; margin-bottom: 20px;
+}
+h1 {
+  font-size: 62px; line-height: 1.12; font-weight: 800;
+  letter-spacing: -.015em; margin-bottom: 26px;
+}
+.rule { width: 168px; height: 9px; border-radius: 5px;
+        background: %(accent)s; margin-bottom: 42px; }
+p {
+  font-size: 37px; line-height: 1.58; margin-bottom: 34px;
+  color: %(fg)s;
+}
+p.lead { font-size: 41px; font-weight: 600; }
+em { color: %(accent)s; font-style: normal; font-weight: 700; }
+"""
+
+
+_BOILER_PATTERNS = [
+    # "Image Credits: TechCrunch Social", "Image Credits: GitHub screenshot" —
+    # a caption for an image that is not in the reader column at all.
+    re.compile(r"Image Credits?:\s*(?:\S+\s*){0,4}", re.I),
+    # "9:00 AM PDT · August 13, 2026" and the byline that precedes it.
+    re.compile(r"\b\d{1,2}:\d{2}\s*[AP]M\s+[A-Z]{2,4}\s*[·|-]\s*"
+               r"\w+\s+\d{1,2},\s*\d{4}", re.I),
+    re.compile(r"\b\d{1,2}\s+(?:minute|hour|day)s?\s+ago\b", re.I),
+    # Trailing site attribution on a scraped <title>.
+    re.compile(r"\s*\|\s*(?:TechCrunch|The Verge|Reuters|Bloomberg|CNBC|"
+               r"Wired|Ars Technica|Engadget)\b", re.I),
+    re.compile(r"\b(?:Advertisement|Sponsored|Related Posts?|Most Popular|"
+               r"Sign up for|Subscribe to|Read more:)\b.*?(?=\.|$)", re.I),
+]
+
+
+def _strip_boilerplate(text: str, title: str) -> str:
+    """Remove scraper leftovers so the lead paragraph reads as prose.
+
+    The extracted text carries the page's furniture inline: the headline
+    repeated, the site name, the byline, the timestamp and image captions. All of
+    it landed in the FIRST paragraph, which the reader page sets largest and
+    boldest — so the most prominent text in the panel read
+    "... | TechCrunch Image Credits: TechCrunch Social X open sources its
+    ranking algorithm ... 9:00 AM PDT · August 13, 2026 X is significantly
+    expanding ...".
+    """
+    for pat in _BOILER_PATTERNS:
+        text = pat.sub(" ", text)
+    # Drop the LEAD-IN metadata structurally rather than by matching the title.
+    #
+    # Matching the title does not work: the title here is the one the script
+    # generated ("X Just Open Sourced The Algorithm That 'Shadowbans' You")
+    # while the scrape carries the publisher's ("X open sources its ranking
+    # algorithm, letting users see if they've been 'shadowbanned'"), twice, in
+    # both straight and curly quotes, followed by a byline. Exact matching
+    # removed none of it and prefix matching sliced one copy in half.
+    #
+    # What the lead-in reliably IS: a run of short lines that are not prose. A
+    # real body paragraph is long and ends in a sentence terminator. So skip
+    # forward to the first line that looks like prose and start there.
+    lines = [ln.strip() for ln in text.splitlines()]
+    start = 0
+    for idx, ln in enumerate(lines[:8]):
+        if len(ln) >= 160 and ln.rstrip().endswith((".", "”", '"', "!", "?")):
+            start = idx
+            break
+    if start:
+        dropped = " / ".join(x for x in lines[:start] if x)[:110]
+        logger.info("Reader page: dropped %d lead-in line(s): %s",
+                    start, dropped)
+        text = "\n".join(lines[start:])
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
+
+
+def build_reader_png(*, title: str, text: str, out_png: str,
+                     kicker: str = "SOURCE", palette: Optional[list] = None,
+                     max_paragraphs: int = 14, timeout_s: int = 120) -> str:
+    """Render the source text as a clean, readable column and screenshot it.
+
+    Why not screenshot the publisher's page for this: the panel behind a
+    presenter-led span is a BED, and a live news page is a poor one. The real
+    capture put an Oracle advert, a "Most Popular" rail and a podcast promo
+    carrying an unrelated stock headshot into the video, and removing them in
+    the DOM proved unreliable — on the TechCrunch page an embedded podcast
+    transcript sits inside the same wrapper as the article, directly above the
+    headline, so no amount of ancestor-walking separates them. Two attempts
+    produced a clean capture of the WRONG article.
+
+    The evidence types (highlight, annotate, macro) still use the real page:
+    there the whole point is that the claim is visible on the publisher's own
+    site, and each crops tightly onto a located phrase, so page furniture never
+    enters the frame. This function serves the other job — something relevant,
+    on-brand and legible for the eye to rest on — using the same text the script
+    was written from, so it cannot drift off-topic.
+
+    Rendered at 1080 CSS px so body type lands at ~37px, which stays readable
+    once the panel scales it; the previous full-page captures were 2560px wide
+    and their body text arrived at roughly 8px.
+    """
+    pal = palette or []
+    bg = pal[0] if pal else "#0B0D11"
+    fg = "#F4F6F8"
+    accent = next((c for c in reversed(pal) if c.lower() not in
+                   ("#000000", "#ffffff", bg.lower())), "#22D3EE")
+
+    text = _strip_boilerplate(text, title)
+    paras = [p.strip() for p in re.split(r"\n\s*\n|\r\n\r\n", text) if p.strip()]
+    if len(paras) < 3:
+        paras = [s.strip() for s in re.split(r"(?<=[.!?])\s{1,2}(?=[A-Z])", text)
+                 if s.strip()]
+    # Group short fragments so the column reads as prose rather than a list.
+    merged: list[str] = []
+    for p in paras:
+        if merged and len(merged[-1]) < 180:
+            merged[-1] = f"{merged[-1]} {p}"
+        else:
+            merged.append(p)
+    merged = merged[:max_paragraphs]
+    if not merged:
+        raise PageRollError("no source text to render a reader page from")
+
+    body = "".join(
+        f'<p class="{"lead" if i == 0 else ""}">{html.escape(p)}</p>'
+        for i, p in enumerate(merged))
+    doc = (f"<!doctype html><meta charset=utf-8>"
+           f"<style>{_READER_CSS % {'bg': bg, 'fg': fg, 'accent': accent}}</style>"
+           f'<div class="kicker">{html.escape(kicker[:40])}</div>'
+           f"<h1>{html.escape(title)}</h1><div class=rule></div>{body}")
+
+    Path(out_png).parent.mkdir(parents=True, exist_ok=True)
+    html_path = str(Path(out_png).with_suffix(".html"))
+    Path(html_path).write_text(doc, encoding="utf-8")
+
+    # Playwright's full_page, not Chrome's --screenshot: new headless captures
+    # the WINDOW, so a fixed --window-size either clips the column or pads it
+    # with empty background, and empty background in the panel is the blank-frame
+    # defect this whole path exists to avoid. full_page sizes to the content.
+    # Also record where each paragraph sits, so a caller can frame ON a
+    # paragraph and highlight it rather than drifting past the column at a
+    # position that means nothing. Written beside the PNG as a sidecar.
+    shot = f'''
+import json, sys
+from playwright.sync_api import sync_playwright
+src, out, rects_out = sys.argv[1:4]
+DPR = 2
+with sync_playwright() as p:
+    b = p.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
+    pg = b.new_page(viewport={{"width": 1080, "height": 1400}},
+                    device_scale_factor=DPR)
+    pg.goto("file://" + src, wait_until="load")
+    pg.wait_for_timeout(400)
+    pg.screenshot(path=out, full_page=True)
+    rects = pg.evaluate("""() => Array.from(document.querySelectorAll('p'))
+        .map(function (el) {{
+          var r = el.getBoundingClientRect();
+          return {{y: Math.round(r.top + window.scrollY),
+                  h: Math.round(r.height),
+                  chars: (el.innerText || '').trim().length}};
+        }})""")
+    for r in rects:
+        r["y"] *= DPR
+        r["h"] *= DPR
+    open(rects_out, "w").write(json.dumps(rects))
+    b.close()
+print("OK")
+'''
+    rects_path = str(Path(out_png).with_suffix(".json"))
+    r = subprocess.run(["python3", "-c", shot, html_path, out_png, rects_path],
+                       capture_output=True, text=True, timeout=timeout_s)
+    if not os.path.exists(out_png) or os.path.getsize(out_png) == 0:
+        raise PageRollError(
+            f"reader render failed: {(r.stderr or r.stdout or '')[-300:]}")
+    logger.info("Reader page: %d paragraphs, %s (%d KB)", len(merged),
+                out_png, os.path.getsize(out_png) // 1024)
+    return out_png
+
+
+def reader_paragraphs(reader_png: str, *, min_chars: int = 90,
+                      target_width: int = 0) -> list[dict]:
+    """Paragraph rectangles for a reader page, tall enough to be worth framing.
+
+    Returns [{"y", "h", "chars"}, ...]. Empty when the sidecar is missing, which
+    lets the caller fall back to plain drifting.
+
+    ``target_width`` rescales the rectangles into the coordinate space the
+    caller will actually crop in. This is not optional bookkeeping: the sidecar
+    records device pixels (the page is captured at DPR 2, so 2160 wide) while the
+    panel filter scales the image to 1080 wide first, which halves every y. Used
+    unscaled, every paragraph's offset came out 2x too large, clamped against the
+    bottom of the image, and EVERY panel framed the last paragraph of the article
+    — the same coordinate-space mismatch that put annotation boxes on empty space
+    twice before.
+    """
+    sidecar = Path(reader_png).with_suffix(".json")
+    if not sidecar.exists():
+        return []
+    try:
+        rects = json.loads(sidecar.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+    out = [r for r in rects if r.get("chars", 0) >= min_chars]
+
+    if target_width and out:
+        try:
+            from PIL import Image
+            with Image.open(reader_png) as im:
+                src_w = im.width
+        except Exception:                          # noqa: BLE001 — optional
+            src_w = 0
+        if src_w and src_w != target_width:
+            k = target_width / src_w
+            out = [{**r, "y": int(r["y"] * k), "h": max(1, int(r["h"] * k))}
+                   for r in out]
+            logger.info("Reader rects scaled by %.3f (%dpx capture -> %dpx "
+                        "panel)", k, src_w, target_width)
+    return out
 
 
 def detect_regions(png: str, *, panel_aspect: float = 998 / 1080,

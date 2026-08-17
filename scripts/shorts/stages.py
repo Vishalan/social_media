@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import urllib.parse
 import urllib.request
@@ -392,6 +393,7 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
     caps = self._load("captions.json")
     designs = self._load("designs.json")
     broll = self._load("broll.json")
+    script_meta = self._load("script.json")
     dur = self._load("timings.json")["duration"]
     words = caps["words"]
 
@@ -494,16 +496,47 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
             clip_len = min(cfg.broll_clip_s, length)
             mid = start + (length - clip_len) / 2
             if mid > start + 0.2:
-                spans.append({"mode": "presenter", "start": start, "end": mid})
+                _add_presenter(start, mid)
             spans.append({"mode": "content", "start": mid, "end": mid + clip_len,
                           "content": gap_fill[gap_i]})
             if end > mid + clip_len + 0.2:
-                spans.append({"mode": "presenter", "start": mid + clip_len,
-                              "end": end})
+                _add_presenter(mid + clip_len, end)
             gap_i += 1
             last_broll_end = mid + clip_len
         else:
-            spans.append({"mode": "presenter", "start": start, "end": end})
+            _add_presenter(start, end)
+
+    def _add_presenter(start: float, end: float) -> None:
+        """Emit presenter spans, subdividing anything that would hold too long.
+
+        A presenter span shows the page drifting in the content panel. Drift
+        alone is not enough over a long stretch: measured on the previous build,
+        a single 10.32s presenter span read as one continuous shot, and neither
+        reference short holds any shot beyond ~3s.
+
+        Subdividing produces a genuine cut, because each chunk starts at a
+        different depth in the page (the panel's start depth is derived from the
+        span index). So a 10s hold becomes three ~3.4s views of three different
+        parts of the source rather than one slow crawl — the cadence comes from
+        material already captured, with no extra planning or render cost.
+
+        This is deliberately the LAST resort for cadence. A designed graphic is
+        better than another view of the page; this only covers the stretches the
+        director left on the presenter.
+        """
+        length = end - start
+        if length <= 0.25:
+            return
+        limit = max(cfg.max_static_hold_s, 1.0)
+        n = max(1, math.ceil(length / limit))
+        step = length / n
+        if n > 1:
+            logger.info("  splitting a %.2fs presenter hold into %d views "
+                        "of %.2fs", length, n, step)
+        for k in range(n):
+            spans.append({"mode": "presenter",
+                          "start": start + k * step,
+                          "end": start + (k + 1) * step})
 
     # OPEN ON CONTENT, not on the presenter.
     #
@@ -540,25 +573,71 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
     # it here if nothing else has.
     still_panel = ""
     page_png = os.path.join(cfg.broll_dir, "page.png")
-    if cfg.fill_gaps_with_pageroll and not os.path.exists(page_png):
-        meta_path = cfg.path("source_meta.json")
-        url = ""
-        if os.path.exists(meta_path):
+    # Read once, up front. This used to be read inside the "no page.png yet"
+    # branch, so on a resumed run — where the capture already exists — the name
+    # was never bound and the reader page below died on an unbound local.
+    source_url = ""
+    meta_path = cfg.path("source_meta.json")
+    if os.path.exists(meta_path):
+        try:
+            source_url = json.loads(Path(meta_path).read_text()).get("url", "")
+        except (json.JSONDecodeError, OSError):
+            source_url = ""
+    if (cfg.fill_gaps_with_pageroll and not os.path.exists(page_png)
+            and source_url):
+        try:
+            from .pageroll import capture_page
+            capture_page(source_url, page_png)
+        except Exception as exc:                   # noqa: BLE001 — optional
+            logger.warning("panel still capture failed: %s", str(exc)[:140])
+
+    # The tall image the panel drifts over for presenter-led spans.
+    #
+    # A rendered READER page, not the publisher's page. The real capture put an
+    # Oracle advert, a "Most Popular" rail and a podcast promo carrying an
+    # unrelated stock headshot into the panel, recurring because the drift
+    # revisits the same tall image. Removing that in the DOM proved unreliable:
+    # on this TechCrunch page an embedded podcast transcript lives inside the
+    # same wrapper as the article, directly above the headline, and two attempts
+    # produced a clean capture of the WRONG article.
+    #
+    # The evidence types (highlight, annotate, macro) still use the real page —
+    # there the point is that the claim is visible on the publisher's own site,
+    # and each crops tightly onto a located phrase so furniture never enters
+    # frame. This bed only has to be relevant, on-brand and legible.
+    page_panel_src = ""
+    if cfg.fill_gaps_with_pageroll:
+        reader_png = os.path.join(cfg.broll_dir, "reader.png")
+        if not os.path.exists(reader_png):
+            src_txt = cfg.path("source.txt")
             try:
-                url = json.loads(Path(meta_path).read_text()).get("url", "")
-            except (json.JSONDecodeError, OSError):
-                url = ""
-        if url:
-            try:
-                from .pageroll import capture_page
-                capture_page(url, page_png)
+                from .pageroll import build_reader_png
+                build_reader_png(
+                    title=script_meta.get("title", "") or "",
+                    text=Path(src_txt).read_text(),
+                    out_png=reader_png,
+                    kicker=(urllib.parse.urlparse(source_url).netloc
+                            .replace("www.", "") if source_url else "SOURCE"),
+                    palette=(script_meta.get("visual_identity") or {}
+                             ).get("palette") or [])
             except Exception as exc:               # noqa: BLE001 — optional
-                logger.warning("panel still capture failed: %s", str(exc)[:140])
-    # The FULL-page capture, used for the slow drift. Kept separate from
-    # still_panel, which is a single pre-cropped frame: the drift needs the tall
-    # original so it has somewhere to travel to.
-    page_panel_src = page_png if (cfg.fill_gaps_with_pageroll
-                                  and os.path.exists(page_png)) else ""
+                logger.warning("reader page failed (%s) — falling back to the "
+                               "raw page capture", str(exc)[:140])
+        if os.path.exists(reader_png):
+            page_panel_src = reader_png
+        elif os.path.exists(page_png):
+            page_panel_src = page_png
+
+    # Paragraph rectangles for framing. Only available for the reader page —
+    # the raw capture has no sidecar, and the panel falls back to plain drift.
+    reader_paras: list[dict] = []
+    if page_panel_src.endswith("reader.png"):
+        from .pageroll import reader_paragraphs
+        reader_paras = reader_paragraphs(page_panel_src,
+                                         target_width=cfg.width)
+        logger.info("Panel will frame %d source paragraphs in turn",
+                    len(reader_paras))
+    para_cursor = 0
 
     if cfg.fill_gaps_with_pageroll and os.path.exists(page_png):
         still_panel = os.path.join(span_dir, "panel_still.png")
@@ -598,19 +677,70 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
             ct = os.path.join(span_dir, f"ct_{i:02d}.mp4")
             if page_panel_src:
                 ph = cfg.content_height if cfg.layout == "half_stacked" else cfg.height
-                # Start depth cycles so successive holds are different regions;
-                # min() clamps against the real page height inside ffmpeg, so no
-                # probing is needed and a short page simply stays at its top.
-                y0 = int(ph * 0.55) * (i % 3)
-                travel = int(ph * 0.30)
-                speed = travel / max(L, 0.5)
-                y_expr = (f"min(max(ih-{ph}\\,0)\\,{y0}+{speed:.2f}*t)")
+                # Frame ON a paragraph and highlight it, advancing to a
+                # different paragraph each time.
+                #
+                # Three earlier versions drifted at an arbitrary depth: first a
+                # frozen frame, then a slow travel, then alternating wide/tight
+                # views. Each looked better than the last and none produced a
+                # detectable cut, because consecutive views of the same column of
+                # body text are near-identical whatever the offset. Framing a
+                # specific paragraph fixes both halves of the problem — the view
+                # is unmistakably new because the highlight moves with it, and
+                # the eye is told which sentence to read instead of being asked
+                # to scan a moving wall of text.
+                # STRIDE through the article rather than walking it in order.
+                #
+                # Adjacent paragraphs sit adjacent in the column, so their crop
+                # windows overlap by most of the panel height: consecutive views
+                # shared ~80% of their pixels and read as one continuous shot,
+                # leaving a 9.64s stretch with no visible change. Striding lands
+                # each successive view in a different part of the piece, so the
+                # frame genuinely turns over. The stride is coprime-ish with the
+                # count so every paragraph is still visited before any repeats.
+                if reader_paras:
+                    n_par = len(reader_paras)
+                    stride = max(2, n_par // 4)
+                    while stride > 2 and math.gcd(stride, n_par) != 1:
+                        stride -= 1
+                    pidx = (para_cursor * stride) % n_par
+                    para_cursor += 1
+                else:
+                    pidx = -1
+                if pidx >= 0:
+                    pr = reader_paras[pidx]
+                    # Centre the paragraph, biased slightly high so a long one
+                    # reveals downward rather than being cut off at the top.
+                    y0 = max(0, int(pr["y"] + pr["h"] / 2 - ph * 0.42))
+                    travel = int(ph * 0.10)
+                    speed = travel / max(L, 0.5)
+                    y_expr = f"min(max(ih-{ph}\\,0)\\,{y0}+{speed:.2f}*t)"
+                    # The highlight: an accent bar down the left of the
+                    # paragraph, wiping in over the first third of the span, plus
+                    # a faint tint behind it. Drawn AFTER the crop so the
+                    # coordinates are panel-relative.
+                    hy = max(0, pr["y"] - y0)
+                    wipe = max(0.35, L / 3.0)
+                    accent = _panel_accent(script_meta)
+                    boxes = (
+                        f",drawbox=x=0:y={hy}:w=10:"
+                        f"h='min({pr['h']}\\,{pr['h']}*t/{wipe:.2f})':"
+                        f"color={accent}@0.95:t=fill"
+                        f",drawbox=x=18:y={hy}:w=iw-18:h={pr['h']}:"
+                        f"color={accent}@0.10:t=fill"
+                    )
+                else:
+                    y0 = int(ph * 0.55) * (1 + (i % 3))
+                    speed = int(ph * 0.30) / max(L, 0.5)
+                    y_expr = f"min(max(ih-{ph}\\,0)\\,{y0}+{speed:.2f}*t)"
+                    boxes = ""
                 self._sh("ffmpeg", "-v", "error", "-y", "-loop", "1",
                          "-framerate", str(cfg.fps), "-t", f"{L:.3f}",
                          "-i", page_panel_src,
                          "-vf", (f"scale={cfg.width}:-2:flags=lanczos,"
                                  f"crop={cfg.width}:min(ih\\,{ph}):0:'{y_expr}',"
-                                 f"scale={cfg.width}:{ph},format=yuv420p"),
+                                 f"scale={cfg.width}:{ph}{boxes},"
+                                 f"format=yuv420p"),
                          "-frames:v", str(max(2, int(L * cfg.fps))),
                          "-c:v", "libx264", "-crf", "18",
                          "-pix_fmt", "yuv420p", ct)
@@ -721,12 +851,62 @@ ShortsPipeline.assemble = assemble
 ShortsPipeline.make_thumbnail = make_thumbnail
 
 
+def _panel_accent(script: dict) -> str:
+    """The story's accent as an ffmpeg colour, skipping near-black and white.
+
+    A palette's first entries are usually the background and body colours, and
+    highlighting text in the same near-black as the background draws a bar
+    nobody can see.
+    """
+    pal = (script.get("visual_identity") or {}).get("palette") or []
+    for c in reversed(pal):
+        if isinstance(c, str) and c.startswith("#") and len(c) == 7:
+            r, g, b = (int(c[k:k + 2], 16) for k in (1, 3, 5))
+            if 60 < (r + g + b) / 3 < 230:
+                return "0x" + c[1:]
+    return "0x22D3EE"
+
+
+def _resume_source(cfg: ShortsConfig):
+    """Rebuild the Source from disk for a --resume run with no --source.
+
+    The CLI documents --source as optional when resuming, and write_script
+    persists source.txt and source_meta.json for exactly this purpose, but run()
+    still passed the missing spec straight into load_source and died on
+    ``'NoneType' object has no attribute 'strip'`` before touching a stage.
+    Re-fetching instead would defeat the point: resume exists so a crashed run
+    does not repeat expensive work, and it must not depend on the source URL
+    still being reachable and unchanged.
+
+    Returns None when the run dir has no persisted source, so a first run with a
+    genuinely missing --source still reaches load_source and its clearer error.
+    """
+    from .sources import Source
+
+    meta_path, text_path = cfg.path("source_meta.json"), cfg.path("source.txt")
+    if not (os.path.exists(meta_path) and os.path.exists(text_path)):
+        return None
+    try:
+        meta = json.loads(Path(meta_path).read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("cannot resume source (%s) — will reload", exc)
+        return None
+    src = Source(kind=meta.get("kind") or "article",
+                 title=meta.get("title") or "",
+                 text=Path(text_path).read_text(),
+                 url=meta.get("url") or "")
+    logger.info("Resuming from the persisted source: %r", src.title[:70])
+    return src
+
+
 async def run(cfg: ShortsConfig, source_spec: str, *,
               source_kind: str | None = None) -> str:
     """Run the whole pipeline for one source. Returns the finished MP4 path."""
     from .sources import load_source
     pipe = ShortsPipeline(cfg)
-    src = load_source(source_spec, kind=source_kind)
+    src = _resume_source(cfg) if not source_spec else None
+    if src is None:
+        src = load_source(source_spec, kind=source_kind)
     script = await pipe.write_script(src)
 
     pipe.generate_voice(script["script"])
