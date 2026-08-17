@@ -170,12 +170,24 @@ async def build_highlight_clip(*, source_text: str, source_title: str,
     )
 
     gen = PhoneHighlightGenerator(anthropic_client=intelligence)
-    try:
-        # await, not asyncio.run(): callers are already inside a loop, and
-        # asyncio.run() from within one raises.
-        return await gen.generate(job, duration_s, out_path)
-    except BrollError as exc:
-        raise HighlightError(str(exc)) from exc
+    # Playwright intermittently fails with "Protocol error
+    # (Page.captureScreenshot): Unable to capture screenshot" — it cost one of
+    # five clips on a real run. Retrying is the whole fix; the second attempt
+    # gets a fresh browser.
+    last: Exception | None = None
+    for attempt in (1, 2):
+        try:
+            # await, not asyncio.run(): callers are already inside a loop.
+            return await gen.generate(job, duration_s, out_path)
+        except BrollError as exc:
+            last = exc
+            logger.warning("highlight attempt %d/2 failed: %s",
+                           attempt, str(exc)[:140])
+        except Exception as exc:                   # noqa: BLE001 — browser flake
+            last = exc
+            logger.warning("highlight attempt %d/2 crashed: %s",
+                           attempt, str(exc)[:140])
+    raise HighlightError(str(last))
 
 
 def slice_words(words: list[dict], start: float, end: float) -> list[dict]:

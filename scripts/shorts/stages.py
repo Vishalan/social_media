@@ -210,8 +210,8 @@ def _pick_regions(self: ShortsPipeline, url: str, panel_h: int):
 
 
 # ---------------------------------------------------------------- b-roll
-def fetch_broll(self: ShortsPipeline, queries: list[str], *,
-                url: str = "", force: bool = False) -> list[dict]:
+async def fetch_broll(self: ShortsPipeline, queries: list[str], *,
+                      url: str = "", force: bool = False) -> list[dict]:
     """Supply non-presenter footage via the configured provider.
 
     Default is page-roll: capture the actual source page and travel over it.
@@ -229,17 +229,17 @@ def fetch_broll(self: ShortsPipeline, queries: list[str], *,
     # at that height rather than full-frame and cropping resolution away.
     h = cfg.content_height if cfg.layout == "half_stacked" else cfg.height
 
+    if cfg.broll_provider == "director":
+        return await _direct_broll(self, url=url, height=h)
+
     if cfg.broll_provider == "pageroll":
-        from .pageroll import build_rolls, capture_page, detect_regions
+        from .pageroll import build_rolls
         if not url:
             logger.warning("page-roll requested but the source has no URL — "
                            "skipping b-roll")
             self._save("broll.json", [])
             return []
-
-        pick = None
-        if cfg.smart_regions:
-            pick = _pick_regions(self, url, h)
+        pick = _pick_regions(self, url, h) if cfg.smart_regions else None
         rolls = build_rolls(url, cfg.broll_dir, count=cfg.broll_max_clips,
                             duration=cfg.broll_clip_s, width=cfg.width,
                             height=cfg.height, fps=cfg.fps, half_height=h,
@@ -250,6 +250,68 @@ def fetch_broll(self: ShortsPipeline, queries: list[str], *,
         return out
 
     return _fetch_stock(self, queries, height=h)
+
+
+
+async def _direct_broll(self: ShortsPipeline, *, url: str,
+                        height: int) -> list[dict]:
+    """Plan and render a varied b-roll slate via the director.
+
+    Unlike the page-roll provider, these clips carry their OWN start times:
+    the director places each one on the beat it illustrates rather than
+    wherever a gap happens to fall. The assembler therefore treats them as
+    placed content, the same as designed graphics.
+    """
+    cfg = self.cfg
+    from .broll_director import BrollDirector, DirectorError
+
+    script = self._load("script.json")
+    caps = self._load("captions.json")
+    cues = caps["cues"]
+    if not cues:
+        self._save("broll.json", [])
+        return []
+
+    # Sample beats across the narration. Each beat carries the words spoken
+    # around it, which is what the director reads to choose a type.
+    n = max(2, cfg.broll_max_clips)
+    beats = []
+    for i in range(n):
+        idx = int(len(cues) * (i + 0.5) / n)
+        idx = max(0, min(idx, len(cues) - 1))
+        beats.append({
+            "start": round(cues[idx][0], 2),
+            "duration": cfg.broll_clip_s,
+            "narration": " ".join(c[2] for c in cues[max(0, idx - 3):idx + 4]),
+        })
+
+    src_text = ""
+    src_path = cfg.path("source.txt")
+    if os.path.exists(src_path):
+        src_text = Path(src_path).read_text()
+
+    d = BrollDirector(
+        intelligence=self.llm, work_dir=cfg.broll_dir,
+        width=cfg.width, height=height, fps=cfg.fps,
+        palette=(script.get("visual_identity") or {}).get("palette") or [],
+        source_url=url, source_text=src_text,
+        source_title=script.get("title", ""))
+
+    try:
+        slots = await d.plan(beats, max_slots=cfg.broll_max_clips)
+        slots = await d.render_all(slots, concurrency=cfg.design_concurrency)
+    except DirectorError as exc:
+        logger.warning("director failed (%s) — falling back to page-roll", exc)
+        cfg.broll_provider = "pageroll"
+        return await fetch_broll(self, [], url=url, force=True)
+
+    out = [{"path": s.path, "duration": s.duration, "kind": s.kind,
+            "start": s.start, "why": s.why, "error": s.error}
+           for s in slots if s.path]
+    self._save("broll.json", out)
+    logger.info("Director b-roll: %d clips — %s", len(out),
+                ", ".join(x["kind"] for x in out))
+    return out
 
 
 def _fetch_stock(self: ShortsPipeline, queries: list[str], *,
@@ -356,13 +418,19 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
 
     for b in broll:
         L = min(cfg.broll_clip_s, b["duration"])
-        t = 3.0
-        while t < dur - 3.0 and not all(t + L <= a - 0.5 or t >= z + 0.5
-                                        for a, z in busy):
+        # A director clip knows which beat it illustrates; honour that start and
+        # only slide it when it would collide. A page-roll clip has no opinion,
+        # so it is placed in the first free slot.
+        t = float(b.get("start", 3.0))
+        t = max(2.5, t)
+        guard = 0
+        while t < dur - 1.0 and guard < 200 and not all(
+                t + L <= a - 0.4 or t >= z + 0.4 for a, z in busy):
             t += 0.5
-        if t < dur - 3.0:
+            guard += 1
+        if t + L <= dur - 0.5:
             placed.append({"t": t, "len": L, "path": b["path"],
-                           "slug": os.path.basename(b["path"])})
+                           "slug": b.get("kind") or os.path.basename(b["path"])})
             busy.append((t, t + L))
 
     placed.sort(key=lambda x: x["t"])
@@ -429,8 +497,9 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
         ph = cfg.content_height if cfg.layout == "half_stacked" else cfg.height
         try:
             self._sh("ffmpeg", "-v", "error", "-y", "-i", page_png,
-                     "-vf", f"crop=iw:min(ih\,iw*{ph}/{cfg.width}):0:0,"
-                            f"scale={cfg.width}:{ph}", "-frames:v", "1",
+                     "-vf", (r"crop=iw:min(ih\," + f"iw*{ph}/{cfg.width}"
+                             + r"):0:0," + f"scale={cfg.width}:{ph}"),
+                     "-frames:v", "1",
                      still_panel)
         except ShortsError:
             still_panel = ""
@@ -562,7 +631,7 @@ async def run(cfg: ShortsConfig, source_spec: str, *,
     # Designs are CPU/Chrome-bound and the avatar is GPU-bound, so they overlap.
     # Page-roll capture is quick and the assembler needs it to fill gaps, so
     # it runs before the long renders rather than after.
-    pipe.fetch_broll(script.get("broll_queries", []), url=src.url)
+    await pipe.fetch_broll(script.get("broll_queries", []), url=src.url)
 
     designs_task = asyncio.create_task(pipe.render_designs(script))
     await asyncio.to_thread(pipe.render_avatar)

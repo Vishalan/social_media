@@ -142,6 +142,12 @@ class ShortsPipeline:
             logger.info("script.json exists — reusing")
             return self._load("script.json")
 
+        # Persist the source so later stages and --resume runs can read it
+        # without re-fetching (and without a publisher blocking the retry).
+        Path(self.cfg.path("source.txt")).write_text(source.text)
+        Path(self.cfg.path("source_meta.json")).write_text(json.dumps(
+            {"kind": source.kind, "title": source.title, "url": source.url},
+            indent=2))
         logger.info("Writing script from %s source %r", source.kind, source.title)
         resp = await self.llm.messages.create(
             model="claude-sonnet-4-5", max_tokens=3000,

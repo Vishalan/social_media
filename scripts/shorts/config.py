@@ -115,7 +115,11 @@ class ShortsConfig:
     # Stock reliably returns footage that is topically adjacent but
     # substantively unrelated — strangers in a coworking space for a story
     # about a repository — which reads as filler, so it is not the default.
-    broll_provider: str = "pageroll"     # pageroll | stock | none
+    # "director" plans a varied slate — a different graphic type per beat,
+    # each chosen for what that beat is about. "pageroll" is the older
+    # single-type path; "stock" searches Pexels and is kept only for sources
+    # with no capturable page.
+    broll_provider: str = "director"   # director | pageroll | stock | none
     broll_enabled: bool = True
     # Match page regions to narration beats by looking at them, rather than
     # walking evenly down the page and hoping.
@@ -124,7 +128,7 @@ class ShortsConfig:
     # footage made the video mostly webpage: the presenter is the reason to
     # watch, and the page is evidence for a claim — evidence shown twice is
     # supporting, shown five times it becomes the subject.
-    broll_max_clips: int = 2
+    broll_max_clips: int = 4
     broll_clip_s: float = 2.6
     # A gap must be at least this long to be worth cutting away for. Below it,
     # the cut costs more attention than the content returns.
