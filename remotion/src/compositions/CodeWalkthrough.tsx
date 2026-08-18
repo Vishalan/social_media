@@ -33,7 +33,7 @@ export const CodeWalkthrough: React.FC<CodeWalkthroughProps> = ({
   const size = Math.max(ty.floor, Math.min(ty.mono, (height * 0.52) / Math.max(4, n) * 0.5));
 
   return (
-    <Frame palette={palette} align="start">
+    <Frame palette={palette} >
       <div
         style={{
           width: '100%',

@@ -22,11 +22,11 @@ export const QuoteCard: React.FC<QuoteCardProps> = ({palette, quote, author, rol
   const words = quote.split(/\s+/).filter(Boolean);
   const byCount = words.length <= 12 ? ty.title : ty.body * 1.25;
   const size = fitWrapped(quote, byCount, width - spacing(height).pad * 2, 700, '0em');
-  const pMark = at(t, 0.02, 0.2);
+  const pMark = at(t, 0, 0.1);
   const pAuthor = at(t, 0.66, 0.88);
 
   return (
-    <Frame palette={palette} align="start">
+    <Frame palette={palette} >
       <div
         style={{
           fontSize: ty.solo * 0.7,
@@ -49,8 +49,8 @@ export const QuoteCard: React.FC<QuoteCardProps> = ({palette, quote, author, rol
         }}
       >
         {words.map((w, i) => {
-          const slot = (0.62 - 0.12) / words.length;
-          const p = at(t, 0.12 + slot * i, 0.12 + slot * (i + 1.7));
+          const slot = (0.62 - 0.03) / words.length;
+          const p = at(t, 0.03 + slot * i, 0.03 + slot * (i + 1.7));
           return (
             <span
               key={i}

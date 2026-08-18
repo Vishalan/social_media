@@ -112,6 +112,17 @@ async def render_designs(self: ShortsPipeline, script: dict, *,
         logger.info("designs.json exists — reusing")
         return self._load("designs.json")
 
+    # max_designs <= 0 means the stage is OFF, not "plan zero graphics". It
+    # previously ran anyway and then failed the whole pipeline with
+    # "intelligence layer returned no briefs" — a disabled stage must skip, and
+    # skipping has to be cheap because designed graphics now come from the
+    # director's Remotion compositions instead.
+    if cfg.max_designs <= 0:
+        logger.info("Design stage off (max_designs=0) — graphics come from the "
+                    "director's Remotion compositions")
+        self._save("designs.json", [])
+        return []
+
     from design import DesignBrief, DesignBriefGenerator, HyperFramesRenderer
 
     vi = script["visual_identity"]

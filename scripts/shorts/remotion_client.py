@@ -59,6 +59,27 @@ COMPOSITIONS: dict[str, tuple[str, tuple[str, ...]]] = {
 }
 
 
+def _empty(value: Any) -> bool:
+    """Whether a prop is missing in a way that would render a broken graphic.
+
+    Checks INSIDE containers, not just for their presence. SplitScreen's `left`
+    and `right` are dicts, so a truthiness test passed a side whose `value` was
+    an empty string and shipped a comparison card with one column blank —
+    exactly the kind of half-rendered frame that reads as a bug to a viewer.
+    A list of empty strings fails for the same reason.
+    """
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, dict):
+        return not value or any(_empty(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        items = [v for v in value if not _empty(v)]
+        return not items
+    return False
+
+
 def available() -> bool:
     """Whether Remotion can render on this host."""
     entry = Path(PROJECT_DIR) / ENTRY
@@ -90,7 +111,7 @@ def render(
         raise RemotionError(f"no composition for kind {kind!r}")
     comp, required = COMPOSITIONS[kind]
 
-    missing = [k for k in required if not props.get(k)]
+    missing = [k for k in required if _empty(props.get(k))]
     if missing:
         raise RemotionError(
             f"{comp} needs {', '.join(missing)} — refusing to render a graphic "

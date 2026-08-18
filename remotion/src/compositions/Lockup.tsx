@@ -37,7 +37,7 @@ export const Lockup: React.FC<LockupProps> = ({palette, kicker, title, badge, ty
   const chars = typed ? Math.floor(typed.length * at(t, 0.42, 0.92)) : 0;
 
   return (
-    <Frame palette={palette} align="start">
+    <Frame palette={palette} >
       {kicker ? <Kicker text={kicker} palette={palette} /> : null}
       <div
         style={{

@@ -94,7 +94,13 @@ def main() -> int:
     ap.add_argument("--work-root", default="/home/vishalan/shorts")
     ap.add_argument("--layout", default="pip_circle",
                     choices=["pip_circle", "half_stacked", "full"])
-    ap.add_argument("--designs", type=int, default=4, help="max design graphics")
+    # 0 by default: designed graphics now come from the director's Remotion
+    # compositions, not from the legacy HyperFrames brief stage. This flag
+    # defaulting to 4 silently overrode the config and kept that stage alive
+    # after it was turned off, costing ~10 minutes per graphic for output
+    # that was then unused.
+    ap.add_argument("--designs", type=int, default=0,
+                    help="legacy HyperFrames design graphics (0 = off)")
     ap.add_argument("--no-broll", action="store_true", help="skip stock footage")
     ap.add_argument("--words", type=int, default=190,
                     help="minimum script words (190 ~= 60s)")

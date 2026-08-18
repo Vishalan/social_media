@@ -24,7 +24,7 @@ export const CinematicChart: React.FC<CinematicChartProps> = ({palette, kicker, 
   const size = Math.max(ty.floor, Math.min(ty.body, rowH * 0.3));
 
   return (
-    <Frame palette={palette} align="start">
+    <Frame palette={palette} >
       {kicker ? <Kicker text={kicker} palette={palette} /> : null}
       <div style={{display: 'flex', flexDirection: 'column', gap: s.gap * 0.7, width: '100%'}}>
         {shown.map((b, i) => {

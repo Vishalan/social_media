@@ -18,7 +18,12 @@ import {interpolate, useCurrentFrame, useVideoConfig, Easing} from 'remotion';
  * gives every composition a continuous sub-perceptual push through settle, so
  * the clip is alive while the words stay still long enough to read.
  */
-export const PHASE = {enter: 0.12, build: 0.72} as const;
+// enter is 0.05, not 0.12. A clip is CUT TO, so its first frame is the first
+// thing the viewer sees: with a 12% lead-in a 2.6s card showed an empty
+// background for its first ~0.3s, which reads as a black flash on the cut
+// rather than as an entrance. Sampled at t=4.0s in a real build, the panel was
+// fully black between the previous clip and a quote card 0.1s into its life.
+export const PHASE = {enter: 0.05, build: 0.72} as const;
 
 export const useClip = () => {
   const frame = useCurrentFrame();

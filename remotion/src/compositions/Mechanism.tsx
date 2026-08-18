@@ -42,7 +42,7 @@ export const Mechanism: React.FC<MechanismProps> = ({palette, title, steps, resu
   const fontSize = Math.max(ty.floor, Math.min(ty.body, rowH * 0.30));
 
   return (
-    <Frame palette={palette} align="start">
+    <Frame palette={palette} >
       {title ? <Kicker text={title} palette={palette} /> : null}
       <div style={{display: 'flex', flexDirection: 'column', gap: s.gap * 0.55, width: '100%'}}>
         {shown.map((step, i) => {

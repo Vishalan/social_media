@@ -148,7 +148,13 @@ class ShortsConfig:
     # spaced beats across 56s put anchors 14s apart, which left three static
     # holds of 4.5s, 5.1s and 7.0s — the last is longer than either reference
     # holds ANY shot.
-    broll_cadence_s: float = 4.5
+    # 3.2s, down from 4.5. The old figure was a COST compromise, not an
+    # aesthetic one: each designed graphic took ~10 minutes through HyperFrames,
+    # so a denser slate meant an unusable render time. A Remotion composition
+    # takes ~3 SECONDS, which removes the constraint entirely — and density was
+    # always the honest fix for the reader-page bed filling half the video with
+    # small body text.
+    broll_cadence_s: float = 3.2
     # Generated cinematic footage is OFF, on measured quality rather than on
     # principle. LTX-Video 2B installs and runs on this 3090 — 80-98s for a 3s
     # clip at 1080x998, which would be affordable — but the output is unusable:
@@ -164,11 +170,16 @@ class ShortsConfig:
     ai_video_enabled: bool = False
     # Ceiling on designed clips per video. Each one costs a claude -p call plus
     # a render, so this bounds the per-video cost, not the aesthetics.
-    broll_max_designed: int = 10
+    # 14 designed clips is roughly 45s of rendering, against about 2.5 hours
+    # through the old path. The cap now bounds the PLAN, not the clock.
+    broll_max_designed: int = 14
     # The real anti-repetition rule, replacing the old total cap: no single
     # graphic type more than twice per video. Page footage shown twice is
     # evidence; shown five times it becomes the subject.
-    broll_max_per_kind: int = 2
+    # 3 rather than 2: with 14 slots to fill from 8 composition types plus the
+    # page-derived ones, a cap of 2 forces weak-fit choices near the end of the
+    # plan. The rule is still "no type becomes the video's identity".
+    broll_max_per_kind: int = 3
     # A gap must be at least this long to be worth cutting away for. Below it,
     # the cut costs more attention than the content returns.
     min_gap_for_broll_s: float = 3.5

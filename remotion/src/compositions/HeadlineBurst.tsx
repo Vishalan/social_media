@@ -46,7 +46,7 @@ export const HeadlineBurst: React.FC<HeadlineBurstProps> = ({
         color={inkOf(palette)}
         accent={acc}
         accentFrom={accentFrom}
-        from={0.08}
+        from={0.02}
         to={0.66}
       />
       {/* width:100% so the rule's percentage resolves against the canvas. In an

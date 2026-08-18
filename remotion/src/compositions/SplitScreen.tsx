@@ -68,7 +68,7 @@ export const SplitScreen: React.FC<SplitScreenProps> = ({palette, kicker, left, 
   );
 
   return (
-    <Frame palette={palette} align="start">
+    <Frame palette={palette} >
       {kicker ? <Kicker text={kicker} palette={palette} /> : null}
       <div style={{display: 'flex', width: '100%', flex: 1, alignItems: 'stretch'}}>
         <Col d={left} p={pL} tint={`${ink}99`} />

@@ -95,7 +95,7 @@ export const Words: React.FC<{
   );
 };
 
-const staggerWords = (t: number, i: number, n: number, from = 0.1, to = 0.7) => {
+const staggerWords = (t: number, i: number, n: number, from = 0.02, to = 0.7) => {
   const slot = (to - from) / Math.max(1, n);
   return at(t, from + slot * i, from + slot * (i + 1.6));
 };
@@ -105,7 +105,7 @@ export const Kicker: React.FC<{text: string; palette: Palette}> = ({text, palett
   const {t, height} = useClip();
   const ty = typeScale(height);
   const acc = accentOf(palette);
-  const p = at(t, 0, 0.1);
+  const p = at(t, 0, 0.06);
   return (
     <div
       style={{
