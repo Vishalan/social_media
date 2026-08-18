@@ -3,7 +3,7 @@ import {Frame, Kicker, Words} from '../lib/ui';
 import {useClip} from '../lib/timing';
 import {ramp} from '../lib/motion';
 import {typeScale, spacing, accentOf, accent2Of, inkOf, Palette} from '../theme';
-import {fitWrapped} from '../lib/fit';
+import {fitWrapped, fitBlock} from '../lib/fit';
 
 export type SourcePullProps = {
   palette: Palette;
@@ -54,7 +54,14 @@ export const SourcePull: React.FC<SourcePullProps> = ({
 
   const words = sentence.split(/\s+/).filter(Boolean);
   const byCount = words.length <= 10 ? ty.hero : words.length <= 18 ? ty.title : ty.body * 1.35;
-  const size = fitWrapped(sentence, byCount, width - s.pad * 2, 700);
+  const reserved = (attribution && variant !== 'statement' ? ty.label * 2.9 : 0)
+    + height * 0.09;
+  const size = Math.min(
+    fitWrapped(sentence, byCount, width - s.pad * 2, 700),
+    fitBlock(sentence, byCount, width - s.pad * 2,
+             height - s.pad * 2 - reserved,
+             {lineHeight: 1.22, fontWeight: 700}),
+  );
 
   // Accent the emphasis phrase where it appears, so the eye has ONE target.
   const emphasisWords = (emphasis || '').split(/\s+/).filter(Boolean);

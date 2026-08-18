@@ -3,7 +3,7 @@ import {Frame, Card} from '../lib/ui';
 import {useClip} from '../lib/timing';
 import {ramp, settle, wipe} from '../lib/motion';
 import {typeScale, spacing, accentOf, accent2Of, inkOf, Palette} from '../theme';
-import {fitWrapped} from '../lib/fit';
+import {fitWrapped, fitBlock} from '../lib/fit';
 
 export type QuoteCardProps = {
   palette: Palette;
@@ -22,7 +22,12 @@ export const QuoteCard: React.FC<QuoteCardProps> = ({palette, quote, author, rol
 
   const words = quote.split(/\s+/).filter(Boolean);
   const byCount = words.length <= 12 ? ty.title : ty.body * 1.25;
-  const size = fitWrapped(quote, byCount, width - spacing(height).pad * 2, 700, '0em');
+  const size = Math.min(
+    fitWrapped(quote, byCount, width - spacing(height).pad * 2, 700, '0em'),
+    fitBlock(quote, byCount, width - spacing(height).pad * 2,
+             height - spacing(height).pad * 2 - ty.solo * 0.7 - ty.body * 3.4,
+             {lineHeight: 1.22, fontWeight: 700, letterSpacing: '0em'}),
+  );
   const acc2 = accent2Of(palette);
   const pMark = ramp(t, 0, 0.12);
   const pAuthor = ramp(t, 0.46, 0.64);

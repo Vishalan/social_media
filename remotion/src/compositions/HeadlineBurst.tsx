@@ -3,7 +3,7 @@ import {Frame, Kicker, Words, Cursor} from '../lib/ui';
 import {useClip} from '../lib/timing';
 import {ramp} from '../lib/motion';
 import {typeScale, spacing, accentOf, accent2Of, inkOf, Palette} from '../theme';
-import {fitWrapped} from '../lib/fit';
+import {fitWrapped, fitBlock} from '../lib/fit';
 
 export type HeadlineBurstProps = {
   palette: Palette;
@@ -35,7 +35,14 @@ export const HeadlineBurst: React.FC<HeadlineBurstProps> = ({
   const ink = inkOf(palette);
   const n = headline.split(/\s+/).filter(Boolean).length;
   const byCount = n <= 3 ? ty.solo * 0.7 : n <= 6 ? ty.hero * 1.3 : n <= 10 ? ty.hero : ty.title;
-  const size = fitWrapped(headline, byCount, width - s.pad * 2);
+  // Both axes. Width alone let an eight-word headline wrap to six lines and
+  // run off the panel; the kicker and the rule below also take height.
+  const reserved = (kicker ? ty.label * 2.9 : 0) + height * 0.10;
+  const size = Math.min(
+    fitWrapped(headline, byCount, width - s.pad * 2),
+    fitBlock(headline, byCount, width - s.pad * 2,
+             height - s.pad * 2 - reserved, {lineHeight: 1.06}),
+  );
 
   return (
     <Frame palette={palette}>
