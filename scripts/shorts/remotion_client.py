@@ -56,6 +56,8 @@ COMPOSITIONS: dict[str, tuple[str, tuple[str, ...]]] = {
     "cinematic_chart": ("CinematicChart", ("bars",)),
     "tweet_reveal": ("QuoteCard", ("quote", "author")),
     "lockup": ("Lockup", ("title",)),
+    # The presenter-span bed: one source sentence as a pull-quote.
+    "source_pull": ("SourcePull", ("sentence",)),
 }
 
 

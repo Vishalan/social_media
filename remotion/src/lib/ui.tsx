@@ -111,11 +111,13 @@ export const Words: React.FC<{
   color?: string;
   accent?: string;
   accentFrom?: number;
+  /** [start, end) word indices to accent — a phrase, not a tail. */
+  accentRange?: [number, number];
   from?: number;
   to?: number;
   lineHeight?: number;
   gradient?: [string, string];
-}> = ({text, size, weight = 900, color, accent, accentFrom, from = 0.02, to = 0.66, lineHeight = 1.04, gradient}) => {
+}> = ({text, size, weight = 900, color, accent, accentFrom, accentRange, from = 0.02, to = 0.66, lineHeight = 1.04, gradient}) => {
   const {t, frame, fps, durationInFrames} = useClip();
   const words = text.split(/\s+/).filter(Boolean);
   const slot = (to - from) / Math.max(1, words.length);
@@ -126,7 +128,12 @@ export const Words: React.FC<{
         const start = from + slot * i;
         const p = ramp(t, start, Math.min(to, start + slot * 1.7));
         const sp = settle(frame, fps, Math.round(start * durationInFrames));
-        const isAccent = accent !== undefined && accentFrom !== undefined && i >= accentFrom;
+        // accentRange highlights a PHRASE; accentFrom colours a tail. Using
+        // the tail form for a mid-sentence emphasis painted everything after
+        // it, which defeats the point of having one focal target.
+        const isAccent = accent !== undefined && (
+          accentRange ? i >= accentRange[0] && i < accentRange[1]
+                      : accentFrom !== undefined && i >= accentFrom);
         const grad = gradient && !isAccent;
         return (
           <span

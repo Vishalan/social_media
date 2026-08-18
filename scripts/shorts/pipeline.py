@@ -32,6 +32,12 @@ _SCRIPT_SCHEMA: dict[str, Any] = {
     "properties": {
         "title": {"type": "string"},
         "hook": {"type": "string"},
+        # A platform call-to-action, woven into the narration rather than
+        # bolted on. Empty when the subject genuinely does not support one —
+        # a forced "comment below" on a story with nothing to send costs more
+        # trust than the engagement is worth.
+        "cta": {"type": "string"},
+        "cta_keyword": {"type": "string"},
         "script": {"type": "string"},
         "description": {"type": "string"},
         "visual_identity": {
@@ -80,7 +86,33 @@ SCRIPT RULES
   silence, and that is where a hook lands.
 
 - Write for the ear. Short sentences. No markdown, no emoji, no stage
-  directions, no "link in bio".
+  directions.
+
+RHYTHM — this is what makes narration land, and it is written IN, not added by
+the voice later:
+- Vary sentence length hard. A long sentence, then a three-word one. The short
+  one after a long one IS the beat of silence, and that is where a hook lands.
+- Use direct address. "You" and "your", not "users" and "accounts". The viewer
+  is one person, not an audience.
+- Ask a question the next line answers. That is what stops a scroll mid-video.
+- Front-load the verb. "X just published the code" beats "The code was
+  published by X".
+- Never open a sentence with a subordinate clause. It buries the point past
+  the moment the viewer decides to keep watching.
+
+CALL TO ACTION
+Write ONE call to action into the script, as narration, near the end — after
+the payoff has landed, never before. It must fit the subject. Choose the form
+the story actually supports:
+- "comment <WORD> and I'll send you the link" — only if there is a real link,
+  repo or file to send. Set 'cta_keyword' to that single word.
+- "save this so you can check yours later" — only if the viewer would genuinely
+  come back to it, e.g. a tool or a procedure.
+- "follow for more" — the weakest; use only when nothing more specific fits.
+- "share this with someone who <specific situation>" — name the situation.
+Put the chosen line in 'cta', and include it verbatim as part of 'script'.
+If the subject supports none of these honestly, set 'cta' to an empty string
+and write no call to action at all.
 - NEVER invent or round a figure the source does not state.
 - 'script' is the full voiceover INCLUDING the hook as its first sentence.
 - Use the length for substance: what it is, why it differs from what came

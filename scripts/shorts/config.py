@@ -74,7 +74,11 @@ class ShortsConfig:
     #   500-800 +1.4 dB  fills a 4.6 dB scoop that read as "boxy"
     #   ~1.2k  notched   the nasal honk the owner heard
     #   air    +2.7 dB   dimension and consonants
-    voice_low_shelf_db: float = 7.5
+    # 9.0, up from 7.5. The owner asked for more bass again after hearing the
+    # 7.5 build. The measured shelf response at 7.5 was +5.8 dB in the 60-120
+    # band; this takes it further without touching the nasal notch, which is a
+    # separate filter and was already doing its job.
+    voice_low_shelf_db: float = 9.0
     voice_low_shelf_hz: int = 160
     voice_scoop_fill_db: float = 4.0
     voice_scoop_fill_hz: int = 600

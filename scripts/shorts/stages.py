@@ -20,6 +20,11 @@ from .pipeline import ShortsError, ShortsPipeline
 
 logger = logging.getLogger(__name__)
 
+
+def height_for_panel(cfg) -> int:
+    """Panel height for the active layout."""
+    return cfg.content_height if cfg.layout == "half_stacked" else cfg.height
+
 _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
@@ -662,6 +667,52 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
                      still_panel)
         except ShortsError:
             still_panel = ""
+    # The bed for presenter-led spans: ONE sentence from the source, rendered
+    # as a designed pull-quote.
+    #
+    # It used to be a live crop of a rendered reader page — four paragraphs of
+    # equal-weight body copy at once, clipped top and bottom. Nothing was
+    # emphasised, so nothing was the focal point and there was nowhere for the
+    # eye to land; the paragraph the panel was nominally framing was cut through
+    # the middle of its first line. Same content, but a graphic instead of a
+    # screenshot.
+    bed_clips: list = []
+    n_presenter = sum(1 for sp in spans if sp["mode"] == "presenter")
+    if n_presenter and cfg.fill_gaps_with_pageroll:
+        try:
+            from .sources import pull_sentences
+            from .pageroll import _strip_boilerplate
+            from . import remotion_client
+
+            src_text = Path(cfg.path("source.txt")).read_text()
+            clean = _strip_boilerplate(src_text, script_meta.get("title", ""))
+            attribution = (urllib.parse.urlparse(source_url).netloc
+                           .replace("www.", "") if source_url else "source")
+            pulls = pull_sentences(clean, n_presenter)
+            palette = (script_meta.get("visual_identity") or {}).get("palette") or []
+            bed_dir = os.path.join(cfg.broll_dir, "bed")
+            for k, pull in enumerate(pulls):
+                span = [x for x in spans if x["mode"] == "presenter"][k]
+                out_bed = os.path.join(bed_dir, f"bed_{k:02d}.mp4")
+                try:
+                    remotion_client.render(
+                        kind="source_pull",
+                        props={"sentence": pull["sentence"],
+                               "attribution": attribution,
+                               "emphasis": pull["emphasis"]},
+                        out_path=out_bed,
+                        duration_s=max(2.0, span["end"] - span["start"]),
+                        width=cfg.width, height=height_for_panel(cfg),
+                        fps=cfg.fps, palette=palette)
+                    bed_clips.append(out_bed)
+                except Exception as exc:            # noqa: BLE001 — optional
+                    logger.warning("bed clip %d failed: %s", k, str(exc)[:120])
+            logger.info("Bed: %d source pull-quotes rendered", len(bed_clips))
+        except Exception as exc:                    # noqa: BLE001 — optional
+            logger.warning("pull-quote bed unavailable (%s) — falling back to "
+                           "the page panel", str(exc)[:140])
+
+    bed_i = 0
     parts = []
     for i, sp in enumerate(spans):
         L = sp["end"] - sp["start"]
@@ -687,7 +738,16 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
             # start at different depths so they are not the same view twice.
             # No extra webpage is introduced: the panel was already the page.
             ct = os.path.join(span_dir, f"ct_{i:02d}.mp4")
-            if page_panel_src:
+            if bed_i < len(bed_clips):
+                # A rendered pull-quote is already the panel's exact geometry
+                # and its own animation, so it is looped/trimmed to the span and
+                # used as-is rather than being cropped or drifted.
+                self._sh("ffmpeg", "-v", "error", "-y", "-stream_loop", "-1",
+                         "-i", bed_clips[bed_i], "-t", f"{L:.3f}", "-an",
+                         "-c:v", "libx264", "-crf", "17", "-pix_fmt", "yuv420p",
+                         ct)
+                bed_i += 1
+            elif page_panel_src:
                 ph = cfg.content_height if cfg.layout == "half_stacked" else cfg.height
                 # Frame ON a paragraph and highlight it, advancing to a
                 # different paragraph each time.

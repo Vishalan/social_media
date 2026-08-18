@@ -8,6 +8,7 @@ import {CodeWalkthrough, CodeWalkthroughProps} from './compositions/CodeWalkthro
 import {CinematicChart, CinematicChartProps} from './compositions/CinematicChart';
 import {QuoteCard, QuoteCardProps} from './compositions/QuoteCard';
 import {Lockup, LockupProps} from './compositions/Lockup';
+import {SourcePull, SourcePullProps} from './compositions/SourcePull';
 
 /**
  * Canvas and duration come from input props, not from these defaults.
@@ -151,6 +152,22 @@ export const RemotionRoot: React.FC = () => {
           title: 'Apache v2',
           badge: 'open source license',
           typed: 'The ranking engine code was released on GitHub under the Apache v2 license.',
+        } as any}
+      />
+      <Composition
+        id="SourcePull"
+        component={SourcePull as any}
+        durationInFrames={100}
+        fps={25}
+        width={1080}
+        height={998}
+        calculateMetadata={sized}
+        defaultProps={{
+          ...common,
+          durationInSeconds: 4,
+          sentence: 'X is significantly expanding its open source codebase, which includes the core ranking engine.',
+          attribution: 'techcrunch.com',
+          emphasis: 'core ranking engine',
         } as any}
       />
     </>
