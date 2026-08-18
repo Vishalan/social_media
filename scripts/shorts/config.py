@@ -38,9 +38,11 @@ class ShortsConfig:
     # the library default while exaggeration was tuned alone. They interact:
     # higher exaggeration speeds speech up, lower cfg_weight slows it into
     # something more deliberate.
-    # 0.35, down from 0.5. Lower cfg_weight makes Chatterbox less clipped and
-    # more deliberate, which is the other half of fixing the rushed delivery —
-    # word count sets how much has to be said, this sets how it is said.
+    # 0.35. NOTE: this does NOT control speaking pace, despite an earlier
+    # comment here claiming it made delivery "more deliberate". A sweep across
+    # 0.15-0.35 on the real service moved the measured rate from 3.00 to 2.88
+    # w/s — noise. Pace is handled by _conform_pace's measured time-stretch.
+    # This value is kept for its effect on delivery character, not speed.
     cfg_weight: float = 0.35
     # 0.4. Stock is 0.5 and the deployed service defaults to 0.3. Exaggeration
     # and speed interact: higher values speed the delivery up, so 0.5 was
