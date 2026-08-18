@@ -9,6 +9,7 @@ import {CinematicChart, CinematicChartProps} from './compositions/CinematicChart
 import {QuoteCard, QuoteCardProps} from './compositions/QuoteCard';
 import {Lockup, LockupProps} from './compositions/Lockup';
 import {SourcePull, SourcePullProps} from './compositions/SourcePull';
+import {CtaCard, CtaCardProps} from './compositions/CtaCard';
 
 /**
  * Canvas and duration come from input props, not from these defaults.
@@ -168,6 +169,22 @@ export const RemotionRoot: React.FC = () => {
           sentence: 'X is significantly expanding its open source codebase, which includes the core ranking engine.',
           attribution: 'techcrunch.com',
           emphasis: 'core ranking engine',
+        } as any}
+      />
+      <Composition
+        id="CtaCard"
+        component={CtaCard as any}
+        durationInFrames={100}
+        fps={25}
+        width={1080}
+        height={998}
+        calculateMetadata={sized}
+        defaultProps={{
+          ...common,
+          durationInSeconds: 4,
+          kicker: 'want the link?',
+          keyword: 'ALGORITHM',
+          action: "Comment it and I'll send you the repo",
         } as any}
       />
     </>

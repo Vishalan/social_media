@@ -58,6 +58,8 @@ COMPOSITIONS: dict[str, tuple[str, tuple[str, ...]]] = {
     "lockup": ("Lockup", ("title",)),
     # The presenter-span bed: one source sentence as a pull-quote.
     "source_pull": ("SourcePull", ("sentence",)),
+    # The call to action, placed where it is spoken.
+    "cta": ("CtaCard", ("action",)),
 }
 
 

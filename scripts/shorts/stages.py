@@ -469,6 +469,43 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
                            "slug": b.get("kind") or os.path.basename(b["path"])})
             busy.append((t, t + L))
 
+    # THE CALL TO ACTION gets its own card, placed where it is spoken.
+    #
+    # A keyword CTA that is only spoken is a CTA nobody completes: the viewer
+    # hears "comment ALGORITHM", does not know how it is spelled, and scrolls.
+    # The word has to be on screen while the line is said.
+    cta_text = (script_meta.get("cta") or "").strip()
+    if cta_text:
+        cta_words = [w for w in _norm_words(cta_text)][:4]
+        hit = _find_word_run(words, cta_words)
+        if hit is None:
+            logger.info("CTA %r not found in the narration — no card placed",
+                        cta_text[:48])
+        else:
+            c_start, c_end = hit
+            c_len = max(2.6, c_end - c_start + 1.1)
+            try:
+                from . import remotion_client
+                cta_path = os.path.join(cfg.broll_dir, "cta.mp4")
+                remotion_client.render(
+                    kind="cta",
+                    props={"action": cta_text,
+                           "keyword": (script_meta.get("cta_keyword") or "").strip(),
+                           "kicker": "want the link?"
+                                     if script_meta.get("cta_keyword") else ""},
+                    out_path=cta_path, duration_s=c_len,
+                    width=cfg.width, height=height_for_panel(cfg), fps=cfg.fps,
+                    palette=(script_meta.get("visual_identity") or {}).get("palette") or [])
+                # The CTA outranks whatever else wanted this moment.
+                placed = [q for q in placed
+                          if q["t"] + q["len"] <= c_start or q["t"] >= c_start + c_len]
+                placed.append({"t": max(0.0, c_start - 0.15), "len": c_len,
+                               "path": cta_path, "slug": "cta"})
+                logger.info("CTA card at %.2fs (+%.2fs): %s", c_start, c_len,
+                            cta_text[:60])
+            except Exception as exc:              # noqa: BLE001 — optional
+                logger.warning("CTA card failed: %s", str(exc)[:140])
+
     placed.sort(key=lambda x: x["t"])
     for p in placed:
         logger.info("  content %-26s %6.2fs +%.2fs", p["slug"], p["t"], p["len"])
@@ -1001,3 +1038,27 @@ async def run(cfg: ShortsConfig, source_spec: str, *,
     out = pipe.assemble()
     pipe.make_thumbnail(script)
     return out
+
+
+def _norm_words(text: str) -> list:
+    """Comparison keys for matching a phrase against aligned narration."""
+    import re
+    return [re.sub(r"[^a-z0-9]", "", w.lower())
+            for w in text.split() if re.sub(r"[^a-z0-9]", "", w.lower())]
+
+
+def _find_word_run(words: list, needle: list):
+    """Locate a run of words in the aligned narration; returns (start, end) secs.
+
+    Matched against ALIGNED words, which carry the script's spellings — the CTA
+    keyword is exactly the kind of token ASR mangles, and matching the raw
+    transcript would miss it precisely when it matters most.
+    """
+    if not needle or not words:
+        return None
+    keys = _norm_words(" ".join(w["word"] for w in words))
+    n = len(needle)
+    for i in range(0, max(0, len(keys) - n + 1)):
+        if keys[i:i + n] == needle:
+            return (words[i]["start"], words[min(i + n - 1, len(words) - 1)]["end"])
+    return None
