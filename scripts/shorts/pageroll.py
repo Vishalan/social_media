@@ -327,6 +327,38 @@ _BOILER_PATTERNS = [
 ]
 
 
+# Promotional copy that publishers inline INTO the article body.
+#
+# The reader page is built from the scraped text, so an ad inside that text
+# renders as if it were the story: a build put "Flash Sale - Get $100 off your
+# Disrupt 2026 ticket ... REGISTER NOW." on screen in the owner's video. These
+# are matched per-sentence rather than per-line because the ad arrives mid
+# paragraph, and they are deliberately specific — a broad "money words" filter
+# would eat real reporting about pricing, funding or revenue.
+_PROMO_RE = re.compile(
+    r"(flash sale|register now|save \$\d|\$\d+\s*off\b|get \$\d+\s*off"
+    r"|early bird|use code\b|promo code|limited time offer"
+    r"|subscribe (?:now|today)|sign up (?:now|today)|newsletter"
+    r"|book your (?:seat|ticket)|buy (?:your )?tickets?\b"
+    r"|disrupt \d{4} ticket)",
+    re.I,
+)
+
+
+def _drop_promos(text: str) -> tuple:
+    """Remove sentences that are advertising, not reporting.
+
+    Returns (cleaned_text, dropped_count).
+    """
+    kept, dropped = [], 0
+    for para in text.split("\n"):
+        sentences = re.split(r"(?<=[.!?])\s+", para)
+        good = [x for x in sentences if not _PROMO_RE.search(x)]
+        dropped += len(sentences) - len(good)
+        kept.append(" ".join(good))
+    return "\n".join(kept), dropped
+
+
 def _strip_boilerplate(text: str, title: str) -> str:
     """Remove scraper leftovers so the lead paragraph reads as prose.
 
@@ -338,6 +370,9 @@ def _strip_boilerplate(text: str, title: str) -> str:
     ranking algorithm ... 9:00 AM PDT · August 13, 2026 X is significantly
     expanding ...".
     """
+    text, promos = _drop_promos(text)
+    if promos:
+        logger.info("Reader page: dropped %d promotional sentence(s)", promos)
     for pat in _BOILER_PATTERNS:
         text = pat.sub(" ", text)
     # Drop the LEAD-IN metadata structurally rather than by matching the title.
@@ -354,7 +389,11 @@ def _strip_boilerplate(text: str, title: str) -> str:
     # forward to the first line that looks like prose and start there.
     lines = [ln.strip() for ln in text.splitlines()]
     start = 0
-    for idx, ln in enumerate(lines[:8]):
+    # Scan 24 lines, not 8. A real scrape's lead-in is longer than it looks:
+    # headline, a timer widget rendered as "-:-:-:-", a stray "Close"
+    # button label, blank lines, the duplicated headline and the byline all
+    # arrive before the first sentence of prose.
+    for idx, ln in enumerate(lines[:24]):
         if len(ln) >= 160 and ln.rstrip().endswith((".", "”", '"', "!", "?")):
             start = idx
             break

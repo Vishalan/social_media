@@ -280,7 +280,17 @@ class BrollDirector:
             except Exception:              # noqa: BLE001 — optional capability
                 pass
         if self.source_url:
-            types += ["pageroll", "annotate", "macro"]
+            # `pageroll` is retired from the slate. Its own catalogue entry
+            # called it "the fallback — it always works and is the least
+            # interesting", and it was there when there were few alternatives.
+            # With eight designed compositions there is always something better,
+            # and it carries a real cost: it films the LIVE page, so the last
+            # build put a "Flash Sale — $100 off your Disrupt 2026 ticket"
+            # advert on screen. annotate and macro still use the real page, but
+            # they crop onto a located phrase, so page furniture never enters
+            # frame. The presenter-span bed is a rendered reader page and is
+            # ad-free by construction.
+            types += ["annotate", "macro"]
         # tweet_reveal is offered only when the source plausibly quotes a
         # person; the planner is told never to invent one, and this stops it
         # being tempted.
