@@ -102,8 +102,12 @@ def main() -> int:
     ap.add_argument("--designs", type=int, default=0,
                     help="legacy HyperFrames design graphics (0 = off)")
     ap.add_argument("--no-broll", action="store_true", help="skip stock footage")
-    ap.add_argument("--words", type=int, default=190,
-                    help="minimum script words (190 ~= 60s)")
+    # No default. Passing one here silently overrode the config: --words
+    # defaulted to 190 and main() set target_words_min/max from it, so the
+    # 150-165 ceiling in ShortsConfig never applied at runtime and the
+    # over-length trim pass had nothing to trim. Same trap as --designs.
+    ap.add_argument("--words", type=int, default=None,
+                    help="override the config's minimum script words")
     ap.add_argument("--resume", action="store_true",
                     help="reuse completed stages in the work dir")
     ap.add_argument("--env-file", default="",
@@ -127,9 +131,12 @@ def main() -> int:
         layout=args.layout,
         max_designs=args.designs,
         broll_enabled=not args.no_broll,
-        target_words_min=args.words,
-        target_words_max=args.words + 20,
     )
+    # Only override the word target when the flag was actually given, so the
+    # config stays the single source of truth for pacing.
+    if args.words is not None:
+        cfg.target_words_min = args.words
+        cfg.target_words_max = args.words + 15
 
     spec = args.source
     if args.source_file:

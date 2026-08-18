@@ -177,6 +177,7 @@ class ShortsPipeline:
                                       "schema": _SCRIPT_SCHEMA}},
         )
         data = json.loads(resp.content[0].text)
+        data = await self._trim_to_length(data)
         wc = len(data["script"].split())
         # 2.7 w/s is the measured pace at the current voice settings; the old
         # 3.3 estimate is what made a 207-word script look like a 63s piece
@@ -192,6 +193,70 @@ class ShortsPipeline:
                 "Script is %d words, well under the %d-word target — the piece "
                 "will run short of 60s", wc, self.cfg.target_words_min)
         self._save("script.json", data)
+        return data
+
+    async def _trim_to_length(self, data: dict, *, attempts: int = 2) -> dict:
+        """Cut an over-long script back to the word ceiling.
+
+        Asking for a word range in the prompt is not enough — a run asked for
+        150-165 and came back with 206. That matters more than it looks, because
+        word count is the only lever that controls DURATION: the TTS speaks at a
+        fixed rate, so a long script cannot be fixed downstream. Slowing it to a
+        natural pace turned 206 words into a 74-second piece, which is no longer
+        a short.
+
+        So the ceiling is enforced by a second pass rather than requested. The
+        trim is asked for as an EDIT — keep the hook, keep the re-hooks, drop a
+        supporting point — because a plain "make it shorter" tends to compress
+        every sentence and take the texture out with the length.
+        """
+        cfg = self.cfg
+        for attempt in range(1, attempts + 1):
+            wc = len(data["script"].split())
+            if wc <= cfg.target_words_max:
+                return data
+            logger.info("Script is %d words, over the %d ceiling — trimming "
+                        "(attempt %d/%d)", wc, cfg.target_words_max, attempt,
+                        attempts)
+            try:
+                resp = await self.llm.messages.create(
+                    model="claude-sonnet-4-5", max_tokens=2000,
+                    # Structured output, like every other call here. A plain
+                    # text request made the CLI exit 1 — the client is built
+                    # around a schema and the free-text path is not exercised.
+                    output_config={"format": {"type": "json_schema", "schema": {
+                        "type": "object",
+                        "properties": {"script": {"type": "string"}},
+                        "required": ["script"],
+                    }}},
+                    system=(
+                        "You tighten short-form voiceover scripts. Reply with "
+                        "JSON only."),
+                    messages=[{"role": "user", "content": (
+                        f"This voiceover is {wc} words and must be at most "
+                        f"{cfg.target_words_max} (ideally "
+                        f"{cfg.target_words_min}-{cfg.target_words_max}).\n\n"
+                        "Cut it by REMOVING a supporting point or a redundant "
+                        "clause — not by compressing every sentence, which "
+                        "would flatten the rhythm. Keep the opening hook "
+                        "verbatim. Keep the mid-script turns that re-open a "
+                        "loop. Keep every figure exactly as written. Keep the "
+                        "short punchy sentences that create pauses.\n\n"
+                        f"SCRIPT:\n{data['script']}")}],
+                )
+                trimmed = " ".join(
+                    json.loads(resp.content[0].text)["script"].split())
+            except Exception as exc:              # noqa: BLE001 — optional pass
+                logger.warning("trim failed (%s) — keeping the long script",
+                               str(exc)[:120])
+                return data
+            new_wc = len(trimmed.split())
+            # Guard against a "trim" that returns something useless or longer.
+            if new_wc < cfg.target_words_min * 0.7 or new_wc >= wc:
+                logger.warning("trim returned %d words — rejecting it", new_wc)
+                return data
+            logger.info("Trimmed %d -> %d words", wc, new_wc)
+            data = {**data, "script": trimmed}
         return data
 
     # -- stage 2: voice --------------------------------------------------
@@ -263,6 +328,10 @@ class ShortsPipeline:
         self._sh("ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0",
                  "-i", listing, "-c:a", "pcm_s16le", "-ar", "24000", "-ac", "1", raw)
 
+        # Pace correction, then tone, then loudness — each stage measures what
+        # the previous one produced.
+        raw = self._conform_pace(raw, script)
+
         # Tone shaping runs BEFORE loudnorm, so the measurement sees the audio
         # that will actually ship. EQing after a normalisation pass changes the
         # loudness the pass just set.
@@ -289,6 +358,46 @@ class ShortsPipeline:
                  "-ac", "1", "-ar", "16000", cfg.path("vo_16k.wav"))
         logger.info("Voice: %.2fs mastered to %.1f LUFS", self._dur(master), cfg.lufs_target)
         return master
+
+    def _conform_pace(self, wav: str, text: str) -> str:
+        """Time-stretch the narration to the target speaking pace.
+
+        The delivery measured 3.70 words/sec, against 2.3-2.8 for conversational
+        speech, and the owner heard it as fast-forwarded. Two levers were tried
+        first and neither works:
+
+        * FEWER WORDS does not slow anything down. The TTS speaks at whatever
+          rate it speaks at, so a shorter script just yields a shorter video at
+          the same rushed pace.
+        * cfg_weight was assumed to control deliberateness. A sweep across its
+          useful range moved the pace from 2.88 to 3.00 w/s — noise.
+
+        atempo is the lever that actually lands a pace, and it preserves pitch.
+        The stretch is computed from the MEASURED rate of this take rather than
+        a constant, so it self-corrects if the voice settings change, and it is
+        clamped: never faster than 1.0, never slower than the floor, because
+        past roughly 0.85 consonants start to smear.
+        """
+        cfg = self.cfg
+        words = len(text.split())
+        dur = self._dur(wav)
+        if not words or dur <= 0:
+            return wav
+        rate = words / dur
+        factor = cfg.speech_rate_target / rate
+        if factor >= 0.99:
+            logger.info("Pace %.2f w/s already at or under target %.2f — no "
+                        "stretch", rate, cfg.speech_rate_target)
+            return wav
+        clamped = max(cfg.speech_atempo_floor, factor)
+        out = cfg.path("vo_paced.wav")
+        self._sh("ffmpeg", "-v", "error", "-y", "-i", wav,
+                 "-filter:a", f"atempo={clamped:.4f}", out)
+        logger.info("Pace %.2f w/s -> target %.2f: atempo=%.3f%s (%.1fs -> %.1fs)",
+                    rate, cfg.speech_rate_target, clamped,
+                    " [clamped at floor]" if clamped > factor else "",
+                    dur, self._dur(out))
+        return out
 
     def _voice_tone_chain(self) -> str:
         """FFmpeg filters that give the voice body, or "" when disabled.

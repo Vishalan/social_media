@@ -62,6 +62,18 @@ class ShortsConfig:
     #   presence    +2.0 dB @ 4.5 kHz — consonant clarity, so added low end does
     #                                   not cost intelligibility
     # Gentle compression after EQ evens the delivery without pumping.
+    # Target speaking pace, words per second, enforced by time-stretching the
+    # finished narration.
+    #
+    # This is measured, not assumed. A parameter sweep on the TTS service found
+    # cfg_weight barely moves pace at all — 2.88 to 3.00 w/s across its whole
+    # useful range — so the knob I expected to control this does not. The full
+    # script delivers at ~3.28 w/s. A small atempo stretch is the only lever
+    # that reliably lands a pace, and it preserves pitch.
+    speech_rate_target: float = 2.72
+    # Never stretch further than this: beyond ~0.85 atempo starts to smear
+    # consonants, and a slurred voice is worse than a slightly quick one.
+    speech_atempo_floor: float = 0.85
     voice_eq_enabled: bool = True
     voice_low_shelf_db: float = 3.5
     voice_low_shelf_hz: int = 110
