@@ -44,10 +44,44 @@ class ShortsConfig:
     # w/s — noise. Pace is handled by _conform_pace's measured time-stretch.
     # This value is kept for its effect on delivery character, not speed.
     cfg_weight: float = 0.35
-    # 0.4. Stock is 0.5 and the deployed service defaults to 0.3. Exaggeration
-    # and speed interact: higher values speed the delivery up, so 0.5 was
-    # compounding the rushed feel. 0.4 keeps expression without the hurry.
-    exaggeration: float = 0.4
+    # Baseline for body sentences. Hook and turn sentences get more — see
+    # rhythm_* below. A single flat value across the whole script is what made
+    # the delivery monotone: every sentence performed identically.
+    exaggeration: float = 0.45
+
+    # --- speech rhythm --------------------------------------------------
+    # Short-form attention rhythm: the hook is performed, the body moves, and a
+    # beat of silence lands before a turn. Synthesising the whole script in one
+    # pass gives none of that — every sentence gets the same energy and the same
+    # gap, which is the definition of monotone.
+    #
+    # So each SENTENCE is synthesised separately with its own expression, and
+    # the gaps between them are set deliberately. The cost is ~15 TTS calls
+    # instead of 4, which is seconds on this hardware.
+    rhythm_enabled: bool = True
+    exaggeration_hook: float = 0.7      # first line: sell it
+    exaggeration_turn: float = 0.62     # "but here's the part that matters"
+    exaggeration_payoff: float = 0.6    # last line: land it
+    pause_after_hook_s: float = 0.30    # let the hook breathe before the body
+    pause_before_turn_s: float = 0.26   # the beat that makes a turn land
+    pause_between_s: float = 0.10       # ordinary sentence gap, kept tight
+    pause_before_payoff_s: float = 0.22
+
+    # Voice tone, tuned against MEASURED filter response on white noise rather
+    # than by ear or by assumption. Target shape, achieved:
+    #   bass   +5.8 dB   a real low shelf, for the body that was missing
+    #   chest  +2.8 dB
+    #   500-800 +1.4 dB  fills a 4.6 dB scoop that read as "boxy"
+    #   ~1.2k  notched   the nasal honk the owner heard
+    #   air    +2.7 dB   dimension and consonants
+    voice_low_shelf_db: float = 7.5
+    voice_low_shelf_hz: int = 160
+    voice_scoop_fill_db: float = 4.0
+    voice_scoop_fill_hz: int = 600
+    voice_nasal_cut_db: float = -8.0
+    voice_nasal_hz: int = 1200
+    voice_air_db: float = 4.0
+    voice_air_hz: int = 6500
     # chatterbox/tts.py:249 hardcodes max_new_tokens=1000 == ~40s of audio.
     # Anything longer is silently truncated mid-sentence unless chunked.
     tts_max_chars_per_chunk: int = 380
@@ -57,32 +91,20 @@ class ShortsConfig:
     true_peak_db: float = -1.0
     highpass_hz: int = 70
 
-    # Voice tone. Chatterbox output is thin and slightly boxy on this reference,
-    # so the chain adds weight without muddying it:
-    #   low shelf   +3.5 dB @ 110 Hz  — chest and body
-    #   bell        -2.5 dB @ 320 Hz  — the "box" that makes weight sound muddy
-    #   presence    +2.0 dB @ 4.5 kHz — consonant clarity, so added low end does
-    #                                   not cost intelligibility
-    # Gentle compression after EQ evens the delivery without pumping.
+    # Master switch for the tone chain above.
+    voice_eq_enabled: bool = True
+
     # Target speaking pace, words per second, enforced by time-stretching the
     # finished narration.
     #
-    # This is measured, not assumed. A parameter sweep on the TTS service found
-    # cfg_weight barely moves pace at all — 2.88 to 3.00 w/s across its whole
-    # useful range — so the knob I expected to control this does not. The full
-    # script delivers at ~3.28 w/s. A small atempo stretch is the only lever
-    # that reliably lands a pace, and it preserves pitch.
-    speech_rate_target: float = 2.72
+    # Measured, not assumed. A parameter sweep found cfg_weight barely moves
+    # pace at all — 2.88 to 3.00 w/s across its whole useful range — so the knob
+    # that looks like it should control this does not. A small atempo stretch is
+    # the only lever that reliably lands a pace, and it preserves pitch.
+    speech_rate_target: float = 3.25
     # Never stretch further than this: beyond ~0.85 atempo starts to smear
     # consonants, and a slurred voice is worse than a slightly quick one.
     speech_atempo_floor: float = 0.85
-    voice_eq_enabled: bool = True
-    voice_low_shelf_db: float = 3.5
-    voice_low_shelf_hz: int = 110
-    voice_mud_cut_db: float = -2.5
-    voice_mud_hz: int = 320
-    voice_presence_db: float = 2.0
-    voice_presence_hz: int = 4500
 
     # --- avatar ---------------------------------------------------------
     latentsync_endpoint: str = "http://172.18.0.7:7778"

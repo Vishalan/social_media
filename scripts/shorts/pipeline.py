@@ -304,23 +304,36 @@ class ShortsPipeline:
             logger.info("vo_master.wav exists — reusing")
             return master
 
-        chunks = self.chunk_text(script, cfg.tts_max_chars_per_chunk)
-        logger.info("TTS: %d chars in %d chunk(s)", len(script), len(chunks))
+        if cfg.rhythm_enabled:
+            takes = self._plan_rhythm(script)
+        else:
+            takes = [(c, cfg.exaggeration, 0.0)
+                     for c in self.chunk_text(script, cfg.tts_max_chars_per_chunk)]
+        logger.info("TTS: %d chars in %d take(s)%s", len(script), len(takes),
+                    " with rhythm" if cfg.rhythm_enabled else "")
+
         parts = []
-        for i, c in enumerate(chunks):
-            self._post(f"{cfg.chatterbox_endpoint}/tts", {
-                "text": c, "reference_audio_path": cfg.voice_ref,
-                "exaggeration": cfg.exaggeration,
-                "cfg_weight": cfg.cfg_weight,
-                "output_filename": f"{cfg.run_id}_c{i}.wav",
-            })
-            local = cfg.path(f"chunk{i}.wav")
-            self._sh("docker", "cp",
-                     f"commoncreed_chatterbox:/app/output/{cfg.run_id}_c{i}.wav", local)
-            d = self._dur(local)
-            if d >= 39.9:
-                logger.warning("chunk%d is %.2fs — at the ~40s cap, split further", i, d)
-            parts.append(local)
+        for i, (text_i, exaggeration, gap) in enumerate(takes):
+            # A sentence can still exceed the ~40s token cap on its own, so the
+            # chunker stays in the loop as a guard rather than being replaced.
+            for j, piece in enumerate(
+                    self.chunk_text(text_i, cfg.tts_max_chars_per_chunk)):
+                name = f"{cfg.run_id}_c{i}_{j}"
+                self._post(f"{cfg.chatterbox_endpoint}/tts", {
+                    "text": piece, "reference_audio_path": cfg.voice_ref,
+                    "exaggeration": exaggeration,
+                    "cfg_weight": cfg.cfg_weight,
+                    "output_filename": f"{name}.wav",
+                })
+                local = cfg.path(f"chunk{i}_{j}.wav")
+                self._sh("docker", "cp",
+                         f"commoncreed_chatterbox:/app/output/{name}.wav", local)
+                d = self._dur(local)
+                if d >= 39.9:
+                    logger.warning("take %d.%d is %.2fs — at the ~40s cap", i, j, d)
+                parts.append(local)
+            if gap > 0.01:
+                parts.append(self._silence(gap, cfg.path(f"gap{i}.wav")))
 
         listing = cfg.path("vo_concat.txt")
         Path(listing).write_text("".join(f"file '{p}'\n" for p in parts))
@@ -399,38 +412,140 @@ class ShortsPipeline:
                     dur, self._dur(out))
         return out
 
+    # Sentences that re-open a loop. A beat of silence BEFORE one of these is
+    # what makes a turn land; without it the script reads as a flat list of
+    # facts, which is what "boring" meant.
+    _TURN_STARTS = (
+        "but ", "and here", "here's", "now ", "so ", "except", "then ",
+        "turns out", "the catch", "except ", "yet ", "still ",
+    )
+
+    def _plan_rhythm(self, script: str) -> list:
+        """Split the script into sentences, each with its own energy and gap.
+
+        Short-form delivery is not one performance at one pace — it is a hook
+        that is SOLD, a body that MOVES, and a beat of silence before the turn.
+        Synthesising the whole script in a single pass gives every sentence
+        identical expression and identical spacing, which is the mechanical
+        definition of monotone and is what the owner heard as boring.
+
+        Returns [(text, exaggeration, gap_after_seconds), ...].
+        """
+        cfg = self.cfg
+        sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+", script.strip()) if x.strip()]
+        if not sentences:
+            return []
+        plan = []
+        for i, sent in enumerate(sentences):
+            first, last = i == 0, i == len(sentences) - 1
+            nxt = sentences[i + 1].lower() if i + 1 < len(sentences) else ""
+            is_turn_next = any(nxt.startswith(t) for t in self._TURN_STARTS)
+
+            if first:
+                ex, gap = cfg.exaggeration_hook, cfg.pause_after_hook_s
+            elif last:
+                ex, gap = cfg.exaggeration_payoff, 0.0
+            elif any(sent.lower().startswith(t) for t in self._TURN_STARTS):
+                ex, gap = cfg.exaggeration_turn, cfg.pause_between_s
+            else:
+                ex, gap = cfg.exaggeration, cfg.pause_between_s
+
+            # The pause goes BEFORE the turn, so it is applied as the gap after
+            # whatever precedes it.
+            if is_turn_next:
+                gap = max(gap, cfg.pause_before_turn_s)
+            if i + 1 == len(sentences) - 1:
+                gap = max(gap, cfg.pause_before_payoff_s)
+            plan.append((sent, ex, gap))
+        return plan
+
+    def _silence(self, seconds: float, path: str) -> str:
+        """A mono silence file at the TTS sample rate, for use between takes."""
+        self._sh("ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+                 "-i", f"anullsrc=r=24000:cl=mono", "-t", f"{seconds:.3f}",
+                 "-c:a", "pcm_s16le", path)
+        return path
+
     def _voice_tone_chain(self) -> str:
-        """FFmpeg filters that give the voice body, or "" when disabled.
+        """FFmpeg filters that give the voice body and take the nose out of it.
 
-        The owner's cloned voice comes back thin and slightly boxy from
-        Chatterbox. Three moves, in the order a mix engineer would make them:
+        Every value here was tuned against the MEASURED response of the chain on
+        white noise, not by ear and not by assumption. That mattered, because
+        the previous version was built on a wrong one: ffmpeg's `equalizer` is a
+        PEAKING filter, always. The filter documented here as a "low shelf at
+        110 Hz" was a narrow bell, so it never built any low-end foundation —
+        which is exactly the "no bass, sounds nasal" the owner reported.
 
-          low shelf  +3.5 dB @ 110 Hz  chest and weight
-          bell       -2.5 dB @ 320 Hz  the boxiness that makes added low end
-                                       read as mud rather than depth
-          presence   +2.0 dB @ 4.5 kHz consonants, so the extra body does not
-                                       cost intelligibility
+        The measured spectrum of the old master explains the complaint precisely:
+        warmth (250-500) peaked at -18.5 dB, then a 4.6 dB SCOOP at 500-800 with
+        a flat plateau above it, and bass sitting 5 dB below warmth. A scooped
+        low-mid under a plateau is the textbook boxy-nasal profile, with no
+        bottom to anchor it.
 
-        A gentle 2.5:1 compressor follows to even out the delivery. It sits
-        BEFORE loudnorm deliberately: loudnorm measures what it is given, so
-        compressing afterwards would undo the loudness it just set.
+        Four moves, and their measured effect on band balance:
 
-        Returns a filter string with a trailing comma so it can be spliced into
-        a chain, or an empty string so the chain is unchanged when disabled.
+          bass= shelf     +5.8 dB   an actual shelf this time, not a bell
+          bell @ 600      +1.4 dB   fills the scoop, restoring chest-to-throat
+          bell @ 1200     notched   the honk itself, narrow so it does not
+                                    re-open the scoop underneath it
+          treble= shelf   +2.7 dB   air, so added weight does not read as dull
+
+        The nasal notch is deliberately NARROW (Q 2.6). A wider one measured
+        better on paper and took the 500-800 fill with it, which is the balance
+        that makes a voice sound nasal in the first place.
         """
         cfg = self.cfg
         if not cfg.voice_eq_enabled:
             return ""
         return (
-            f"equalizer=f={cfg.voice_low_shelf_hz}:t=q:w=0.8:"
-            f"g={cfg.voice_low_shelf_db},"
-            f"equalizer=f={cfg.voice_mud_hz}:t=q:w=1.2:g={cfg.voice_mud_cut_db},"
-            f"equalizer=f={cfg.voice_presence_hz}:t=q:w=1.0:"
-            f"g={cfg.voice_presence_db},"
+            f"bass=g={cfg.voice_low_shelf_db}:f={cfg.voice_low_shelf_hz}:w=0.55,"
+            f"equalizer=f={cfg.voice_scoop_fill_hz}:t=q:w=1.6:"
+            f"g={cfg.voice_scoop_fill_db},"
+            f"equalizer=f={cfg.voice_nasal_hz}:t=q:w=2.6:g={cfg.voice_nasal_cut_db},"
+            f"treble=g={cfg.voice_air_db}:f={cfg.voice_air_hz}:w=0.6,"
             "acompressor=threshold=-18dB:ratio=2.5:attack=12:release=180:makeup=2,"
         )
 
-    # -- stage 3: timings + captions ------------------------------------
+    def _conform_pace(self, wav: str, text: str) -> str:
+        """Time-stretch the narration to the target speaking pace.
+
+        The delivery measured 3.70 words/sec, against 2.3-2.8 for conversational
+        speech, and the owner heard it as fast-forwarded. Two levers were tried
+        first and neither works:
+
+        * FEWER WORDS does not slow anything down. The TTS speaks at whatever
+          rate it speaks at, so a shorter script just yields a shorter video at
+          the same rushed pace.
+        * cfg_weight was assumed to control deliberateness. A sweep across its
+          useful range moved the pace from 2.88 to 3.00 w/s — noise.
+
+        atempo is the lever that actually lands a pace, and it preserves pitch.
+        The stretch is computed from the MEASURED rate of this take rather than
+        a constant, so it self-corrects if the voice settings change, and it is
+        clamped: never faster than 1.0, never slower than the floor, because
+        past roughly 0.85 consonants start to smear.
+        """
+        cfg = self.cfg
+        words = len(text.split())
+        dur = self._dur(wav)
+        if not words or dur <= 0:
+            return wav
+        rate = words / dur
+        factor = cfg.speech_rate_target / rate
+        if factor >= 0.99:
+            logger.info("Pace %.2f w/s already at or under target %.2f — no "
+                        "stretch", rate, cfg.speech_rate_target)
+            return wav
+        clamped = max(cfg.speech_atempo_floor, factor)
+        out = cfg.path("vo_paced.wav")
+        self._sh("ffmpeg", "-v", "error", "-y", "-i", wav,
+                 "-filter:a", f"atempo={clamped:.4f}", out)
+        logger.info("Pace %.2f w/s -> target %.2f: atempo=%.3f%s (%.1fs -> %.1fs)",
+                    rate, cfg.speech_rate_target, clamped,
+                    " [clamped at floor]" if clamped > factor else "",
+                    dur, self._dur(out))
+        return out
+
     def transcribe_and_align(self, script: str, *, force: bool = False) -> dict:
         cfg = self.cfg
         if self._done("captions.json") and not force:
