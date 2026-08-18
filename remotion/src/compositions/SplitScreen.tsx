@@ -34,11 +34,11 @@ export const SplitScreen: React.FC<SplitScreenProps> = ({palette, kicker, left, 
     fitWrapped(left.value, ty.hero * 1.05, colW * 0.86),
     fitWrapped(right.value, ty.hero * 1.05, colW * 0.86),
   );
-  const divider = ramp(t, 0.18, 0.8);
+  const divider = ramp(t, 0.14, 0.5);
 
   const Col: React.FC<{d: {label: string; value: string}; delay: number; tint: string; tone: 'neutral' | 'accent'}> =
     ({d, delay, tint, tone}) => {
-      const p = ramp(t, delay, delay + 0.34);
+      const p = ramp(t, delay, delay + 0.22);
       const sp = pop(frame, fps, Math.round(delay * durationInFrames));
       return (
         <Card
@@ -86,7 +86,7 @@ export const SplitScreen: React.FC<SplitScreenProps> = ({palette, kicker, left, 
     <Frame palette={palette}>
       {kicker ? <Kicker text={kicker} palette={palette} /> : null}
       <div style={{display: 'flex', width: '100%', alignItems: 'stretch', gap: s.gap * 0.5}}>
-        <Col d={left} delay={0.04} tint={`${ink}99`} tone="neutral" />
+        <Col d={left} delay={0.03} tint={`${ink}99`} tone="neutral" />
         <div
           style={{
             width: 4,
@@ -97,7 +97,7 @@ export const SplitScreen: React.FC<SplitScreenProps> = ({palette, kicker, left, 
             boxShadow: `0 0 ${height * 0.03}px ${acc}88`,
           }}
         />
-        <Col d={right} delay={0.26} tint={acc} tone="accent" />
+        <Col d={right} delay={0.18} tint={acc} tone="accent" />
       </div>
     </Frame>
   );

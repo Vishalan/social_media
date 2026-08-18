@@ -192,7 +192,12 @@ class ShortsConfig:
     # takes ~3 SECONDS, which removes the constraint entirely — and density was
     # always the honest fix for the reader-page bed filling half the video with
     # small body text.
-    broll_cadence_s: float = 3.2
+    # 5.0s, up from 3.2. Clip length is now derived from how much text the card
+    # carries, and readable cards are 3-7s rather than 2.6s — so planning a beat
+    # every 3.2s would queue up far more graphic than the video has room for.
+    # Cadence and duration have to agree, and READABILITY wins: fewer graphics
+    # that can actually be read beats more that cannot.
+    broll_cadence_s: float = 6.5
     # Generated cinematic footage is OFF, on measured quality rather than on
     # principle. LTX-Video 2B installs and runs on this 3090 — 80-98s for a 3s
     # clip at 1080x998, which would be affordable — but the output is unusable:
@@ -210,7 +215,11 @@ class ShortsConfig:
     # a render, so this bounds the per-video cost, not the aesthetics.
     # 14 designed clips is roughly 45s of rendering, against about 2.5 hours
     # through the old path. The cap now bounds the PLAN, not the clock.
-    broll_max_designed: int = 14
+    # 7, down from 14. Same reason, and the count is now bounded from BOTH
+    # sides: at 3-7s each, 9 clips covered 95% of the video and the presenter
+    # effectively disappeared. This is a channel fronted by a person — the
+    # graphics support the face, they do not replace it. 7 lands near 70%.
+    broll_max_designed: int = 7
     # The real anti-repetition rule, replacing the old total cap: no single
     # graphic type more than twice per video. Page footage shown twice is
     # evidence; shown five times it becomes the subject.

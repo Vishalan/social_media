@@ -37,7 +37,7 @@ export const Mechanism: React.FC<MechanismProps> = ({palette, title, steps, resu
   const rowsH = budget - resultH - s.gap * (n + 1);
   const rowH = rowsH / Math.max(1, n);
   const fontSize = Math.max(ty.floor, Math.min(ty.body, rowH * 0.3));
-  const window = 0.62 / Math.max(1, n);
+  const window = 0.40 / Math.max(1, n);
 
   return (
     <Frame palette={palette}>
@@ -99,7 +99,7 @@ export const Mechanism: React.FC<MechanismProps> = ({palette, title, steps, resu
       </div>
 
       {result ? (
-        <div style={{marginTop: s.gap * 0.9, width: '100%', clipPath: wipe(ramp(t, 0.7, 0.9))}}>
+        <div style={{marginTop: s.gap * 0.9, width: '100%', clipPath: wipe(ramp(t, 0.44, 0.6))}}>
           <div
             style={{
               background: `linear-gradient(120deg, ${acc}, ${acc2})`,

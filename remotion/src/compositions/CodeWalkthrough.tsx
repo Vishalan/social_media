@@ -65,7 +65,7 @@ export const CodeWalkthrough: React.FC<CodeWalkthroughProps> = ({
         </div>
         <div style={{padding: size, display: 'flex', flexDirection: 'column', gap: size * 0.42}}>
           {shown.map((line, i) => {
-            const p = stagger(t, i, n, {from: 0.08, to: 0.7});
+            const p = stagger(t, i, n, {from: 0.06, to: 0.48});
             const add = line.startsWith('+');
             const del = line.startsWith('-');
             return (
@@ -99,7 +99,7 @@ export const CodeWalkthrough: React.FC<CodeWalkthroughProps> = ({
             marginTop: s.gap * 0.8,
             fontSize: Math.max(ty.floor, ty.body * 0.92),
             fontWeight: 700,
-            opacity: at(t, 0.72, 0.92),
+            opacity: at(t, 0.5, 0.66),
           }}
         >
           {caption}

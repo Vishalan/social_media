@@ -25,7 +25,7 @@ export const QuoteCard: React.FC<QuoteCardProps> = ({palette, quote, author, rol
   const size = fitWrapped(quote, byCount, width - spacing(height).pad * 2, 700, '0em');
   const acc2 = accent2Of(palette);
   const pMark = ramp(t, 0, 0.12);
-  const pAuthor = ramp(t, 0.62, 0.86);
+  const pAuthor = ramp(t, 0.46, 0.64);
 
   return (
     <Frame palette={palette} >
@@ -52,7 +52,7 @@ export const QuoteCard: React.FC<QuoteCardProps> = ({palette, quote, author, rol
         }}
       >
         {words.map((w, i) => {
-          const slot = (0.62 - 0.03) / words.length;
+          const slot = (0.44 - 0.03) / words.length;
           const p = ramp(t, 0.03 + slot * i, 0.03 + slot * (i + 1.7));
           return (
             <span

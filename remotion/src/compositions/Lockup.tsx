@@ -30,12 +30,12 @@ export const Lockup: React.FC<LockupProps> = ({palette, kicker, title, badge, ty
   const ink = inkOf(palette);
 
   const titleSize = fitWrapped(title, ty.solo * 0.62, width - s.pad * 2, 900, '-0.04em');
-  const pTitle = ramp(t, 0.02, 0.38);
+  const pTitle = ramp(t, 0.02, 0.28);
   const spTitle = settle(frame, fps, 0);
-  const pBadge = ramp(t, 0.3, 0.52);
+  const pBadge = ramp(t, 0.22, 0.38);
   const spBadge = pop(frame, fps, Math.round(0.3 * fps * 2));
   // Deliberately still typing at 92% of the clip.
-  const chars = typed ? Math.floor(typed.length * ramp(t, 0.4, 0.92)) : 0;
+  const chars = typed ? Math.floor(typed.length * ramp(t, 0.3, 0.8)) : 0;
 
   return (
     <Frame palette={palette}>

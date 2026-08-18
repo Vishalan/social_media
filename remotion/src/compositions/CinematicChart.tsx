@@ -32,7 +32,7 @@ export const CinematicChart: React.FC<CinematicChartProps> = ({palette, kicker, 
           // Bars grow until 0.88 rather than the default 0.72. A chart has no
           // secondary motion to fall back on once the bars land, and stopping
           // at 0.72 left 21% of the clip visually static.
-          const p = stagger(t, i, shown.length, {from: 0.1, to: 0.88});
+          const p = stagger(t, i, shown.length, {from: 0.08, to: 0.6});
           const isMax = b.value === max;
           return (
             <div key={i} style={{display: 'flex', flexDirection: 'column', gap: size * 0.3}}>

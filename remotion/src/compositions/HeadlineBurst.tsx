@@ -47,13 +47,13 @@ export const HeadlineBurst: React.FC<HeadlineBurstProps> = ({
         accent={acc}
         accentFrom={accentFrom}
         from={0.02}
-        to={0.64}
+        to={0.42}
       />
       <div style={{display: 'flex', width: '100%', alignItems: 'flex-end', marginTop: height * 0.022}}>
         <div
           style={{
             height: height * 0.014,
-            width: `${18 + 44 * ramp(t, 0.25, 0.97)}%`,
+            width: `${18 + 44 * ramp(t, 0.2, 0.6)}%`,
             background: `linear-gradient(90deg, ${acc}, ${acc2})`,
             borderRadius: 99,
             boxShadow: `0 0 ${height * 0.045}px ${acc}66`,
@@ -67,7 +67,7 @@ export const HeadlineBurst: React.FC<HeadlineBurstProps> = ({
             marginTop: height * 0.03,
             fontSize: ty.body,
             fontWeight: 600,
-            opacity: 0.88 * ramp(t, 0.58, 0.84),
+            opacity: 0.88 * ramp(t, 0.4, 0.56),
             maxWidth: '92%',
             lineHeight: 1.25,
           }}

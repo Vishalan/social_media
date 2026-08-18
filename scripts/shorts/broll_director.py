@@ -229,8 +229,10 @@ class BrollDirector:
     # Types whose whole point is a sequential build need time for it. A 2.6s
     # mechanism clip spent its first second on a bare title, because the flow
     # had not started yet — a third of the clip was empty.
-    MIN_DURATION = {"mechanism": 4.5, "split_screen": 4.0,
-                    "cinematic_chart": 4.0, "code_walkthrough": 4.0}
+    # Superseded by _DURATION_BOUNDS, which sets a floor AND a ceiling per type
+    # from the card's own content. Kept only so a kind absent from the bounds
+    # table still gets a sane minimum.
+    MIN_DURATION: dict = {}
 
     def __init__(self, *, intelligence: Any, work_dir: str,
                  width: int = 1080, height: int = 998, fps: int = 25,
@@ -370,12 +372,17 @@ class BrollDirector:
                 continue
             used_kind[kind] = used_kind.get(kind, 0) + 1
             used_beat.add(b)
-            dur = max(beats[b]["duration"], self.MIN_DURATION.get(kind, 0.0))
-            slots.append(Slot(
+            slot = Slot(
                 index=len(slots), kind=kind, start=beats[b]["start"],
-                duration=dur, narration=beats[b]["narration"],
+                duration=beats[b]["duration"], narration=beats[b]["narration"],
                 payload=item.get("payload") or {}, why=str(item.get("why", ""))[:220],
-            ))
+            )
+            # Length is a function of what is ON the card, not of the cadence
+            # slot it happens to land in. A four-word headline and a
+            # twenty-five-word quote used to get the same 2.6s.
+            slot.duration = max(readable_duration(kind, _props_for(slot)),
+                                self.MIN_DURATION.get(kind, 0.0))
+            slots.append(slot)
 
         if not slots:
             raise DirectorError("planner returned no usable slots")
@@ -771,13 +778,15 @@ def _props_for(slot: "Slot") -> dict:
 
     if k == "stats_card":
         return {
-            "value": _clean(p.get("value"), 24),
-            "support": _clean(p.get("label") or p.get("support"), 90),
+            "value": _cap_words(_clean(p.get("value"), 40), _WORD_CAPS["value"]),
+            "support": _cap_words(_clean(p.get("label") or p.get("support"), 120),
+                                  _WORD_CAPS["support"]),
             "kicker": _clean(p.get("kicker"), 28),
         }
 
     if k == "headline_burst":
-        text = _clean(p.get("text") or p.get("headline"), 120)
+        text = _cap_words(_clean(p.get("text") or p.get("headline"), 160),
+                          _WORD_CAPS["headline"])
         words = text.split()
         return {
             "headline": text,
@@ -791,8 +800,10 @@ def _props_for(slot: "Slot") -> dict:
     if k == "mechanism":
         return {
             "title": _clean(p.get("title") or p.get("label"), 60),
-            "steps": [_clean(x, 60) for x in (p.get("steps") or []) if _clean(x)],
-            "result": _clean(p.get("result") or p.get("output"), 70),
+            "steps": [_cap_words(_clean(x, 80), _WORD_CAPS["step"])
+                      for x in (p.get("steps") or []) if _clean(x)],
+            "result": _cap_words(_clean(p.get("result") or p.get("output"), 90),
+                                 _WORD_CAPS["result"]),
         }
 
     if k == "split_screen":
@@ -800,7 +811,7 @@ def _props_for(slot: "Slot") -> dict:
             lines = p.get(lines_key) or []
             first = lines[0] if lines else p.get(value_key)
             return {"label": _clean(p.get(title_key) or default, 24),
-                    "value": _clean(first, 60)}
+                    "value": _cap_words(_clean(first, 80), _WORD_CAPS["value"])}
         return {
             "kicker": _clean(p.get("kicker") or p.get("title"), 28),
             "left": side("left_title", "left_lines", "left_value", "Before"),
@@ -811,7 +822,8 @@ def _props_for(slot: "Slot") -> dict:
         return {
             "filename": _clean(p.get("filename") or p.get("language"), 40),
             "lines": [_clean(x, 52) for x in (p.get("lines") or []) if _clean(x)],
-            "caption": _clean(p.get("caption") or p.get("label"), 70),
+            "caption": _cap_words(_clean(p.get("caption") or p.get("label"), 90),
+                                  _WORD_CAPS["caption"]),
         }
 
     if k == "cinematic_chart":
@@ -833,7 +845,8 @@ def _props_for(slot: "Slot") -> dict:
 
     if k == "tweet_reveal":
         return {
-            "quote": _clean(p.get("body") or p.get("quote"), 200),
+            "quote": _cap_words(_clean(p.get("body") or p.get("quote"), 260),
+                                _WORD_CAPS["quote"]),
             "author": _clean(p.get("author"), 40),
             "role": _clean(p.get("role") or p.get("handle"), 40),
         }
@@ -842,6 +855,106 @@ def _props_for(slot: "Slot") -> dict:
     return {
         "title": _clean(p.get("title") or p.get("value") or slot.kind, 32),
         "badge": _clean(p.get("badge") or p.get("label"), 34),
-        "typed": _clean(p.get("typed") or p.get("support") or slot.narration, 190),
+        "typed": _cap_words(
+            _clean(p.get("typed") or p.get("support") or slot.narration, 240),
+            _WORD_CAPS["typed"]),
         "kicker": _clean(p.get("kicker"), 28),
     }
+
+
+# ------------------------------------------------------- readable duration
+# On-screen reading rate, words per second.
+#
+# Silent reading of body text runs 3.3-5 w/s. Large display type in short
+# bursts sits at the top of that, and the narration is speaking the same idea
+# underneath, which aids comprehension. 4.0 is deliberately at the confident
+# end: over-long clips cost cadence, and the narration keeps the viewer moving.
+_READ_RATE = 4.0
+# Time to notice a cut and orient before any reading starts.
+_RECOGNITION_S = 0.5
+# A beat of held frame after the last word is read, so the cut does not clip
+# the end of a sentence.
+_TAIL_S = 0.7
+
+# Per type: (minimum, maximum) seconds. The maximum matters as much as the
+# minimum — a mechanism with four steps computes past 8s, which is a sixth of
+# the whole video on one graphic.
+_DURATION_BOUNDS: dict[str, tuple] = {
+    "stats_card": (3.0, 5.0),
+    "headline_burst": (2.8, 5.0),
+    "lockup": (3.5, 6.5),
+    "mechanism": (5.0, 7.5),
+    "split_screen": (4.0, 6.5),
+    "tweet_reveal": (4.0, 7.0),
+    "code_walkthrough": (4.5, 7.0),
+    "cinematic_chart": (4.0, 6.0),
+    "annotate": (3.0, 5.0),
+    "macro": (2.6, 4.5),
+    "pageroll": (2.6, 4.0),
+    "ai_video": (3.0, 5.0),
+}
+
+# The most words a card may carry, per type. Enforced when building props.
+#
+# This is the half of the fix that duration cannot do. A 25-word quote is bad
+# design at ANY length: past roughly 16 words a card stops being a graphic and
+# becomes a paragraph, and the answer is to cut the sentence, not to hold it on
+# screen for nine seconds.
+_WORD_CAPS: dict[str, int] = {
+    "headline": 9,
+    "quote": 16,
+    "typed": 16,
+    "support": 9,
+    "step": 6,
+    "result": 8,
+    "value": 6,
+    "caption": 8,
+}
+
+
+def _cap_words(text: str, limit: int) -> str:
+    """Trim to a word limit at a word boundary, without a trailing comma."""
+    words = str(text or "").split()
+    if len(words) <= limit:
+        return " ".join(words)
+    return " ".join(words[:limit]).rstrip(",;:—-") + "…"
+
+
+def _visible_words(kind: str, props: dict) -> int:
+    """How many words the finished card actually puts on screen."""
+    def n(x: Any) -> int:
+        return len(str(x or "").split())
+
+    if kind == "mechanism":
+        return (n(props.get("title")) + n(props.get("result"))
+                + sum(n(s) for s in props.get("steps") or []))
+    if kind == "split_screen":
+        out = n(props.get("kicker"))
+        for side in ("left", "right"):
+            d = props.get(side) or {}
+            out += n(d.get("label")) + n(d.get("value"))
+        return out
+    if kind == "code_walkthrough":
+        return (n(props.get("filename")) + n(props.get("caption"))
+                + sum(n(l) for l in props.get("lines") or []))
+    if kind == "cinematic_chart":
+        return n(props.get("kicker")) + sum(
+            n(b.get("label")) + n(b.get("display")) for b in props.get("bars") or [])
+    if kind == "tweet_reveal":
+        return n(props.get("quote")) + n(props.get("author")) + n(props.get("role"))
+    return sum(n(props.get(k)) for k in
+               ("kicker", "value", "headline", "support", "title", "badge", "typed"))
+
+
+def readable_duration(kind: str, props: dict) -> float:
+    """How long this card needs to be on screen to actually be read.
+
+    Duration used to come from a fixed cadence slot, so a four-word headline and
+    a twenty-five-word quote both got 2.6 seconds — of which only the final 0.73s
+    was legible, because the build phase was still animating for the rest. Time
+    on screen has to be a function of what is ON the screen.
+    """
+    lo, hi = _DURATION_BOUNDS.get(kind, (2.6, 6.0))
+    words = _visible_words(kind, props)
+    needed = _RECOGNITION_S + words / _READ_RATE + _TAIL_S
+    return round(max(lo, min(hi, needed)), 2)

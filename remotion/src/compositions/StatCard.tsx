@@ -30,7 +30,7 @@ export const StatCard: React.FC<StatCardProps> = ({palette, value, support, kick
   const ink = inkOf(palette);
 
   const heroSize = fitOneLine(value, ty.solo, width - s.pad * 2, 900, '-0.045em');
-  const p = ramp(t, 0.04, 0.6);
+  const p = ramp(t, 0.04, 0.42);
   const sp = settle(frame, fps, 0);
 
   // Roll only the numeric runs, so "10-15x" keeps its separator and unit while
@@ -76,7 +76,7 @@ export const StatCard: React.FC<StatCardProps> = ({palette, value, support, kick
             WebkitBackgroundClip: 'text',
             backgroundClip: 'text',
             color: 'transparent',
-            clipPath: wipe(ramp(t, 0.02, 0.5)),
+            clipPath: wipe(ramp(t, 0.02, 0.36)),
             transform: `translateY(${(1 - sp) * heroSize * 0.1}px)`,
           }}
         >
@@ -86,14 +86,14 @@ export const StatCard: React.FC<StatCardProps> = ({palette, value, support, kick
       <div
         style={{
           height: height * 0.016,
-          width: `${26 + 64 * ramp(t, 0.15, 0.95)}%`,
+          width: `${26 + 64 * ramp(t, 0.12, 0.55)}%`,
           background: `linear-gradient(90deg, ${acc}, ${acc2})`,
           borderRadius: 99,
           marginTop: height * 0.03,
           boxShadow: `0 0 ${height * 0.05}px ${acc}66`,
         }}
       />
-      {support ? <Support text={support} palette={palette} from={0.45} /> : null}
+      {support ? <Support text={support} palette={palette} from={0.3} /> : null}
     </Frame>
   );
 };

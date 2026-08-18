@@ -23,7 +23,14 @@ import {interpolate, useCurrentFrame, useVideoConfig, Easing} from 'remotion';
 // background for its first ~0.3s, which reads as a black flash on the cut
 // rather than as an entrance. Sampled at t=4.0s in a real build, the panel was
 // fully black between the previous clip and a quote card 0.1s into its life.
-export const PHASE = {enter: 0.05, build: 0.72} as const;
+// build ends at 45%, not 72%.
+//
+// The old split left a 2.6s card complete for only its final 0.73 SECONDS —
+// measured across a real build, every short clip in the video. Nobody reads a
+// quote in 0.73s. The build phase is not reading time: text is still arriving,
+// moving and incomplete. Only the settle phase is legible, so the settle has to
+// be the MAJORITY of the clip, not a quarter of it.
+export const PHASE = {enter: 0.05, build: 0.45} as const;
 
 export const useClip = () => {
   const frame = useCurrentFrame();
