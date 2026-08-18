@@ -1,7 +1,8 @@
 import React from 'react';
-import {Frame, Kicker} from '../lib/ui';
-import {useClip, at} from '../lib/timing';
-import {typeScale, spacing, accentOf, inkOf, Palette} from '../theme';
+import {Frame, Kicker, Card} from '../lib/ui';
+import {useClip} from '../lib/timing';
+import {ramp, pop, wipe} from '../lib/motion';
+import {typeScale, spacing, accentOf, accent2Of, inkOf, Palette} from '../theme';
 import {fitWrapped} from '../lib/fit';
 
 export type SplitScreenProps = {
@@ -12,77 +13,91 @@ export type SplitScreenProps = {
 };
 
 /**
- * Two comparables, side by side, with the divider drawing between them.
+ * Two comparables as facing cards, with the divider drawing between them.
  *
- * The panel is roughly square, so the two halves are stacked as columns rather
- * than rows: a wide-short pair reads better across a squarish canvas, and it
- * lets each value take the full column width at large type.
+ * The right side is the one that carries the accent: in every comparison this
+ * type is used for — open vs closed, before vs after — the second panel is the
+ * point being made, so it should be the one that reads first.
  */
 export const SplitScreen: React.FC<SplitScreenProps> = ({palette, kicker, left, right}) => {
-  const {t, height, width} = useClip();
+  const {t, frame, fps, height, width, durationInFrames} = useClip();
   const ty = typeScale(height);
   const s = spacing(height);
   const acc = accentOf(palette);
+  const acc2 = accent2Of(palette);
   const ink = inkOf(palette);
 
-  // Each column gets roughly half the canvas, so fit both values to that and
-  // use the SMALLER of the two: mismatched sizes across a comparison read as
-  // a hierarchy that is not there.
-  const colW = (width - spacing(height).pad * 2) / 2 - spacing(height).gap;
+  const colW = (width - s.pad * 2) / 2 - s.gap;
+  // The smaller of the two, so a comparison never implies a hierarchy through
+  // mismatched type sizes.
   const valueSize = Math.min(
-    fitWrapped(left.value, ty.hero * 1.15, colW),
-    fitWrapped(right.value, ty.hero * 1.15, colW),
+    fitWrapped(left.value, ty.hero * 1.05, colW * 0.86),
+    fitWrapped(right.value, ty.hero * 1.05, colW * 0.86),
   );
-  const pL = at(t, 0.1, 0.42);
-  const pR = at(t, 0.32, 0.66);
-  const divider = at(t, 0.24, 0.8);
+  const divider = ramp(t, 0.18, 0.8);
 
-  const Col: React.FC<{d: {label: string; value: string}; p: number; tint: string}> = ({d, p, tint}) => (
-    <div
-      style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        gap: s.gap * 0.5,
-        opacity: p,
-        transform: `translateY(${(1 - p) * 30}px)`,
-        padding: s.gap * 0.6,
-      }}
-    >
-      <div
-        style={{
-          fontSize: ty.label,
-          fontWeight: 700,
-          letterSpacing: '0.1em',
-          textTransform: 'uppercase',
-          color: tint,
-        }}
-      >
-        {d.label}
-      </div>
-      <div style={{fontSize: valueSize, fontWeight: 900, lineHeight: 0.98, color: ink, letterSpacing: '-0.03em'}}>
-        {d.value}
-      </div>
-    </div>
-  );
+  const Col: React.FC<{d: {label: string; value: string}; delay: number; tint: string; tone: 'neutral' | 'accent'}> =
+    ({d, delay, tint, tone}) => {
+      const p = ramp(t, delay, delay + 0.34);
+      const sp = pop(frame, fps, Math.round(delay * durationInFrames));
+      return (
+        <Card
+          palette={palette}
+          tone={tone}
+          p={p}
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            gap: s.gap * 0.45,
+            minHeight: height * 0.46,
+            transform: `translateY(${(1 - sp) * 26}px) scale(${0.97 + 0.03 * sp})`,
+          }}
+        >
+          <div
+            style={{
+              fontSize: ty.label,
+              fontWeight: 800,
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              color: tint,
+            }}
+          >
+            {d.label}
+          </div>
+          <div
+            style={{
+              fontSize: valueSize,
+              fontWeight: 900,
+              lineHeight: 1.0,
+              color: ink,
+              letterSpacing: '-0.03em',
+              clipPath: wipe(p),
+            }}
+          >
+            {d.value}
+          </div>
+        </Card>
+      );
+    };
 
   return (
-    <Frame palette={palette} >
+    <Frame palette={palette}>
       {kicker ? <Kicker text={kicker} palette={palette} /> : null}
-      <div style={{display: 'flex', width: '100%', flex: 1, alignItems: 'stretch'}}>
-        <Col d={left} p={pL} tint={`${ink}99`} />
+      <div style={{display: 'flex', width: '100%', alignItems: 'stretch', gap: s.gap * 0.5}}>
+        <Col d={left} delay={0.04} tint={`${ink}99`} tone="neutral" />
         <div
           style={{
             width: 4,
             alignSelf: 'center',
-            height: `${divider * 88}%`,
-            background: acc,
+            height: `${divider * 82}%`,
+            background: `linear-gradient(180deg, ${acc}, ${acc2})`,
             borderRadius: 99,
-            margin: `0 ${s.gap * 0.4}px`,
+            boxShadow: `0 0 ${height * 0.03}px ${acc}88`,
           }}
         />
-        <Col d={right} p={pR} tint={acc} />
+        <Col d={right} delay={0.26} tint={acc} tone="accent" />
       </div>
     </Frame>
   );

@@ -1,7 +1,7 @@
 import React from 'react';
 import {Frame, Kicker} from '../lib/ui';
 import {useClip, at, stagger} from '../lib/timing';
-import {typeScale, spacing, accentOf, inkOf, Palette} from '../theme';
+import {typeScale, spacing, accentOf, accent2Of, inkOf, Palette} from '../theme';
 
 export type ChartBar = {label: string; value: number; display?: string};
 export type CinematicChartProps = {
@@ -16,6 +16,7 @@ export const CinematicChart: React.FC<CinematicChartProps> = ({palette, kicker, 
   const ty = typeScale(height);
   const s = spacing(height);
   const acc = accentOf(palette);
+  const acc2 = accent2Of(palette);
   const ink = inkOf(palette);
 
   const shown = bars.slice(0, 4);
@@ -49,7 +50,8 @@ export const CinematicChart: React.FC<CinematicChartProps> = ({palette, kicker, 
                     // At 1 against 13 the baseline rendered as a dot, which
                     // looks like a rendering fault rather than a small number.
                     width: `${Math.max((b.value / max) * 100, 7) * p}%`,
-                    background: isMax ? acc : `${ink}66`,
+                    background: isMax ? `linear-gradient(90deg, ${acc}, ${acc2})` : `${ink}55`,
+                    boxShadow: isMax ? `0 0 ${height * 0.035}px ${acc}66` : undefined,
                     borderRadius: 99,
                   }}
                 />

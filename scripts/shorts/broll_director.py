@@ -258,8 +258,13 @@ class BrollDirector:
         """
         types = ["stats_card", "headline_burst", "code_walkthrough",
                  "split_screen", "cinematic_chart", "lockup"]
-        if len(self.source_text) > 600:
-            types.insert(0, "highlight")
+        # `highlight` — the phone mockup sweeping a sentence — is retired. It
+        # rendered the source's own body copy at phone-screenshot scale inside a
+        # bezel, so the actual words were small, the bezel ate frame, and the
+        # result looked like a screenshot rather than a designed graphic. The
+        # quote and headline compositions carry a sentence far better; annotate
+        # still shows a claim in place on the real page when the point is that
+        # it IS on the page.
         types.append("mechanism")          # needs only a described process
         # Generated footage needs BOTH a host that can make it and an explicit
         # opt-in. The capability check alone is not enough: the weights are

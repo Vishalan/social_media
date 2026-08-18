@@ -132,3 +132,21 @@ export const fitLongestWord = (
     .reduce((a, b) => (b.length > a.length ? b : a), '');
   return fitToWidth(longest || text, maxSize, availableWidth, ratio);
 };
+
+/**
+ * A SECOND accent, distinct from the first, for the backdrop's other orb and
+ * for gradient stops. Falls back to a hue-shifted version of the primary so a
+ * two-colour palette still yields a two-colour field rather than a flat wash.
+ */
+export const accent2Of = (palette: Palette): string => {
+  const primary = accentOf(palette);
+  const mids = (palette || []).filter((c) => {
+    if (!/^#[0-9a-f]{6}$/i.test(c) || c.toLowerCase() === primary.toLowerCase()) return false;
+    const l = LUMA(c);
+    return l > 55 && l < 220;
+  });
+  if (mids.length) return mids[0];
+  // Rotate the primary's channels: cheap, deterministic, always distinct.
+  const h = primary.replace('#', '');
+  return `#${h.slice(2, 4)}${h.slice(4, 6)}${h.slice(0, 2)}`;
+};

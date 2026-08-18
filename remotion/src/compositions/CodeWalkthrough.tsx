@@ -1,6 +1,7 @@
 import React from 'react';
 import {Frame} from '../lib/ui';
 import {useClip, at, stagger, blink} from '../lib/timing';
+import {ramp, wipe} from '../lib/motion';
 import {typeScale, spacing, accentOf, Palette, MONO} from '../theme';
 
 export type CodeWalkthroughProps = {
@@ -41,6 +42,7 @@ export const CodeWalkthrough: React.FC<CodeWalkthroughProps> = ({
           overflow: 'hidden',
           border: `2px solid ${acc}44`,
           background: '#0D1117',
+          boxShadow: `0 ${height * 0.016}px ${height * 0.06}px rgba(0,0,0,0.55)`,
         }}
       >
         <div
@@ -77,8 +79,8 @@ export const CodeWalkthrough: React.FC<CodeWalkthroughProps> = ({
                   background: add ? '#2EA04326' : del ? '#F8514926' : 'transparent',
                   borderLeft: `3px solid ${add ? '#2EA043' : del ? '#F85149' : 'transparent'}`,
                   paddingLeft: size * 0.5,
-                  opacity: p,
-                  transform: `translateX(${(1 - p) * -14}px)`,
+                  clipPath: wipe(p, 'left'),
+                  transform: `translateX(${(1 - p) * -10}px)`,
                   whiteSpace: 'pre',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',

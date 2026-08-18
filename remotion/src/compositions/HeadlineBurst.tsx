@@ -1,7 +1,8 @@
 import React from 'react';
 import {Frame, Kicker, Words, Cursor} from '../lib/ui';
-import {useClip, at} from '../lib/timing';
-import {typeScale, accentOf, inkOf, spacing, Palette} from '../theme';
+import {useClip} from '../lib/timing';
+import {ramp} from '../lib/motion';
+import {typeScale, spacing, accentOf, accent2Of, inkOf, Palette} from '../theme';
 import {fitWrapped} from '../lib/fit';
 
 export type HeadlineBurstProps = {
@@ -9,17 +10,15 @@ export type HeadlineBurstProps = {
   headline: string;
   support?: string;
   kicker?: string;
-  /** Word index from which the headline switches to the accent colour. */
   accentFrom?: number;
 };
 
 /**
- * A claim, built word by word, filling the frame.
+ * A claim, wiped in word by word, with the payoff half in the accent.
  *
- * Size is chosen from the word count rather than fixed, so a three-word hook
- * lands enormous and a twelve-word claim still fits without wrapping into a
- * cramped block. The old version used one size for everything and left half the
- * panel empty on short copy.
+ * Size comes from the word count and is then bound by MEASURING the widest
+ * word, so a three-word hook lands enormous and a twelve-word claim still wraps
+ * without clipping.
  */
 export const HeadlineBurst: React.FC<HeadlineBurstProps> = ({
   palette,
@@ -30,12 +29,13 @@ export const HeadlineBurst: React.FC<HeadlineBurstProps> = ({
 }) => {
   const {t, height, width} = useClip();
   const ty = typeScale(height);
+  const s = spacing(height);
   const acc = accentOf(palette);
+  const acc2 = accent2Of(palette);
+  const ink = inkOf(palette);
   const n = headline.split(/\s+/).filter(Boolean).length;
-  const byCount = n <= 3 ? ty.solo * 0.72 : n <= 6 ? ty.hero * 1.35 : n <= 10 ? ty.hero : ty.title;
-  // The widest WORD is the real constraint: 'shadowbanning' at the size the
-  // word count suggested was ~1420px on a 1080px canvas and clipped.
-  const size = fitWrapped(headline, byCount, width - spacing(height).pad * 2);
+  const byCount = n <= 3 ? ty.solo * 0.7 : n <= 6 ? ty.hero * 1.3 : n <= 10 ? ty.hero : ty.title;
+  const size = fitWrapped(headline, byCount, width - s.pad * 2);
 
   return (
     <Frame palette={palette}>
@@ -43,48 +43,38 @@ export const HeadlineBurst: React.FC<HeadlineBurstProps> = ({
       <Words
         text={headline}
         size={size}
-        color={inkOf(palette)}
+        color={ink}
         accent={acc}
         accentFrom={accentFrom}
         from={0.02}
-        to={0.66}
+        to={0.64}
       />
-      {/* width:100% so the rule's percentage resolves against the canvas. In an
-          auto-width flex row it resolved against the row's own shrink-to-fit
-          width and collapsed the rule to a dot. */}
-      <div style={{display: 'flex', width: '100%', alignItems: 'flex-end', marginTop: height * 0.01}}>
+      <div style={{display: 'flex', width: '100%', alignItems: 'flex-end', marginTop: height * 0.022}}>
         <div
           style={{
-            height: height * 0.012,
-            width: `${20 + 40 * at(t, 0.3, 0.98)}%`,
-            background: acc,
+            height: height * 0.014,
+            width: `${18 + 44 * ramp(t, 0.25, 0.97)}%`,
+            background: `linear-gradient(90deg, ${acc}, ${acc2})`,
             borderRadius: 99,
+            boxShadow: `0 0 ${height * 0.045}px ${acc}66`,
           }}
         />
-        <Cursor size={size * 0.5} color={acc} />
+        <Cursor size={size * 0.42} color={acc} />
       </div>
-      {support ? <Support2 text={support} palette={palette} /> : null}
+      {support ? (
+        <div
+          style={{
+            marginTop: height * 0.03,
+            fontSize: ty.body,
+            fontWeight: 600,
+            opacity: 0.88 * ramp(t, 0.58, 0.84),
+            maxWidth: '92%',
+            lineHeight: 1.25,
+          }}
+        >
+          {support}
+        </div>
+      ) : null}
     </Frame>
-  );
-};
-
-const Support2: React.FC<{text: string; palette: Palette}> = ({text, palette}) => {
-  const {t, height, width} = useClip();
-  const ty = typeScale(height);
-  const p = at(t, 0.6, 0.85);
-  return (
-    <div
-      style={{
-        marginTop: height * 0.035,
-        fontSize: ty.body,
-        fontWeight: 600,
-        opacity: p * 0.88,
-        transform: `translateY(${(1 - p) * 16}px)`,
-        maxWidth: '92%',
-        lineHeight: 1.25,
-      }}
-    >
-      {text}
-    </div>
   );
 };

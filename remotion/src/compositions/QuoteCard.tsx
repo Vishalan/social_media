@@ -1,7 +1,8 @@
 import React from 'react';
-import {Frame} from '../lib/ui';
-import {useClip, at} from '../lib/timing';
-import {typeScale, spacing, accentOf, inkOf, Palette} from '../theme';
+import {Frame, Card} from '../lib/ui';
+import {useClip} from '../lib/timing';
+import {ramp, settle, wipe} from '../lib/motion';
+import {typeScale, spacing, accentOf, accent2Of, inkOf, Palette} from '../theme';
 import {fitWrapped} from '../lib/fit';
 
 export type QuoteCardProps = {
@@ -22,8 +23,9 @@ export const QuoteCard: React.FC<QuoteCardProps> = ({palette, quote, author, rol
   const words = quote.split(/\s+/).filter(Boolean);
   const byCount = words.length <= 12 ? ty.title : ty.body * 1.25;
   const size = fitWrapped(quote, byCount, width - spacing(height).pad * 2, 700, '0em');
-  const pMark = at(t, 0, 0.1);
-  const pAuthor = at(t, 0.66, 0.88);
+  const acc2 = accent2Of(palette);
+  const pMark = ramp(t, 0, 0.12);
+  const pAuthor = ramp(t, 0.62, 0.86);
 
   return (
     <Frame palette={palette} >
@@ -34,6 +36,7 @@ export const QuoteCard: React.FC<QuoteCardProps> = ({palette, quote, author, rol
           color: acc,
           fontWeight: 900,
           opacity: pMark,
+          filter: `drop-shadow(0 0 ${height * 0.04}px ${acc}66)`,
           transform: `translateY(${(1 - pMark) * -18}px)`,
         }}
       >
@@ -50,7 +53,7 @@ export const QuoteCard: React.FC<QuoteCardProps> = ({palette, quote, author, rol
       >
         {words.map((w, i) => {
           const slot = (0.62 - 0.03) / words.length;
-          const p = at(t, 0.03 + slot * i, 0.03 + slot * (i + 1.7));
+          const p = ramp(t, 0.03 + slot * i, 0.03 + slot * (i + 1.7));
           return (
             <span
               key={i}
@@ -59,8 +62,8 @@ export const QuoteCard: React.FC<QuoteCardProps> = ({palette, quote, author, rol
                 fontWeight: 700,
                 lineHeight: 1.22,
                 color: ink,
-                opacity: p,
-                transform: `translateY(${(1 - p) * 14}px)`,
+                clipPath: wipe(p),
+                transform: `translateY(${(1 - p) * 12}px)`,
                 display: 'inline-block',
               }}
             >
@@ -79,7 +82,7 @@ export const QuoteCard: React.FC<QuoteCardProps> = ({palette, quote, author, rol
           transform: `translateX(${(1 - pAuthor) * -22}px)`,
         }}
       >
-        <div style={{width: height * 0.01, height: ty.body * 1.6, background: acc, borderRadius: 99}} />
+        <div style={{width: height * 0.011, height: ty.body * 1.7, background: `linear-gradient(180deg, ${acc}, ${acc2})`, borderRadius: 99, boxShadow: `0 0 ${height * 0.03}px ${acc}66`}} />
         <div>
           <div style={{fontSize: ty.body, fontWeight: 900, color: ink}}>{author}</div>
           {role ? (

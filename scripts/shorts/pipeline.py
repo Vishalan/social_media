@@ -56,10 +56,29 @@ def _script_system(cfg: ShortsConfig) -> str:
 the owner on camera, AND you set the visual identity for the piece.
 
 SCRIPT RULES
-- The HOOK must land by 2.0 seconds. TikTok measures hook rate at 2s (2sVTR),
-  Meta at 3s; a single cross-posted master must clear the tighter gate.
-- Total spoken script: {cfg.target_words_min}-{cfg.target_words_max} words.
-  At ~3.3 words/sec that is about 60 seconds. Do not write short.
+- The OPENING HOOK must land by 2.0 seconds. TikTok measures hook rate at 2s
+  (2sVTR), Meta at 3s; a single cross-posted master must clear the tighter gate.
+  Make the first sentence a claim with tension in it — a stake, a reversal, a
+  number that should not be true. Never open by naming the topic ("Today we're
+  looking at..."), never open with context.
+
+- RE-HOOK ROUGHLY EVERY 10 SECONDS. Retention is not lost at the start, it
+  leaks in the middle. Every third or fourth sentence should re-open a loop:
+  a turn ("but here's the part they buried"), a question the next line answers,
+  a concrete number, or a named person contradicting the last claim. Write at
+  least THREE of these after the opening hook and space them out.
+
+- Total spoken script: {cfg.target_words_min}-{cfg.target_words_max} words —
+  about 60 seconds at a NORMAL speaking pace of ~2.7 words/sec. This is a hard
+  ceiling, not a target to exceed: a previous script ran 207 words in 56s, which
+  is 3.7 words/sec, and it sounded fast-forwarded. Fewer words said properly
+  beats more words rushed. If the story does not fill the time, cut a point
+  rather than speeding up.
+
+- Leave room to BREATHE. Vary sentence length deliberately: a long sentence
+  then a very short one. A three-word sentence after a long one is a beat of
+  silence, and that is where a hook lands.
+
 - Write for the ear. Short sentences. No markdown, no emoji, no stage
   directions, no "link in bio".
 - NEVER invent or round a figure the source does not state.
@@ -159,7 +178,15 @@ class ShortsPipeline:
         )
         data = json.loads(resp.content[0].text)
         wc = len(data["script"].split())
-        logger.info("Script: %d words (~%.1fs) — %r", wc, wc / 3.3, data["title"])
+        # 2.7 w/s is the measured pace at the current voice settings; the old
+        # 3.3 estimate is what made a 207-word script look like a 63s piece
+        # when it was really 56s of rushed delivery.
+        logger.info("Script: %d words (~%.1fs at 2.7 w/s) — %r",
+                    wc, wc / 2.7, data["title"])
+        if wc > self.cfg.target_words_max * 1.1:
+            logger.warning(
+                "Script is %d words, over the %d-word ceiling — narration will "
+                "be rushed", wc, self.cfg.target_words_max)
         if wc < self.cfg.target_words_min * 0.85:
             logger.warning(
                 "Script is %d words, well under the %d-word target — the piece "
@@ -236,18 +263,23 @@ class ShortsPipeline:
         self._sh("ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0",
                  "-i", listing, "-c:a", "pcm_s16le", "-ar", "24000", "-ac", "1", raw)
 
+        # Tone shaping runs BEFORE loudnorm, so the measurement sees the audio
+        # that will actually ship. EQing after a normalisation pass changes the
+        # loudness the pass just set.
+        tone = self._voice_tone_chain()
+
         # Two-pass loudnorm with linear=true: one-pass applies time-varying
         # gain, which is exactly the uncontrolled compression to avoid on
         # vocoder output. Raw Chatterbox has measured above 0 dBTP on every run.
         p1 = subprocess.run(
             ["ffmpeg", "-nostats", "-i", raw, "-af",
-             f"highpass=f={cfg.highpass_hz},loudnorm=I={cfg.lufs_target}:"
+             f"highpass=f={cfg.highpass_hz},{tone}loudnorm=I={cfg.lufs_target}:"
              f"TP={cfg.true_peak_db}:LRA=7:print_format=json", "-f", "null", "-"],
             capture_output=True, text=True)
         m = json.loads(p1.stderr[p1.stderr.rindex("{"):p1.stderr.rindex("}") + 1])
         logger.info("Loudness in: I=%s TP=%s", m["input_i"], m["input_tp"])
         self._sh("ffmpeg", "-v", "error", "-y", "-i", raw, "-af",
-                 f"highpass=f={cfg.highpass_hz},loudnorm=I={cfg.lufs_target}:"
+                 f"highpass=f={cfg.highpass_hz},{tone}loudnorm=I={cfg.lufs_target}:"
                  f"TP={cfg.true_peak_db}:LRA=7:measured_I={m['input_i']}:"
                  f"measured_TP={m['input_tp']}:measured_LRA={m['input_lra']}:"
                  f"measured_thresh={m['input_thresh']}:offset={m['target_offset']}:"
@@ -257,6 +289,37 @@ class ShortsPipeline:
                  "-ac", "1", "-ar", "16000", cfg.path("vo_16k.wav"))
         logger.info("Voice: %.2fs mastered to %.1f LUFS", self._dur(master), cfg.lufs_target)
         return master
+
+    def _voice_tone_chain(self) -> str:
+        """FFmpeg filters that give the voice body, or "" when disabled.
+
+        The owner's cloned voice comes back thin and slightly boxy from
+        Chatterbox. Three moves, in the order a mix engineer would make them:
+
+          low shelf  +3.5 dB @ 110 Hz  chest and weight
+          bell       -2.5 dB @ 320 Hz  the boxiness that makes added low end
+                                       read as mud rather than depth
+          presence   +2.0 dB @ 4.5 kHz consonants, so the extra body does not
+                                       cost intelligibility
+
+        A gentle 2.5:1 compressor follows to even out the delivery. It sits
+        BEFORE loudnorm deliberately: loudnorm measures what it is given, so
+        compressing afterwards would undo the loudness it just set.
+
+        Returns a filter string with a trailing comma so it can be spliced into
+        a chain, or an empty string so the chain is unchanged when disabled.
+        """
+        cfg = self.cfg
+        if not cfg.voice_eq_enabled:
+            return ""
+        return (
+            f"equalizer=f={cfg.voice_low_shelf_hz}:t=q:w=0.8:"
+            f"g={cfg.voice_low_shelf_db},"
+            f"equalizer=f={cfg.voice_mud_hz}:t=q:w=1.2:g={cfg.voice_mud_cut_db},"
+            f"equalizer=f={cfg.voice_presence_hz}:t=q:w=1.0:"
+            f"g={cfg.voice_presence_db},"
+            "acompressor=threshold=-18dB:ratio=2.5:attack=12:release=180:makeup=2,"
+        )
 
     # -- stage 3: timings + captions ------------------------------------
     def transcribe_and_align(self, script: str, *, force: bool = False) -> dict:

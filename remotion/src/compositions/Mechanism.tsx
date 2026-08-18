@@ -1,92 +1,95 @@
 import React from 'react';
-import {Frame, Kicker} from '../lib/ui';
-import {useClip, at, stagger} from '../lib/timing';
-import {typeScale, spacing, accentOf, inkOf, Palette} from '../theme';
+import {Frame, Kicker, Card} from '../lib/ui';
+import {useClip} from '../lib/timing';
+import {ramp, pop, wipe} from '../lib/motion';
+import {typeScale, spacing, accentOf, accent2Of, inkOf, Palette} from '../theme';
 
 export type MechanismProps = {
   palette: Palette;
   title?: string;
-  /** Ordered steps. Capped at 4 — see below. */
   steps: string[];
-  /** What the flow produces. Lands last, in the accent. */
   result?: string;
 };
 
 /**
- * How a thing works: numbered steps flowing to a result.
+ * How a thing works: numbered steps flowing into a result.
  *
- * Steps are HARD CAPPED AT FOUR. The old version rendered seven rows of ~16px
- * monospace, which is unreadable in a half-panel on a phone — the type floor and
- * the row count are the same constraint seen from two directions, and the cap is
- * the honest way to enforce it. Four legible steps beat seven unreadable ones,
- * so extra steps are dropped rather than shrinking the type.
+ * Steps are HARD CAPPED AT FOUR. Seven rows of small monospace is unreadable in
+ * a half-panel on a phone; the type floor and the row count are one constraint
+ * seen from two directions, so extra steps are dropped rather than shrinking
+ * the type. Each row springs in and its connector draws down to the next, so
+ * the flow reads as a sequence rather than a list appearing.
  */
 export const Mechanism: React.FC<MechanismProps> = ({palette, title, steps, result}) => {
-  const {t, height, width} = useClip();
+  const {t, frame, fps, height, durationInFrames} = useClip();
   const ty = typeScale(height);
   const s = spacing(height);
   const acc = accentOf(palette);
+  const acc2 = accent2Of(palette);
   const ink = inkOf(palette);
 
   const shown = steps.filter(Boolean).slice(0, 4);
   const n = shown.length;
-  // Budget the vertical space explicitly. The first version divided a guessed
-  // fraction of the canvas among the rows and then appended the result pill
-  // underneath, so on a four-step flow the pill was pushed off the bottom edge.
-  // Everything that will be drawn has to come out of one budget.
-  const budget = height - s.pad * 2 - (title ? ty.label * 2.6 : 0);
+  // One budget for everything that will be drawn: appending the result pill to
+  // a guessed row fraction pushed it off the bottom on a four-step flow.
+  const budget = height - s.pad * 2 - (title ? ty.label * 2.8 : 0);
   const resultH = result ? budget * 0.24 : 0;
   const rowsH = budget - resultH - s.gap * (n + 1);
   const rowH = rowsH / Math.max(1, n);
-  // Two lines of copy must fit inside a row, hence the 0.34 factor on half.
-  const fontSize = Math.max(ty.floor, Math.min(ty.body, rowH * 0.30));
+  const fontSize = Math.max(ty.floor, Math.min(ty.body, rowH * 0.3));
+  const window = 0.62 / Math.max(1, n);
 
   return (
-    <Frame palette={palette} >
+    <Frame palette={palette}>
       {title ? <Kicker text={title} palette={palette} /> : null}
-      <div style={{display: 'flex', flexDirection: 'column', gap: s.gap * 0.55, width: '100%'}}>
+      <div style={{display: 'flex', flexDirection: 'column', width: '100%'}}>
         {shown.map((step, i) => {
-          const p = stagger(t, i, n, {from: 0.1, to: 0.68});
+          const start = 0.04 + window * i;
+          const p = ramp(t, start, start + window * 1.5);
+          const sp = pop(frame, fps, Math.round(start * durationInFrames));
           return (
-            <div key={i} style={{opacity: p, transform: `translateX(${(1 - p) * -28}px)`}}>
-              <div
+            <div key={i} style={{width: '100%'}}>
+              <Card
+                palette={palette}
+                tone="accent"
+                p={p}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: s.gap * 0.6,
-                  background: `${acc}14`,
-                  border: `2px solid ${acc}55`,
-                  borderRadius: s.radius,
-                  padding: `${rowH * 0.2}px ${s.gap}px`,
+                  transform: `translateX(${(1 - sp) * -26}px) scale(${0.97 + 0.03 * sp})`,
                 }}
               >
                 <div
                   style={{
                     flex: '0 0 auto',
-                    width: fontSize * 1.7,
-                    height: fontSize * 1.7,
+                    width: fontSize * 1.75,
+                    height: fontSize * 1.75,
                     borderRadius: 99,
-                    background: acc,
+                    background: `linear-gradient(140deg, ${acc}, ${acc2})`,
                     color: '#0B0D11',
                     fontWeight: 900,
-                    fontSize: fontSize * 0.92,
+                    fontSize: fontSize * 0.95,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
+                    boxShadow: `0 0 ${height * 0.035}px ${acc}77`,
                   }}
                 >
                   {i + 1}
                 </div>
                 <div style={{fontSize, fontWeight: 700, color: ink, lineHeight: 1.2}}>{step}</div>
-              </div>
+              </Card>
               {i < n - 1 ? (
                 <div
                   style={{
                     width: 3,
-                    height: rowH * 0.22,
+                    height: rowH * 0.26 * ramp(t, start + window * 0.6, start + window * 1.4),
                     background: acc,
-                    opacity: 0.55,
-                    marginLeft: s.gap + fontSize * 0.85,
+                    opacity: 0.6,
+                    marginLeft: s.gap + fontSize * 0.9,
+                    marginTop: s.gap * 0.25,
+                    marginBottom: s.gap * 0.25,
                   }}
                 />
               ) : null}
@@ -96,23 +99,17 @@ export const Mechanism: React.FC<MechanismProps> = ({palette, title, steps, resu
       </div>
 
       {result ? (
-        <div
-          style={{
-            marginTop: s.gap,
-            width: '100%',
-            opacity: at(t, 0.72, 0.9),
-            transform: `translateY(${(1 - at(t, 0.72, 0.9)) * 22}px)`,
-          }}
-        >
+        <div style={{marginTop: s.gap * 0.9, width: '100%', clipPath: wipe(ramp(t, 0.7, 0.9))}}>
           <div
             style={{
-              background: acc,
+              background: `linear-gradient(120deg, ${acc}, ${acc2})`,
               color: '#0B0D11',
               borderRadius: s.radius,
               padding: `${resultH * 0.22}px ${s.gap}px`,
               fontSize: Math.max(ty.floor, Math.min(ty.body * 1.05, resultH * 0.34)),
               fontWeight: 900,
               lineHeight: 1.15,
+              boxShadow: `0 ${height * 0.012}px ${height * 0.05}px ${acc}44`,
             }}
           >
             {result}

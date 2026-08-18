@@ -20,10 +20,15 @@ class ShortsConfig:
     work_root: str = "/home/vishalan/shorts"
 
     # --- narration ------------------------------------------------------
-    # 190-210 words is 58-63s at ~3.3 words/sec. The target is SIXTY seconds:
-    # earlier runs asked for 120-140 words and produced 40s pieces.
-    target_words_min: int = 190
-    target_words_max: int = 210
+    # 150-165 words for a 60s short, i.e. about 2.7 words/sec.
+    #
+    # 190-210 was set from an assumed 3.3 w/s, but the delivered narration
+    # measured 3.70 w/s (207 words in 56.0s) and sounds fast-forwarded. Normal
+    # conversational speech is 2.3-2.8 w/s and energetic narration around 3.0,
+    # so the script was well past the top of the range. Fewer words at a normal
+    # pace also leaves room for the pauses that make a hook land.
+    target_words_min: int = 150
+    target_words_max: int = 165
 
     # v3 is cut from IMG_1774_4 (the owner's stated preference); v2 came from
     # _3. The two files have different audio despite identical duration and
@@ -33,10 +38,14 @@ class ShortsConfig:
     # the library default while exaggeration was tuned alone. They interact:
     # higher exaggeration speeds speech up, lower cfg_weight slows it into
     # something more deliberate.
-    cfg_weight: float = 0.5
-    # Stock default is 0.5. The deployed service defaults to 0.3, which is
-    # FLATTER than stock on a channel that needs punchy delivery.
-    exaggeration: float = 0.5
+    # 0.35, down from 0.5. Lower cfg_weight makes Chatterbox less clipped and
+    # more deliberate, which is the other half of fixing the rushed delivery —
+    # word count sets how much has to be said, this sets how it is said.
+    cfg_weight: float = 0.35
+    # 0.4. Stock is 0.5 and the deployed service defaults to 0.3. Exaggeration
+    # and speed interact: higher values speed the delivery up, so 0.5 was
+    # compounding the rushed feel. 0.4 keeps expression without the hurry.
+    exaggeration: float = 0.4
     # chatterbox/tts.py:249 hardcodes max_new_tokens=1000 == ~40s of audio.
     # Anything longer is silently truncated mid-sentence unless chunked.
     tts_max_chars_per_chunk: int = 380
@@ -45,6 +54,21 @@ class ShortsConfig:
     lufs_target: float = -14.0      # YouTube's published figure; TikTok/IG publish none
     true_peak_db: float = -1.0
     highpass_hz: int = 70
+
+    # Voice tone. Chatterbox output is thin and slightly boxy on this reference,
+    # so the chain adds weight without muddying it:
+    #   low shelf   +3.5 dB @ 110 Hz  — chest and body
+    #   bell        -2.5 dB @ 320 Hz  — the "box" that makes weight sound muddy
+    #   presence    +2.0 dB @ 4.5 kHz — consonant clarity, so added low end does
+    #                                   not cost intelligibility
+    # Gentle compression after EQ evens the delivery without pumping.
+    voice_eq_enabled: bool = True
+    voice_low_shelf_db: float = 3.5
+    voice_low_shelf_hz: int = 110
+    voice_mud_cut_db: float = -2.5
+    voice_mud_hz: int = 320
+    voice_presence_db: float = 2.0
+    voice_presence_hz: int = 4500
 
     # --- avatar ---------------------------------------------------------
     latentsync_endpoint: str = "http://172.18.0.7:7778"
