@@ -530,12 +530,16 @@ class ShortsPipeline:
         if not cfg.voice_eq_enabled:
             return ""
         return (
-            f"bass=g={cfg.voice_low_shelf_db}:f={cfg.voice_low_shelf_hz}:w=0.55,"
+            f"bass=g={cfg.voice_sub_db}:f={cfg.voice_sub_hz}:w=0.45,"
+            f"equalizer=f={cfg.voice_body_hz}:t=q:w=1.2:g={cfg.voice_body_db},"
             f"equalizer=f={cfg.voice_scoop_fill_hz}:t=q:w=1.6:"
             f"g={cfg.voice_scoop_fill_db},"
-            f"equalizer=f={cfg.voice_nasal_hz}:t=q:w=2.6:g={cfg.voice_nasal_cut_db},"
-            f"treble=g={cfg.voice_air_db}:f={cfg.voice_air_hz}:w=0.6,"
-            "acompressor=threshold=-18dB:ratio=2.5:attack=12:release=180:makeup=2,"
+            f"equalizer=f={cfg.voice_nasal_hz}:t=q:w=2.2:g={cfg.voice_nasal_cut_db},"
+            f"equalizer=f={cfg.voice_presence_hz}:t=q:w=1.4:"
+            f"g={cfg.voice_presence_db},"
+            f"treble=g={cfg.voice_air_db}:f={cfg.voice_air_hz}:w=0.55,"
+            f"acompressor=threshold=-18dB:ratio={cfg.voice_comp_ratio}:"
+            "attack=12:release=180:makeup=2,"
         )
 
     def _conform_pace(self, wav: str, text: str) -> str:

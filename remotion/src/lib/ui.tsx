@@ -165,7 +165,12 @@ export const Words: React.FC<{
 };
 
 /** Uppercase eyebrow with a rule that draws itself. */
-export const Kicker: React.FC<{text: string; palette: Palette}> = ({text, palette}) => {
+export const Kicker: React.FC<{
+  text: string;
+  palette: Palette;
+  /** The source's own favicon as a data URI — its actual brand mark. */
+  icon?: string;
+}> = ({text, palette, icon}) => {
   const {t, frame, fps, height} = useClip();
   const ty = typeScale(height);
   const acc = accentOf(palette);
@@ -181,15 +186,30 @@ export const Kicker: React.FC<{text: string; palette: Palette}> = ({text, palett
         transform: `translateX(${(1 - sp) * -18}px)`,
       }}
     >
-      <div
-        style={{
-          width: height * 0.014,
-          height: ty.label * 1.05 * p,
-          background: acc,
-          borderRadius: 99,
-          boxShadow: `0 0 ${height * 0.03}px ${acc}AA`,
-        }}
-      />
+      {icon ? (
+        // The source's real mark, not an approximation of it. A colour alone
+        // does not say "TechCrunch" to someone scrolling past; the favicon does.
+        <img
+          src={icon}
+          style={{
+            width: ty.label * 1.5,
+            height: ty.label * 1.5,
+            borderRadius: ty.label * 0.34,
+            opacity: p,
+            objectFit: 'contain',
+          }}
+        />
+      ) : (
+        <div
+          style={{
+            width: height * 0.014,
+            height: ty.label * 1.05 * p,
+            background: acc,
+            borderRadius: 99,
+            boxShadow: `0 0 ${height * 0.03}px ${acc}AA`,
+          }}
+        />
+      )}
       <span
         style={{
           fontSize: ty.label,

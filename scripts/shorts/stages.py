@@ -46,6 +46,21 @@ def render_avatar(self: ShortsPipeline, *, force: bool = False) -> str:
         logger.info("avatar_full.mp4 exists — reusing")
         return final
 
+    if cfg.avatar_mode == "hold":
+        # A black panel of exactly the narration's length. Everything
+        # downstream — spans, layout, captions, thumbnail frame — works off
+        # this file's duration and geometry, so a stand-in has to match both or
+        # the timeline it feeds is not the one that will ship.
+        dur = self._dur(cfg.path("vo_master.wav"))
+        logger.warning("AVATAR ON HOLD — rendering %.2fs of black instead of "
+                       "running LatentSync. Set avatar_mode='render' to ship.",
+                       dur)
+        self._sh("ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+                 "-i", f"color=c=black:s={cfg.width}x{cfg.height}:r={cfg.fps}",
+                 "-t", f"{dur:.3f}", "-c:v", "libx264", "-crf", "30",
+                 "-pix_fmt", "yuv420p", final)
+        return final
+
     from avatar_gen.gesture_library import (
         GestureLibrary, GestureLibraryError, load_windows_from_manifest)
 
@@ -721,11 +736,17 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
             from .pageroll import _strip_boilerplate
             from . import remotion_client
 
+            from .sourcebrand import fetch_brand, icon_data_uri
+
             src_text = Path(cfg.path("source.txt")).read_text()
             clean = _strip_boilerplate(src_text, script_meta.get("title", ""))
-            attribution = (urllib.parse.urlparse(source_url).netloc
-                           .replace("www.", "") if source_url else "source")
+            brand = fetch_brand(source_url, cfg.broll_dir)
+            attribution = brand["domain"] or "source"
+            icon_uri = icon_data_uri(brand.get("icon"))
             pulls = pull_sentences(clean, n_presenter)
+            # Cycle the treatment: the bed appears once per presenter span, so a
+            # single template repeated eight times reads as wallpaper.
+            variants = ("quote", "marked", "statement")
             palette = (script_meta.get("visual_identity") or {}).get("palette") or []
             bed_dir = os.path.join(cfg.broll_dir, "bed")
             for k, pull in enumerate(pulls):
@@ -736,7 +757,9 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
                         kind="source_pull",
                         props={"sentence": pull["sentence"],
                                "attribution": attribution,
-                               "emphasis": pull["emphasis"]},
+                               "emphasis": pull["emphasis"],
+                               "icon": icon_uri,
+                               "variant": variants[k % len(variants)]},
                         out_path=out_bed,
                         duration_s=max(2.0, span["end"] - span["start"]),
                         width=cfg.width, height=height_for_panel(cfg),
@@ -945,15 +968,33 @@ def make_thumbnail(self: ShortsPipeline, script: dict, *,
     kicker = {"github_repo": "GitHub · Deep Dive",
               "article": "AI News",
               "text": "Explainer"}.get(script.get("source_kind", ""), "AI · Tech")
-    accent = None
-    vi = script.get("visual_identity") or {}
-    if vi.get("palette") and len(vi["palette"]) > 2:
-        # Borrow the story's accent so the cover ties to its graphics, while
-        # the template itself stays constant.
-        accent = vi["palette"][2]
+    # Borrow the story's accent so the cover ties to its graphics, while the
+    # template itself stays constant.
+    #
+    # Picked by SATURATION, not by position. Taking palette[2] assumed a fixed
+    # ordering that does not hold: for this story it was #0D1117, a near-black,
+    # which the renderer then had to reject — leaving the cover on the channel
+    # default and losing the tie to the story entirely. The most saturated
+    # mid-luminance entry is the one a designer would have called the accent.
+    accent = _story_accent((script.get("visual_identity") or {}).get("palette"))
+
+    # The publication's own mark on the cover: it signals the claim is reported
+    # rather than opinion, and it borrows the source's recognition in a feed.
+    icon, domain = None, ""
+    meta_path = cfg.path("source_meta.json")
+    if os.path.exists(meta_path):
+        try:
+            url = json.loads(Path(meta_path).read_text()).get("url", "")
+            if url:
+                from .sourcebrand import fetch_brand
+                b = fetch_brand(url, cfg.broll_dir)
+                icon, domain = b.get("icon"), b.get("domain", "")
+        except Exception as exc:                   # noqa: BLE001 — cosmetic
+            logger.info("no source badge for the cover: %s", str(exc)[:100])
 
     return _render(title=script["title"], kicker=kicker, avatar_frame=frame,
-                   out_path=out, accent=accent)
+                   out_path=out, accent=accent,
+                   source_icon=icon, source_domain=domain)
 
 
 # Attach as methods.
@@ -1062,3 +1103,28 @@ def _find_word_run(words: list, needle: list):
         if keys[i:i + n] == needle:
             return (words[i]["start"], words[min(i + n - 1, len(words) - 1)]["end"])
     return None
+
+
+def _story_accent(palette) -> Optional[str]:
+    """The most saturated mid-luminance colour in a palette, or None.
+
+    Backgrounds and body colours cluster at the extremes of luminance and near
+    zero saturation; an accent is the entry that is neither. Choosing by
+    position instead picked a near-black on a real story.
+    """
+    best, best_sat = None, 0.0
+    for c in (palette or []):
+        if not (isinstance(c, str) and len(c) == 7 and c.startswith("#")):
+            continue
+        try:
+            r, g, b = (int(c[i:i + 2], 16) / 255 for i in (1, 3, 5))
+        except ValueError:
+            continue
+        hi, lo = max(r, g, b), min(r, g, b)
+        luma = 0.299 * r + 0.587 * g + 0.114 * b
+        if not (0.24 < luma < 0.88):
+            continue
+        sat = 0.0 if hi == 0 else (hi - lo) / hi
+        if sat > best_sat:
+            best, best_sat = c, sat
+    return best

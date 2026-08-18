@@ -67,25 +67,6 @@ class ShortsConfig:
     pause_between_s: float = 0.10       # ordinary sentence gap, kept tight
     pause_before_payoff_s: float = 0.22
 
-    # Voice tone, tuned against MEASURED filter response on white noise rather
-    # than by ear or by assumption. Target shape, achieved:
-    #   bass   +5.8 dB   a real low shelf, for the body that was missing
-    #   chest  +2.8 dB
-    #   500-800 +1.4 dB  fills a 4.6 dB scoop that read as "boxy"
-    #   ~1.2k  notched   the nasal honk the owner heard
-    #   air    +2.7 dB   dimension and consonants
-    # 9.0, up from 7.5. The owner asked for more bass again after hearing the
-    # 7.5 build. The measured shelf response at 7.5 was +5.8 dB in the 60-120
-    # band; this takes it further without touching the nasal notch, which is a
-    # separate filter and was already doing its job.
-    voice_low_shelf_db: float = 9.0
-    voice_low_shelf_hz: int = 160
-    voice_scoop_fill_db: float = 4.0
-    voice_scoop_fill_hz: int = 600
-    voice_nasal_cut_db: float = -8.0
-    voice_nasal_hz: int = 1200
-    voice_air_db: float = 4.0
-    voice_air_hz: int = 6500
     # chatterbox/tts.py:249 hardcodes max_new_tokens=1000 == ~40s of audio.
     # Anything longer is silently truncated mid-sentence unless chunked.
     tts_max_chars_per_chunk: int = 380
@@ -94,6 +75,39 @@ class ShortsConfig:
     lufs_target: float = -14.0      # YouTube's published figure; TikTok/IG publish none
     true_peak_db: float = -1.0
     highpass_hz: int = 70
+
+    # Voice tone. Every value tuned against the MEASURED response of the chain
+    # on white noise, then re-tuned on the owner's report that it wanted more
+    # weight while staying natural and crisp. Achieved balance:
+    #
+    #   50-90 Hz   +8.9 dB   sub — the weight under the voice
+    #   90-160     +5.6 dB   fundamental
+    #   160-250    +3.3 dB   chest body
+    #   500-800    +0.6 dB   fills the scoop that reads as boxy
+    #   ~1.15k     notched   the nasal honk
+    #   2.5-5k     +2.3 dB   consonant definition — "crisp"
+    #   5-9k       +3.4 dB   air
+    #
+    # The notch width is a real trade and was measured both ways: widening it
+    # to 1.8 took the nasal band to -2.3 dB but flattened the 500-800 fill to
+    # zero, and that scoop is itself part of what makes a voice sound nasal.
+    # Q 2.2 keeps both.
+    voice_sub_db: float = 12.0
+    voice_sub_hz: int = 120
+    voice_body_db: float = 1.5
+    voice_body_hz: int = 250
+    voice_scoop_fill_db: float = 3.0
+    voice_scoop_fill_hz: int = 600
+    voice_nasal_cut_db: float = -10.0
+    voice_nasal_hz: int = 1150
+    voice_presence_db: float = 2.5
+    voice_presence_hz: int = 3600
+    voice_air_db: float = 5.0
+    voice_air_hz: int = 7000
+    # 2.0:1, down from 2.5:1. Compression is what makes a voice sound processed
+    # rather than recorded, and "natural" was an explicit ask; the loudnorm pass
+    # afterwards is doing most of the levelling anyway.
+    voice_comp_ratio: float = 2.0
 
     # Master switch for the tone chain above.
     voice_eq_enabled: bool = True
@@ -123,6 +137,16 @@ class ShortsConfig:
     # Beat energy by position: hook wants gesture, close wants stillness.
     segment_tags: tuple[str, ...] = ("animated", "animated", "moderate",
                                      "moderate", "calm", "calm")
+
+    # "render" runs LatentSync; "hold" substitutes a black panel of the right
+    # length and skips the GPU entirely.
+    #
+    # The avatar is ~25s of compute per second of video — roughly 30 minutes of
+    # a 35-minute build — so while voice, b-roll and design are being iterated
+    # it is 90% of the wait for 0% of what is being judged. Hold turns the loop
+    # from half an hour into about three minutes. Switch back to "render" for
+    # anything that ships.
+    avatar_mode: str = "render"        # render | hold
 
     gesture_source: str = "/opt/commoncreed/assets/input_media/IMG_1774_3.mp4"
     gesture_manifest: str = "/opt/commoncreed/assets/gesture_clips/manifest.json"

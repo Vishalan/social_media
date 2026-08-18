@@ -13,6 +13,15 @@ export type SourcePullProps = {
   attribution?: string;
   /** An exact phrase inside the sentence to accent. */
   emphasis?: string;
+  /** The source's favicon as a data URI. */
+  icon?: string;
+  /**
+   * Bed treatment. The bed fills every presenter-led span, so on a 50s video it
+   * appears eight or ten times — one template repeated that often stops being a
+   * design and becomes wallpaper. Cycling the treatment keeps the same content
+   * from reading as the same card.
+   */
+  variant?: 'quote' | 'statement' | 'marked';
 };
 
 /**
@@ -33,6 +42,8 @@ export const SourcePull: React.FC<SourcePullProps> = ({
   sentence,
   attribution,
   emphasis,
+  icon,
+  variant = 'quote',
 }) => {
   const {t, height, width} = useClip();
   const ty = typeScale(height);
@@ -57,12 +68,19 @@ export const SourcePull: React.FC<SourcePullProps> = ({
 
   return (
     <Frame palette={palette}>
-      {attribution ? <Kicker text={attribution} palette={palette} /> : null}
+      {attribution && variant !== 'statement' ? (
+        <Kicker text={attribution} palette={palette} icon={icon} />
+      ) : null}
       <div
-        style={{
-          borderLeft: `${height * 0.008}px solid ${acc}`,
-          paddingLeft: s.gap * 0.7,
-        }}
+        style={
+          variant === 'quote'
+            ? {borderLeft: `${height * 0.008}px solid ${acc}`, paddingLeft: s.gap * 0.7}
+            : variant === 'marked'
+              ? {background: `${acc}12`, borderRadius: s.radius,
+                 padding: `${s.gap * 0.6}px ${s.gap * 0.7}px`,
+                 border: `2px solid ${acc}33`}
+              : {}
+        }
       >
         <Words
           text={sentence}

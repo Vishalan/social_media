@@ -116,7 +116,9 @@ CAPTIONS = CaptionStyle()
 # -------------------------------------------------------------- thumbnail
 def make_thumbnail(*, title: str, kicker: str, avatar_frame: str,
                    out_path: str, brand: Brand = BRAND,
-                   accent: Optional[str] = None) -> str:
+                   accent: Optional[str] = None,
+                   source_icon: Optional[str] = None,
+                   source_domain: str = "") -> str:
     """Render the channel-standard cover frame.
 
     Template, fixed across every video:
@@ -241,6 +243,36 @@ def make_thumbnail(*, title: str, kicker: str, avatar_frame: str,
     ry = ty + block_h + 26
     d.rounded_rectangle([64, ry, 64 + 190, ry + 11], radius=6,
                         fill=brand.rgb(acc) + (255,))
+
+    # --- source badge: the publication's own mark, bottom-left ---
+    #
+    # A cover that names its source is doing two jobs: it says the claim is
+    # reported rather than opinion, and it borrows the source's recognition.
+    # The mark is the site's real favicon, so it reads instantly to anyone who
+    # knows the publication.
+    if source_domain:
+        f_src = ImageFont.truetype(brand.font_semi, 30)
+        by = ry + 58
+        bx = 64
+        if source_icon and Path(source_icon).is_file():
+            try:
+                ic = Image.open(source_icon).convert("RGBA").resize(
+                    (46, 46), Image.LANCZOS)
+                img.paste(ic, (bx, by - 8), ic)
+                bx += 60
+            except Exception:                      # noqa: BLE001 — cosmetic
+                pass
+        d.text((bx, by), source_domain.upper(), font=f_src,
+               fill=brand.rgb(brand.muted) + (235,))
+
+    # --- accent wash, tying the cover to the story's palette ---
+    wash = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    wd = ImageDraw.Draw(wash)
+    r, g, b = brand.rgb(acc)
+    for i in range(120):
+        a = int(26 * (1 - i / 120))
+        wd.rectangle([0, H - 1 - i * 4, W, H - i * 4], fill=(r, g, b, a))
+    img = Image.alpha_composite(img.convert("RGBA"), wash).convert("RGB")
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     img.save(out_path, quality=95)

@@ -75,7 +75,11 @@ export const typeScale = (height: number) => ({
 });
 
 export const spacing = (height: number) => ({
-  pad: height * 0.06,
+  // 0.09, up from 0.06. At 0.06 a 998px panel had 59px of margin — 5.5% of its
+  // width — and large display type ran visually into the panel edge, which on a
+  // squarish panel reads as content about to be cut off. The panel is composited
+  // against the frame edge on three sides, so it has no bleed to lean on.
+  pad: height * 0.09,
   gap: height * 0.035,
   radius: height * 0.022,
 });
