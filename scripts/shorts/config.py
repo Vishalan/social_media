@@ -33,7 +33,16 @@ class ShortsConfig:
     # v3 is cut from IMG_1774_4 (the owner's stated preference); v2 came from
     # _3. The two files have different audio despite identical duration and
     # transcript, so they are separate captures rather than re-encodes.
-    voice_ref: str = "vishalan_voice_ref_v3.wav"
+    # v4, cut from IMG_1774_4 at 18.0s by scanning the source for the most
+    # expressive 22s window the pitch tracker can follow cleanly.
+    #
+    # The reference is the CEILING on how animated the clone can be, and v3 was
+    # holding it down: v3 measures 7.2 semitones of pitch range, v4 measures
+    # 9.7. The first scan ranked windows at 18 st, which was pitch-tracker
+    # octave error rather than expression — those windows had 15-21% of frames
+    # at half the median. Requiring 90% of frames inside the core band before
+    # ranking is what separates an animated speaker from a mistracked one.
+    voice_ref: str = "vishalan_voice_ref_v4.wav"
     # cfg_weight was NOT exposed by the service until 2026-08-17, so it sat at
     # the library default while exaggeration was tuned alone. They interact:
     # higher exaggeration speeds speech up, lower cfg_weight slows it into
@@ -47,7 +56,11 @@ class ShortsConfig:
     # Baseline for body sentences. Hook and turn sentences get more — see
     # rhythm_* below. A single flat value across the whole script is what made
     # the delivery monotone: every sentence performed identically.
-    exaggeration: float = 0.45
+    # 0.62. Swept against MEASURED pitch range on the real service, and the
+    # result is not monotonic — 0.80 was WORSE than 0.65 (5.9 st against 7.0),
+    # so "more expressive" is not simply "turn it up". 0.65 recovered the
+    # reference's full range; the roles below sit around it rather than above.
+    exaggeration: float = 0.62
 
     # --- speech rhythm --------------------------------------------------
     # Short-form attention rhythm: the hook is performed, the body moves, and a
@@ -59,9 +72,9 @@ class ShortsConfig:
     # the gaps between them are set deliberately. The cost is ~15 TTS calls
     # instead of 4, which is seconds on this hardware.
     rhythm_enabled: bool = True
-    exaggeration_hook: float = 0.7      # first line: sell it
-    exaggeration_turn: float = 0.62     # "but here's the part that matters"
-    exaggeration_payoff: float = 0.6    # last line: land it
+    exaggeration_hook: float = 0.70      # first line: sell it
+    exaggeration_turn: float = 0.68     # "but here's the part that matters"
+    exaggeration_payoff: float = 0.66   # last line: land it
     pause_after_hook_s: float = 0.30    # let the hook breathe before the body
     pause_before_turn_s: float = 0.26   # the beat that makes a turn land
     pause_between_s: float = 0.10       # ordinary sentence gap, kept tight
@@ -107,7 +120,11 @@ class ShortsConfig:
     # 2.0:1, down from 2.5:1. Compression is what makes a voice sound processed
     # rather than recorded, and "natural" was an explicit ask; the loudnorm pass
     # afterwards is doing most of the levelling anyway.
-    voice_comp_ratio: float = 2.0
+    # 1.6:1. Compression flattens LEVEL variation, and level variation is part
+    # of what reads as energy — the more expressive reference gained pitch range
+    # but lost level range, so the compressor was giving some of that back.
+    # Measured: 2.0 -> 1.6 recovers p10-p90 dynamics from 15.4 to 16.1 dB.
+    voice_comp_ratio: float = 1.6
 
     # Master switch for the tone chain above.
     voice_eq_enabled: bool = True
@@ -119,7 +136,9 @@ class ShortsConfig:
     # pace at all — 2.88 to 3.00 w/s across its whole useful range — so the knob
     # that looks like it should control this does not. A small atempo stretch is
     # the only lever that reliably lands a pace, and it preserves pitch.
-    speech_rate_target: float = 3.25
+    # 3.40. Energetic short-form narration sits at 3.3-3.6 w/s; 3.25 was set
+    # against "conversational", which is the register that read as flat.
+    speech_rate_target: float = 3.40
     # Never stretch further than this: beyond ~0.85 atempo starts to smear
     # consonants, and a slurred voice is worse than a slightly quick one.
     speech_atempo_floor: float = 0.85

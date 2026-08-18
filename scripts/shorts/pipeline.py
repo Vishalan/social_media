@@ -97,6 +97,11 @@ the voice later:
 - Ask a question the next line answers. That is what stops a scroll mid-video.
 - Front-load the verb. "X just published the code" beats "The code was
   published by X".
+- Write with ENERGY, which is a property of word choice, not of delivery:
+  strong verbs over adverbs, active over passive, concrete over abstract. Name
+  the stake ("your posts", "your account"), not the category ("user content").
+  Prefer a contrast or a reversal to a description — "they said it wasn't real;
+  now you can check" beats "the company has published the code".
 - Never open a sentence with a subordinate clause. It buries the point past
   the moment the viewer decides to keep watching.
 
