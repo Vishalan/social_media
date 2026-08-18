@@ -64,7 +64,13 @@ class ShortsConfig:
     gesture_manifest: str = "/opt/commoncreed/assets/gesture_clips/manifest.json"
 
     # --- design ---------------------------------------------------------
-    max_designs: int = 4
+    # The separate design stage is OFF. It ran DesignBriefGenerator through
+    # HyperFrames — a second design system with a second quality bar, which was
+    # the original argument for routing everything through one. Now that the
+    # director renders Remotion compositions, it IS that one path: same
+    # components, same timing rules, chosen per beat instead of per anchor word.
+    # Set above 0 only to run the legacy HyperFrames path alongside.
+    max_designs: int = 0
     design_concurrency: int = 4
     design_timeout_s: int = 1800
     # Look at each rendered graphic and re-render once if it is visibly

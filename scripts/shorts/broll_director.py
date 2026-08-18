@@ -110,6 +110,12 @@ TYPE_CATALOG: dict[str, dict[str, str]] = {
                 "stronger — generated footage of someone at a laptop is the same "
                 "irrelevant filler as stock. Describe a SCENE, never a concept."),
     },
+    "lockup": {
+        "needs": "a name worth putting on screen — a licence, a product, a repo",
+        "for": ("a large name with a badge beneath it and one sentence typing "
+                "in under that. The workhorse for 'X is now Y': a licence, a "
+                "release, a rename. Use when the story turns on naming a thing."),
+    },
     "pageroll": {
         "needs": "a capturable source URL",
         "for": ("a held or slowly travelling view of the real page. The "
@@ -169,7 +175,9 @@ _PLAN_SCHEMA = {
 
 def _catalog_text(available: list[str]) -> str:
     return "\n".join(
-        f"  {k}\n     needs: {TYPE_CATALOG[k]['needs']}\n     for:   {TYPE_CATALOG[k]['for']}"
+        f"  {k}\n     needs:   {TYPE_CATALOG[k]['needs']}\n"
+        f"     for:     {TYPE_CATALOG[k]['for']}\n"
+        f"     payload: {PAYLOAD_SPEC.get(k, '(no payload needed)')}"
         for k in available if k in TYPE_CATALOG)
 
 
@@ -249,7 +257,7 @@ class BrollDirector:
         highlight with no article body.
         """
         types = ["stats_card", "headline_burst", "code_walkthrough",
-                 "split_screen", "cinematic_chart"]
+                 "split_screen", "cinematic_chart", "lockup"]
         if len(self.source_text) > 600:
             types.insert(0, "highlight")
         types.append("mechanism")          # needs only a described process
@@ -368,9 +376,16 @@ class BrollDirector:
         out = str(self.work_dir / f"broll_{slot.index:02d}_{slot.kind}.mp4")
         try:
             path = await self._dispatch(slot, out)
+            # A Remotion composition is authoritative about its own frame: it
+            # fills the canvas by construction and animates throughout. Both
+            # backstops were built for HyperFrames output and would now do harm
+            # — auto-framing would re-crop a deliberate layout, and the push
+            # would shave 4% off edges the design placed on purpose.
+            designed = slot.kind in _remotion_kinds()
             slot.path = _normalise_clip(
                 path, slot.duration, self.fps, self.width, self.height,
-                autoframe=slot.kind not in _SELF_FRAMED)
+                autoframe=not designed and slot.kind not in _SELF_FRAMED,
+                push=not designed)
         except Exception as exc:                   # noqa: BLE001 — per-slot isolation
             slot.error = str(exc)[:300]
             logger.warning("b-roll %s failed: %s", slot.kind, slot.error)
@@ -460,97 +475,36 @@ class BrollDirector:
         return await self._design(slot, out)
 
     async def _design(self, slot: Slot, out: str) -> str:
-        """Render a slot as a designed motion graphic via HyperFrames."""
-        from design import HyperFramesRenderer
-        from .vision import review_design
+        """Render a slot as a designed motion graphic, via Remotion.
 
-        brief = _brief_for(slot)
-        renderer = HyperFramesRenderer(
-            output_dir=str(Path(out).parent),
-            work_dir=str(self.work_dir / "design_work"),
-            width=self.width, height=self.height, fps=self.fps,
-            style=self._style(), reviewer=review_design, max_attempts=2)
-        produced = await renderer.render(brief)
-        if os.path.abspath(produced) != os.path.abspath(out):
-            os.replace(produced, out)
-        return out
+        This previously asked `claude -p` to author fresh HyperFrames animation
+        code for every graphic. That could not hold a quality bar, for reasons
+        that were structural rather than fixable by prompting: every clip was a
+        one-off so nothing was consistent between them; nothing tied the
+        animation to the clip length, so graphics froze for up to 80% of their
+        runtime; and nothing enforced legibility, so content filled a quarter of
+        the panel at type too small to read on a phone.
 
-    def _style(self) -> dict:
-        pal = self.palette
-        return {
-            "palette": ", ".join(pal),
-            "typography": "clean geometric sans; monospace for code and data",
-            "motifs": "",
-            "identity_rationale": "borrowed from the source's own product surface",
-            "register": "editorial, borrowed from the source's own product surface",
-            "reserved_zone": ("none — you own the whole canvas. It is roughly "
-                              "1:1, NOT a tall 9:16 frame."),
-            "background": pal[0] if pal else "#0A0C10",
-            "accent": pal[2] if len(pal) > 2 else "#22D3EE",
-            "muted": pal[-1] if pal else "#A8B8C5",
-        }
+        The Remotion compositions are hand-built components in which those
+        properties hold by construction — the build phase is a fraction of the
+        clip, sizes derive from the canvas, and text is fitted by measuring the
+        real font. The planner supplies only DATA. Rendering is also about 35s
+        for eight clips rather than ten minutes each, which is what makes
+        iterating on a video practical at all.
+        """
+        from . import remotion_client
 
-
-def _brief_for(slot: "Slot"):
-    """Turn a planned slot into a DesignBrief for HyperFrames."""
-    from design import DesignBrief
-
-    k, p = slot.kind, slot.payload
-    slug = f"{slot.index:02d}-{k}"
-
-    if k == "stats_card":
-        head, sup = str(p.get("value", "")), str(p.get("label", ""))
-        motion, kind = "count up fast and land hard, no bounce", "stat"
-    elif k == "headline_burst":
-        head, sup = str(p.get("text", "")), ""
-        motion = "words arrive in sequence and settle; no wipe, no spin"
-        kind = "lockup"
-    elif k == "tweet_reveal":
-        head, sup = str(p.get("author", "")), str(p.get("body", ""))
-        motion = ("render as a social post card — avatar circle, handle, "
-                  "verified tick if given — and let the quote type in")
-        kind = "lockup"
-    elif k == "code_walkthrough":
-        head = str(p.get("filename") or p.get("language", "code"))
-        sup = " / ".join(str(x) for x in (p.get("lines") or [])[:6])
-        motion = ("render an editor pane with a title bar and line numbers; "
-                  "the lines type in, syntax coloured for the language")
-        kind = "lockup"
-    elif k == "split_screen":
-        head = f"{p.get('left_title', 'A')} vs {p.get('right_title', 'B')}"
-        sup = (" | ".join(str(x) for x in (p.get("left_lines") or [])[:4])
-               + "  ||  "
-               + " | ".join(str(x) for x in (p.get("right_lines") or [])[:4]))
-        motion = ("STACKED two-panel comparison, upper and lower halves — never "
-                  "left/right in a narrow frame. Each panel titled with its "
-                  "lines beneath; panels build in sequence, top first")
-        kind = "comparison"
-    elif k == "mechanism":
-        stages = [str(x) for x in (p.get("stages") or [])][:5]
-        head = str(p.get("title", "How it works"))
-        sup = "  ->  ".join(stages)
-        if p.get("result"):
-            sup += f"   ==>   {p['result']}"
-        motion = ("build a left-to-right or top-to-bottom FLOW: each stage "
-                  "appears in order with a connector drawn between it and the "
-                  "previous one, then the final result types itself out "
-                  "character by character with a live cursor. Do not animate "
-                  "stages simultaneously — the order IS the explanation")
-        kind = "diagram"
-    elif k == "cinematic_chart":
-        series = p.get("series") or []
-        head = str(p.get("title", ""))
-        sup = " | ".join(f"{s.get('label')}: {s.get('value')}" for s in series[:5])
-        motion = "bars grow in sequence from a zero baseline, then hold"
-        kind = "chart"
-    else:
-        head, sup = slot.narration[:40], ""
-        motion, kind = "settle in", "lockup"
-
-    return DesignBrief(
-        slug=slug, headline=head[:80], support=sup[:220], context="",
-        rationale=slot.why or f"{k} for this beat", motion=motion,
-        anchor_word="", duration_s=slot.duration, kind=kind)
+        return await asyncio.to_thread(
+            remotion_client.render,
+            kind=slot.kind,
+            props=_props_for(slot),
+            out_path=out,
+            duration_s=slot.duration,
+            width=self.width,
+            height=self.height,
+            fps=self.fps,
+            palette=self.palette,
+        )
 
 
 def _content_box(path: str, *, samples: int = 10) -> Optional[tuple]:
@@ -629,7 +583,8 @@ _SELF_FRAMED = frozenset({"annotate", "macro", "highlight", "pageroll",
 
 
 def _normalise_clip(path: str, want: float, fps: int,
-                    width: int, height: int, *, autoframe: bool = True) -> str:
+                    width: int, height: int, *, autoframe: bool = True,
+                    push: bool = True) -> str:
     """Force a clip to exactly ``want`` seconds at exactly ``width``x``height``.
 
     Two separate lies to correct:
@@ -724,10 +679,11 @@ def _normalise_clip(path: str, want: float, fps: int,
     #
     # 4% over the clip is deliberately below conscious notice: the intent is that
     # the frame is never dead, not that the viewer sees a zoom.
-    frames = max(2, int(round(want * fps)))
-    filters.append(
-        f"zoompan=z='1+0.04*on/{frames}':x='iw/2-(iw/zoom/2)':"
-        f"y='ih/2-(ih/zoom/2)':d=1:s={width}x{height}:fps={fps}")
+    if push:
+        frames = max(2, int(round(want * fps)))
+        filters.append(
+            f"zoompan=z='1+0.04*on/{frames}':x='iw/2-(iw/zoom/2)':"
+            f"y='ih/2-(ih/zoom/2)':d=1:s={width}x{height}:fps={fps}")
 
     vf = ",".join(filters) if filters else "null"
 
@@ -744,3 +700,133 @@ def _normalise_clip(path: str, want: float, fps: int,
     logger.info("%s: %dx%d %.2fs -> %dx%d %.2fs", Path(path).name,
                 have_w, have_h, have_d, width, height, want)
     return fixed
+
+
+# ------------------------------------------------------------------ props
+# Exactly which payload keys each type needs, handed to the planner verbatim.
+#
+# Kept beside the catalogue rather than inside it so the two read separately:
+# the catalogue answers "which type fits this beat", this answers "what do I
+# have to write for it". Vague payload guidance is why slots came back with a
+# `label` where the component wanted a `value`, and a card rendered with an
+# empty hero.
+PAYLOAD_SPEC: dict[str, str] = {
+    "highlight": '"sentence": one exact sentence copied from the source',
+    "stats_card": '"value": the figure exactly as written (e.g. "10-15x"), '
+                  '"label": a short support line, "kicker": 1-2 word eyebrow',
+    "headline_burst": '"text": the claim, 4-10 words, "kicker": 1-2 word eyebrow',
+    "tweet_reveal": '"author": full name, "role": their title, "body": the quote',
+    "code_walkthrough": '"filename": path or language, "lines": UP TO 7 lines '
+                        '(prefix "+ " or "- " for a diff), "caption": one line',
+    "split_screen": '"kicker", "left_title", "left_lines": [ONE short phrase], '
+                    '"right_title", "right_lines": [ONE short phrase]',
+    "cinematic_chart": '"title", "bars": [{"label", "value": a number, '
+                       '"display": as written}] — 2 to 4 bars',
+    "mechanism": '"title", "steps": UP TO 4 short steps, "result": what it produces',
+    "annotate": '"phrase": one exact phrase present on the page',
+    "macro": '"phrase": one small element visible on the page',
+    "ai_video": '"scene": a described scene, never a concept',
+    "pageroll": "(no payload needed)",
+    "lockup": '"title": the name (1-3 words), "badge": a short pill, '
+              '"typed": one sentence that types in, "kicker": 1-2 word eyebrow',
+}
+
+
+def _remotion_kinds() -> frozenset:
+    """Slot kinds rendered by Remotion rather than from a page capture."""
+    from .remotion_client import COMPOSITIONS
+    return frozenset(COMPOSITIONS)
+
+
+def _clean(value: Any, limit: int = 240) -> str:
+    """Trim a planner string, collapsing whitespace."""
+    return " ".join(str(value or "").split())[:limit]
+
+
+def _props_for(slot: "Slot") -> dict:
+    """Map a planned slot's payload onto its composition's props.
+
+    Deliberately explicit rather than passing the payload straight through. The
+    planner writes in the catalogue's vocabulary ("text", "label", "left_lines")
+    while the components have their own, so translating here means a payload key
+    changing shape breaks in one readable place instead of rendering a card with
+    `undefined` where a figure should be.
+    """
+    k, p = slot.kind, slot.payload
+
+    if k == "stats_card":
+        return {
+            "value": _clean(p.get("value"), 24),
+            "support": _clean(p.get("label") or p.get("support"), 90),
+            "kicker": _clean(p.get("kicker"), 28),
+        }
+
+    if k == "headline_burst":
+        text = _clean(p.get("text") or p.get("headline"), 120)
+        words = text.split()
+        return {
+            "headline": text,
+            "kicker": _clean(p.get("kicker"), 28),
+            # Colour the back half of the line so the emphasis lands on the
+            # claim rather than the subject, without the planner marking it up.
+            "accentFrom": max(1, len(words) // 2) if len(words) > 2 else None,
+            "support": _clean(p.get("support"), 140),
+        }
+
+    if k == "mechanism":
+        return {
+            "title": _clean(p.get("title") or p.get("label"), 60),
+            "steps": [_clean(x, 60) for x in (p.get("steps") or []) if _clean(x)],
+            "result": _clean(p.get("result") or p.get("output"), 70),
+        }
+
+    if k == "split_screen":
+        def side(title_key: str, lines_key: str, value_key: str, default: str) -> dict:
+            lines = p.get(lines_key) or []
+            first = lines[0] if lines else p.get(value_key)
+            return {"label": _clean(p.get(title_key) or default, 24),
+                    "value": _clean(first, 60)}
+        return {
+            "kicker": _clean(p.get("kicker") or p.get("title"), 28),
+            "left": side("left_title", "left_lines", "left_value", "Before"),
+            "right": side("right_title", "right_lines", "right_value", "After"),
+        }
+
+    if k == "code_walkthrough":
+        return {
+            "filename": _clean(p.get("filename") or p.get("language"), 40),
+            "lines": [_clean(x, 52) for x in (p.get("lines") or []) if _clean(x)],
+            "caption": _clean(p.get("caption") or p.get("label"), 70),
+        }
+
+    if k == "cinematic_chart":
+        bars = []
+        for b in (p.get("bars") or p.get("series") or []):
+            if not isinstance(b, dict):
+                continue
+            try:
+                val = float(str(b.get("value", "")).replace(",", "").strip())
+            except (TypeError, ValueError):
+                continue
+            bars.append({
+                "label": _clean(b.get("label"), 24),
+                "value": val,
+                "display": _clean(b.get("display") or b.get("value"), 16),
+            })
+        return {"kicker": _clean(p.get("title") or p.get("kicker"), 28),
+                "bars": bars}
+
+    if k == "tweet_reveal":
+        return {
+            "quote": _clean(p.get("body") or p.get("quote"), 200),
+            "author": _clean(p.get("author"), 40),
+            "role": _clean(p.get("role") or p.get("handle"), 40),
+        }
+
+    # lockup, and the safe shape for anything new: a name, a badge, a line.
+    return {
+        "title": _clean(p.get("title") or p.get("value") or slot.kind, 32),
+        "badge": _clean(p.get("badge") or p.get("label"), 34),
+        "typed": _clean(p.get("typed") or p.get("support") or slot.narration, 190),
+        "kicker": _clean(p.get("kicker"), 28),
+    }

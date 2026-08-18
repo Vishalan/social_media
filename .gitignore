@@ -70,3 +70,8 @@ logs/launchd_*.log
 
 # Git worktrees (used by parallel agent-team execution runs; content lives in branches, not main tree)
 .worktrees/
+
+# Remotion build artifacts
+remotion/node_modules/
+remotion/out/
+remotion/.remotion/
