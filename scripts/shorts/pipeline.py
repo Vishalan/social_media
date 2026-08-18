@@ -349,7 +349,8 @@ class ShortsPipeline:
             # A sentence can still exceed the ~40s token cap on its own, so the
             # chunker stays in the loop as a guard rather than being replaced.
             for j, piece in enumerate(
-                    self.chunk_text(text_i, cfg.tts_max_chars_per_chunk)):
+                    self.chunk_text(self._tts_text(text_i),
+                                    cfg.tts_max_chars_per_chunk)):
                 name = f"{cfg.run_id}_c{i}_{j}"
                 self._post(f"{cfg.chatterbox_endpoint}/tts", {
                     "text": piece, "reference_audio_path": cfg.voice_ref,
@@ -451,6 +452,48 @@ class ShortsPipeline:
         "but ", "and here", "here's", "now ", "so ", "except", "then ",
         "turns out", "the catch", "except ", "yet ", "still ",
     )
+
+    # Chatterbox has NO markup layer — no SSML, no emphasis tags, no <break>.
+    # Its entire input contract is punc_norm() in chatterbox/tts.py, which
+    # rewrites punctuation before tokenising:
+    #
+    #     "..." "…" ":" " - " ";"  ->  ", "     (all become a comma pause)
+    #     "—" "–"                  ->  "-"      (dashes become hyphens)
+    #     curly quotes             ->  straight
+    #
+    # and critically, its sentence_enders set is {".", "!", "?", "-", ","} —
+    # a HYPHEN is classed with full stops. So an ordinary compound word is read
+    # as a break. Measured on the sentence the owner flagged:
+    #
+    #     "...catch rule-breaking posts... cannot reverse-engineer it."
+    #        hyphenated:    6.12s, 9 internal pauses, 1260ms of silence
+    #        de-hyphenated: 5.20s, 3 internal pauses,  360ms of silence
+    #
+    # The 129ms gap they heard inside "reverse-engineer" is the hyphen being
+    # spoken as punctuation.
+    _INTRAWORD_HYPHEN = re.compile(r"(?<=\w)[-‑](?=\w)")
+    _PARENTHETICAL_DASH = re.compile(r"\s*[—–]\s*")
+    # A numeric range must become the word, not two bare numbers: stripping the
+    # hyphen from "10-15x" leaves "10 15x", which is read as two separate
+    # figures. This runs BEFORE the general rule so the range is claimed first.
+    _NUMERIC_RANGE = re.compile(r"(\d)\s*[-‑–—]\s*(?=\d)")
+
+    def _tts_text(self, text: str) -> str:
+        """Rewrite a line into what Chatterbox narrates correctly.
+
+        Applied to the TTS INPUT ONLY. The script keeps its real punctuation,
+        so captions still render "reverse-engineer" with the hyphen — the
+        aligner substitutes script spellings onto ASR timings, so a one-word
+        caption over a two-word utterance is exactly the case it handles.
+
+        Em and en dashes are converted to commas HERE rather than being left to
+        punc_norm, which turns them into hyphens — and hyphens are the thing
+        being removed.
+        """
+        out = self._NUMERIC_RANGE.sub(r"\1 to ", text)
+        out = self._PARENTHETICAL_DASH.sub(", ", out)
+        out = self._INTRAWORD_HYPHEN.sub(" ", out)
+        return " ".join(out.split())
 
     def _plan_rhythm(self, script: str) -> list:
         """Split the script into sentences, each with its own energy and gap.
