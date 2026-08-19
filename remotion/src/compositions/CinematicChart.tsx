@@ -5,13 +5,15 @@ import {typeScale, spacing, accentOf, accent2Of, inkOf, Palette} from '../theme'
 
 export type ChartBar = {label: string; value: number; display?: string};
 export type CinematicChartProps = {
+  /** The SUBJECT's mark — see broll_director.render_designed. */
+  icon?: string;
   palette: Palette;
   kicker?: string;
   bars: ChartBar[];
 };
 
 /** Horizontal bars growing from a baseline. Capped at 4 for legibility. */
-export const CinematicChart: React.FC<CinematicChartProps> = ({palette, kicker, bars}) => {
+export const CinematicChart: React.FC<CinematicChartProps> = ({palette, icon, kicker, bars}) => {
   const {t, height} = useClip();
   const ty = typeScale(height);
   const s = spacing(height);
@@ -26,7 +28,7 @@ export const CinematicChart: React.FC<CinematicChartProps> = ({palette, kicker, 
 
   return (
     <Frame palette={palette} >
-      {kicker ? <Kicker text={kicker} palette={palette} /> : null}
+      {kicker ? <Kicker text={kicker} palette={palette} icon={icon} /> : null}
       <div style={{display: 'flex', flexDirection: 'column', gap: s.gap * 0.7, width: '100%'}}>
         {shown.map((b, i) => {
           // Bars grow until 0.88 rather than the default 0.72. A chart has no

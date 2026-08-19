@@ -6,6 +6,8 @@ import {typeScale, spacing, accentOf, accent2Of, inkOf, Palette, MONO} from '../
 import {fitWrapped} from '../lib/fit';
 
 export type LockupProps = {
+  /** The SUBJECT's mark — see broll_director.render_designed. */
+  icon?: string;
   palette: Palette;
   kicker?: string;
   title: string;
@@ -21,7 +23,7 @@ export type LockupProps = {
  * length without a second idea competing with the first. The title carries the
  * gradient and a soft glow so a single word still fills the frame with weight.
  */
-export const Lockup: React.FC<LockupProps> = ({palette, kicker, title, badge, typed}) => {
+export const Lockup: React.FC<LockupProps> = ({palette, icon, kicker, title, badge, typed}) => {
   const {t, frame, fps, height, width} = useClip();
   const ty = typeScale(height);
   const s = spacing(height);
@@ -39,7 +41,7 @@ export const Lockup: React.FC<LockupProps> = ({palette, kicker, title, badge, ty
 
   return (
     <Frame palette={palette}>
-      {kicker ? <Kicker text={kicker} palette={palette} /> : null}
+      {kicker ? <Kicker text={kicker} palette={palette} icon={icon} /> : null}
       <div
         style={{
           fontSize: titleSize,

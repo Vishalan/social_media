@@ -6,6 +6,8 @@ import {typeScale, spacing, accentOf, accent2Of, inkOf, Palette} from '../theme'
 import {fitOneLine, fitWrapped} from '../lib/fit';
 
 export type CtaCardProps = {
+  /** The SUBJECT's mark — see broll_director.render_designed. */
+  icon?: string;
   palette: Palette;
   /** The instruction, e.g. "Comment ALGORITHM and I'll send the repo link". */
   action: string;
@@ -26,7 +28,7 @@ export type CtaCardProps = {
  * leads. It also pulses, gently and continuously: this is the one card where a
  * little attention-seeking is the entire point.
  */
-export const CtaCard: React.FC<CtaCardProps> = ({palette, action, keyword, kicker}) => {
+export const CtaCard: React.FC<CtaCardProps> = ({palette, icon, action, keyword, kicker}) => {
   const {t, frame, fps, height, width} = useClip();
   const ty = typeScale(height);
   const s = spacing(height);
@@ -52,7 +54,7 @@ export const CtaCard: React.FC<CtaCardProps> = ({palette, action, keyword, kicke
 
   return (
     <Frame palette={palette}>
-      {kicker ? <Kicker text={kicker} palette={palette} /> : null}
+      {kicker ? <Kicker text={kicker} palette={palette} icon={icon} /> : null}
 
       {keyword ? (
         <div

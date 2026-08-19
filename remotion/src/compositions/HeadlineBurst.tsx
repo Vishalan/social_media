@@ -6,6 +6,8 @@ import {typeScale, spacing, accentOf, accent2Of, inkOf, Palette} from '../theme'
 import {fitWrapped, fitBlock} from '../lib/fit';
 
 export type HeadlineBurstProps = {
+  /** The SUBJECT's mark — see broll_director.render_designed. */
+  icon?: string;
   palette: Palette;
   headline: string;
   support?: string;
@@ -22,6 +24,7 @@ export type HeadlineBurstProps = {
  */
 export const HeadlineBurst: React.FC<HeadlineBurstProps> = ({
   palette,
+  icon,
   headline,
   support,
   kicker,
@@ -54,7 +57,7 @@ export const HeadlineBurst: React.FC<HeadlineBurstProps> = ({
 
   return (
     <Frame palette={palette}>
-      {kicker ? <Kicker text={kicker} palette={palette} /> : null}
+      {kicker ? <Kicker text={kicker} palette={palette} icon={icon} /> : null}
       <Words
         text={headline}
         size={size}

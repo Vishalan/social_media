@@ -618,7 +618,18 @@ class BrollDirector:
 
         w, h = self.target_size(slot.kind)
         props = _props_for(slot)
-        if slot.kind == "window_scene" and self.subject_icon:
+        # Which mark a panel wears depends on what the panel is SAYING.
+        #
+        # A designed panel asserts a fact about the SUBJECT — "X open sourced
+        # its ranking algorithm" is a statement about X, and stamping the
+        # publisher's logo on it made the video look like a TechCrunch promo
+        # for a story that is not about TechCrunch.
+        #
+        # The reader bed is the opposite case and is deliberately left alone:
+        # it quotes the article's own sentences verbatim, so the publisher's
+        # mark there is correct attribution, and swapping in the subject's
+        # would put someone else's words under X's logo.
+        if self.subject_icon:
             props["icon"] = self.subject_icon
         return await asyncio.to_thread(
             remotion_client.render,

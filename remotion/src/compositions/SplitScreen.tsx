@@ -6,6 +6,8 @@ import {typeScale, spacing, accentOf, accent2Of, inkOf, Palette} from '../theme'
 import {fitWrapped} from '../lib/fit';
 
 export type SplitScreenProps = {
+  /** The SUBJECT's mark — see broll_director.render_designed. */
+  icon?: string;
   palette: Palette;
   kicker?: string;
   left: {label: string; value: string};
@@ -19,7 +21,7 @@ export type SplitScreenProps = {
  * type is used for — open vs closed, before vs after — the second panel is the
  * point being made, so it should be the one that reads first.
  */
-export const SplitScreen: React.FC<SplitScreenProps> = ({palette, kicker, left, right}) => {
+export const SplitScreen: React.FC<SplitScreenProps> = ({palette, icon, kicker, left, right}) => {
   const {t, frame, fps, height, width, durationInFrames} = useClip();
   const ty = typeScale(height);
   const s = spacing(height);
@@ -84,7 +86,7 @@ export const SplitScreen: React.FC<SplitScreenProps> = ({palette, kicker, left, 
 
   return (
     <Frame palette={palette}>
-      {kicker ? <Kicker text={kicker} palette={palette} /> : null}
+      {kicker ? <Kicker text={kicker} palette={palette} icon={icon} /> : null}
       <div style={{display: 'flex', width: '100%', alignItems: 'stretch', gap: s.gap * 0.5}}>
         <Col d={left} delay={0.03} tint={`${ink}99`} tone="neutral" />
         <div

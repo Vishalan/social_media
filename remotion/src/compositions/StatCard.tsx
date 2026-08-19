@@ -6,6 +6,8 @@ import {typeScale, spacing, accentOf, accent2Of, inkOf, Palette} from '../theme'
 import {fitOneLine} from '../lib/fit';
 
 export type StatCardProps = {
+  /** The SUBJECT's mark — see broll_director.render_designed. */
+  icon?: string;
   palette: Palette;
   value: string;
   support?: string;
@@ -21,7 +23,7 @@ export type StatCardProps = {
  * place rather than fading, so the count reads as a mechanism rather than a
  * crossfade.
  */
-export const StatCard: React.FC<StatCardProps> = ({palette, value, support, kicker}) => {
+export const StatCard: React.FC<StatCardProps> = ({palette, icon, value, support, kicker}) => {
   const {t, frame, fps, height, width} = useClip();
   const ty = typeScale(height);
   const s = spacing(height);
@@ -44,7 +46,7 @@ export const StatCard: React.FC<StatCardProps> = ({palette, value, support, kick
 
   return (
     <Frame palette={palette}>
-      {kicker ? <Kicker text={kicker} palette={palette} /> : null}
+      {kicker ? <Kicker text={kicker} palette={palette} icon={icon} /> : null}
       <div style={{position: 'relative', width: '100%'}}>
         {/* Ghost copy: gives the numeral depth instead of floating on flat colour. */}
         <div

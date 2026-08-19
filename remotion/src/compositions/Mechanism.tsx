@@ -5,6 +5,8 @@ import {ramp, pop, wipe} from '../lib/motion';
 import {typeScale, spacing, accentOf, accent2Of, inkOf, Palette} from '../theme';
 
 export type MechanismProps = {
+  /** The SUBJECT's mark — see broll_director.render_designed. */
+  icon?: string;
   palette: Palette;
   title?: string;
   steps: string[];
@@ -20,7 +22,7 @@ export type MechanismProps = {
  * the type. Each row springs in and its connector draws down to the next, so
  * the flow reads as a sequence rather than a list appearing.
  */
-export const Mechanism: React.FC<MechanismProps> = ({palette, title, steps, result}) => {
+export const Mechanism: React.FC<MechanismProps> = ({palette, icon, title, steps, result}) => {
   const {t, frame, fps, height, durationInFrames} = useClip();
   const ty = typeScale(height);
   const s = spacing(height);
@@ -41,7 +43,7 @@ export const Mechanism: React.FC<MechanismProps> = ({palette, title, steps, resu
 
   return (
     <Frame palette={palette}>
-      {title ? <Kicker text={title} palette={palette} /> : null}
+      {title ? <Kicker text={title} palette={palette} icon={icon} /> : null}
       <div style={{display: 'flex', flexDirection: 'column', width: '100%'}}>
         {shown.map((step, i) => {
           const start = 0.04 + window * i;
