@@ -110,6 +110,8 @@ def main() -> int:
                     help="override the config's minimum script words")
     ap.add_argument("--resume", action="store_true",
                     help="reuse completed stages in the work dir")
+    ap.add_argument("--h3", action="store_true",
+                    help="allow one generated MiniMax H3 hero clip (~6.5 min)")
     ap.add_argument("--avatar", choices=["render", "hold"], default=None,
                     help="'hold' skips LatentSync and uses a black panel — "
                          "~3 min iterations instead of ~35")
@@ -137,6 +139,8 @@ def main() -> int:
     )
     # Only override the word target when the flag was actually given, so the
     # config stays the single source of truth for pacing.
+    if args.h3:
+        cfg.h3_enabled = True
     if args.avatar:
         cfg.avatar_mode = args.avatar
     if args.words is not None:

@@ -340,7 +340,27 @@ async def _direct_broll(self: ShortsPipeline, *, url: str,
         palette=(script.get("visual_identity") or {}).get("palette") or [],
         source_url=url, source_text=src_text,
         source_title=script.get("title", ""),
-        allow_ai_video=cfg.ai_video_enabled)
+        allow_ai_video=cfg.ai_video_enabled,
+        h3_budget=cfg.h3_max_per_video if cfg.h3_enabled else 0)
+
+    d.h3_gen_size = cfg.h3_gen_size
+    d.h3_steps = cfg.h3_steps
+    # A card built from the source's own mark, used as frame zero of any
+    # generated clip. Verified on a real generation: the supplied image IS the
+    # first frame and its colours carry through, so the scene inherits the
+    # story's palette instead of defaulting to generic teal.
+    if cfg.h3_enabled and cfg.h3_brand_first_frame and url:
+        try:
+            from .sourcebrand import fetch_brand, build_brand_card
+            brand = fetch_brand(url, cfg.broll_dir)
+            d.h3_first_frame = build_brand_card(
+                out_png=os.path.join(cfg.broll_dir, "brand_card.png"),
+                icon=brand.get("icon"),
+                palette=(script.get("visual_identity") or {}).get("palette") or [],
+                size=cfg.h3_gen_size)
+        except Exception as exc:                   # noqa: BLE001 — optional
+            logger.warning("brand first frame unavailable (%s) — the generated "
+                           "clip will start from noise", str(exc)[:120])
 
     try:
         slots = await d.plan(beats, max_slots=cfg.broll_max_designed,

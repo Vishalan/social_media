@@ -280,6 +280,25 @@ class ShortsConfig:
     # stronger local model. Set True to re-enable, and LOOK at the clip before
     # trusting it — a garbled b-roll shot is worse than a page panel.
     ai_video_enabled: bool = False
+
+    # --- generated footage (MiniMax H3, local) ---------------------------
+    # OFF by default, for two reasons that are not about quality — the quality
+    # is good. First, cost: ~6.5 minutes per 3-second clip at 640x640/20 steps,
+    # the same order as an avatar segment, so it is a HERO SHOT and not a
+    # general b-roll type. Second, licence: the MiniMax H3 Community License
+    # excludes the EU, UK, South Korea and the USA from using or hosting the
+    # weights or their outputs, and commercial use requires displaying
+    # "MiniMax H3" prominently. Both are the operator's call to make.
+    h3_enabled: bool = False
+    # One per video. The cap is the whole reason this is affordable.
+    h3_max_per_video: int = 1
+    h3_duration_s: float = 3.0
+    h3_gen_size: int = 640
+    h3_steps: int = 20
+    # Start the clip on a card built from the source's own mark. Verified on a
+    # real generation: the supplied frame IS frame zero and its colours carry
+    # through the whole clip, so the scene inherits the story's palette.
+    h3_brand_first_frame: bool = True
     # Ceiling on designed clips per video. Each one costs a claude -p call plus
     # a render, so this bounds the per-video cost, not the aesthetics.
     # 14 designed clips is roughly 45s of rendering, against about 2.5 hours

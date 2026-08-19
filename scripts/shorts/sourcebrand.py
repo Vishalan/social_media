@@ -105,3 +105,55 @@ def icon_data_uri(path: Optional[str]) -> str:
         return ""
     return ("data:image/png;base64,"
             + base64.b64encode(Path(path).read_bytes()).decode("ascii"))
+
+
+def build_brand_card(*, out_png: str, icon: Optional[str], palette: list,
+                     size: int = 640) -> str:
+    """A branded still for a generated clip to start from.
+
+    MiniMax H3's first_frame conditioning does two things at once, both
+    verified on a real generation: the supplied image IS frame zero, and its
+    colours propagate through the whole clip. Feeding the source's own mark
+    therefore grounds generated footage in the story twice over — it opens on
+    the publication's identity, and the scene that dissolves out of it inherits
+    that palette rather than defaulting to generic teal.
+    """
+    from PIL import Image, ImageDraw
+
+    def rgb(hexstr: str, fallback=(11, 13, 17)):
+        h = (hexstr or "").lstrip("#")
+        try:
+            return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+        except (ValueError, IndexError):
+            return fallback
+
+    bg = rgb(palette[0] if palette else "#0B0D11")
+    accent = bg
+    for c in reversed(palette or []):
+        r, g, b = rgb(c, (0, 0, 0))
+        if 60 < (r * 0.299 + g * 0.587 + b * 0.114) < 225:
+            accent = (r, g, b)
+            break
+
+    img = Image.new("RGB", (size, size), bg)
+    d = ImageDraw.Draw(img)
+    # A soft radial bloom in the accent: gives the model colour to carry, and
+    # keeps frame zero from being a flat rectangle.
+    cx = cy = size // 2
+    for i in range(size // 2, 0, -1):
+        t = 1 - i / (size / 2)
+        col = tuple(int(bg[k] + (accent[k] - bg[k]) * (t ** 3) * 0.55) for k in range(3))
+        d.ellipse([cx - i, cy - i, cx + i, cy + i], fill=col)
+
+    if icon and Path(icon).is_file():
+        try:
+            side = int(size * 0.40)
+            ic = Image.open(icon).convert("RGBA").resize((side, side), Image.LANCZOS)
+            img.paste(ic, ((size - side) // 2, (size - side) // 2), ic)
+        except Exception as exc:                    # noqa: BLE001 — cosmetic
+            logger.info("brand card icon skipped: %s", str(exc)[:80])
+
+    Path(out_png).parent.mkdir(parents=True, exist_ok=True)
+    img.save(out_png)
+    logger.info("Brand card for generated footage: %s", out_png)
+    return out_png

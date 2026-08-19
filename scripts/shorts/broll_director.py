@@ -116,6 +116,26 @@ TYPE_CATALOG: dict[str, dict[str, str]] = {
                 "in under that. The workhorse for 'X is now Y': a licence, a "
                 "release, a rename. Use when the story turns on naming a thing."),
     },
+    "ai_scene": {
+        "needs": ("a beat with NO concrete artifact to show — no page, no "
+                  "figure, no quote, no file. Atmosphere, stakes or scale"),
+        "for": ("generated cinematic footage: a real place, shot like film. "
+                "PREFER IT FOR THE OPENING BEAT — an establishing shot that "
+                "sets the stakes before any fact lands is exactly what the "
+                "built graphics cannot do, and it is the one moment where "
+                "atmosphere outperforms information. Exactly ONE per video, so "
+                "if you do not spend it on the open, spend it on the closing "
+                "stake and nowhere else.\n"
+                "     Describe a PLACE and what the camera does, never a "
+                "concept. 'A dark data centre aisle, racks receding either "
+                "side, status lights blinking, slow forward push' works; 'the "
+                "power of algorithms' does not. Anchor it in the SOURCE: the "
+                "actual place, object or room the story is about — where this "
+                "code runs, who touches it, what room the decision was made "
+                "in. Never ask for text, logos, UI or screens with readable "
+                "content: generated lettering is always garbled, and our "
+                "typography layer owns every word the viewer reads."),
+    },
     "pageroll": {
         "needs": "a capturable source URL",
         "for": ("a held or slowly travelling view of the real page. The "
@@ -239,7 +259,8 @@ class BrollDirector:
                  palette: Optional[list[str]] = None,
                  source_url: str = "", source_text: str = "",
                  source_title: str = "",
-                 allow_ai_video: bool = False) -> None:
+                 allow_ai_video: bool = False,
+                 h3_budget: int = 0) -> None:
         self.llm = intelligence
         self.work_dir = Path(work_dir)
         self.work_dir.mkdir(parents=True, exist_ok=True)
@@ -249,6 +270,10 @@ class BrollDirector:
         self.source_text = source_text
         self.source_title = source_title
         self.allow_ai_video = allow_ai_video
+        self.h3_budget = h3_budget
+        self.h3_gen_size = 640
+        self.h3_steps = 20
+        self.h3_first_frame = ""
 
     # -- capability gating ------------------------------------------------
     def available_types(self) -> list[str]:
@@ -279,6 +304,17 @@ class BrollDirector:
                 from .aivideo import available as _ai_ok
                 if _ai_ok():
                     types.append("ai_video")
+            except Exception:              # noqa: BLE001 — optional capability
+                pass
+        # Generated footage via MiniMax H3. Offered only when it is enabled,
+        # the service is up, and this video has not already spent its one clip:
+        # at ~6.5 min each, a planner free to choose three would quadruple the
+        # build time of the whole short.
+        if self.h3_budget > 0:
+            try:
+                from .h3_client import available as _h3_ok
+                if _h3_ok():
+                    types.append("ai_scene")
             except Exception:              # noqa: BLE001 — optional capability
                 pass
         if self.source_url:
@@ -360,6 +396,11 @@ class BrollDirector:
             # The prompt asks for variety; this enforces it. A prompt-only rule
             # is a request, and the one time it is ignored is the video that
             # ships as four page-rolls.
+            # The expensive type has its own cap, independent of max_per_kind.
+            if kind == "ai_scene" and used_kind.get(kind, 0) >= self.h3_budget:
+                logger.info("plan dropped: ai_scene budget of %d already spent",
+                            self.h3_budget)
+                continue
             if used_kind.get(kind, 0) >= max_per_kind:
                 logger.info("plan dropped: %s already used %d times",
                             kind, max_per_kind)
@@ -444,6 +485,18 @@ class BrollDirector:
                 words=synth_phrases(sent, slot.duration),
                 out_path=out, duration_s=slot.duration,
                 palette=self.palette, focus_paragraph=focus)
+
+        if k == "ai_scene":
+            from . import h3_client
+            scene = str(p.get("scene") or p.get("prompt") or "").strip()
+            if not scene:
+                raise DirectorError("ai_scene needs a scene description")
+            return await asyncio.to_thread(
+                h3_client.render,
+                scene=scene, out_path=out, duration_s=slot.duration,
+                width=self.width, height=self.height, fps=self.fps,
+                gen_size=self.h3_gen_size, steps=self.h3_steps,
+                seed=1000 + slot.index, first_frame=self.h3_first_frame or None)
 
         if k == "ai_video":
             from .aivideo import build_ai_clip
@@ -601,7 +654,7 @@ def _probe_duration(path: str) -> float:
 # and zoomed into it, clipping the surrounding words mid-letter. The dimmed
 # context is the point of that type: it shows the claim in place.
 _SELF_FRAMED = frozenset({"annotate", "macro", "highlight", "pageroll",
-                          "ai_video"})
+                          "ai_video", "ai_scene"})
 
 
 def _normalise_clip(path: str, want: float, fps: int,
@@ -748,6 +801,7 @@ PAYLOAD_SPEC: dict[str, str] = {
     "annotate": '"phrase": one exact phrase present on the page',
     "macro": '"phrase": one small element visible on the page',
     "ai_video": '"scene": a described scene, never a concept',
+    "ai_scene": '"scene": a described physical place and camera move, 12-30 words, no text or logos in it',
     "pageroll": "(no payload needed)",
     "lockup": '"title": the name (1-3 words), "badge": a short pill, '
               '"typed": one sentence that types in, "kicker": 1-2 word eyebrow',
@@ -892,6 +946,10 @@ _DURATION_BOUNDS: dict[str, tuple] = {
     "macro": (2.6, 4.5),
     "pageroll": (2.6, 4.0),
     "ai_video": (3.0, 5.0),
+    # Capped at 4s deliberately. Generation time scales with frame count, and
+    # at ~2 min per second of output the difference between a 4s and a 6s clip
+    # is four minutes of GPU on the single most expensive item in the build.
+    "ai_scene": (3.0, 4.0),
 }
 
 # The most words a card may carry, per type. Enforced when building props.
