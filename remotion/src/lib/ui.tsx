@@ -89,8 +89,14 @@ export const Frame: React.FC<{palette: Palette; children: React.ReactNode}> = ({
           padding: s.pad,
           display: 'flex',
           flexDirection: 'column',
-          justifyContent: 'center',
+          // "safe center" centres normally but falls back to flex-start the
+          // moment the content is taller than the frame. Plain "center"
+          // overflows in BOTH directions, so an over-tall panel loses the top
+          // of its content — which is where the kicker lives. A headline that
+          // is slightly too big should crowd the bottom, never behead itself.
+          justifyContent: 'safe center',
           alignItems: 'flex-start',
+          overflow: 'hidden',
           transform: `scale(${drift(t)})`,
         }}
       >
@@ -165,7 +171,16 @@ export const Words: React.FC<{
               // displacement. The spring alone still lands on a dead-straight
               // path; the noise is what stops a row of words animating like a
               // spreadsheet.
-              filter: sp < 0.98 ? focusIn(sp, size * 0.06) : undefined,
+              // The focus pull runs on its OWN clock, at roughly twice the
+              // spring's rate, and is gone by the time the word is halfway
+              // settled. Driving it off the spring directly meant the blur
+              // rode the spring's long tail: a trailing word sat visibly soft
+              // for a third of the clip, which reads as a broken render rather
+              // than an effect. Magnitude is down from 6% of the type size to
+              // 3.5% for the same reason — legibility is the whole point of
+              // this panel, and a blurred word is an unreadable one.
+              filter: sp < 0.5 ? focusIn(Math.min(1, sp * 2.2), size * 0.035)
+                               : undefined,
               transform: `translateY(${(1 - sp) * size * 0.16 + jit.y}px) `
                 + `translateX(${jit.x}px)`,
             }}

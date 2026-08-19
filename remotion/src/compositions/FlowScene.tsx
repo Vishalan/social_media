@@ -59,7 +59,14 @@ export const FlowScene: React.FC<FlowSceneProps> = ({
 
   const titleH = title ? ty.label * 1.6 : 0;
   const inputH = input ? ty.body * 1.3 : 0;
-  const resultH = result ? ty.body * 2.6 : 0;
+  // The banner's reserved height and its DRAWN height were computed
+  // independently and disagreed, so the banner sat on top of the last node.
+  // Now one is derived from the other: fix the text budget to two lines at a
+  // known size, and the reservation is exactly that plus the real padding.
+  const resultPadY = height * 0.022;
+  const resultMax = ty.body * 0.95;
+  const resultTextH = resultMax * 1.12 * 2;              // hard two-line cap
+  const resultH = result ? resultTextH + resultPadY * 2 + s.pad : 0;
   const avail = Math.max(1, height - s.pad * 2 - titleH - inputH - resultH);
 
   // Each node owns a slot; the box fills 62% of it, leaving the rest as the
@@ -185,15 +192,15 @@ export const FlowScene: React.FC<FlowSceneProps> = ({
         {result ? (
           <div style={{
             position: 'absolute', left: s.pad, right: s.pad, bottom: s.pad,
-            padding: `${height * 0.022}px ${s.gap}px`,
+            padding: `${resultPadY}px ${s.gap}px`,
             borderRadius: s.radius,
             background: `linear-gradient(110deg, ${acc}, ${acc2})`,
             color: '#0B0D11', fontWeight: 900, lineHeight: 1.12,
             // Fit to the banner's own inner width, not the panel's. The first
             // version wrapped and spilled past the rounded corner.
-            fontSize: fitBlock(result, ty.body * 0.95,
+            fontSize: fitBlock(result, resultMax,
                                width - s.pad * 2 - s.gap * 2,
-                               resultH * 0.8, {lineHeight: 1.12, fontWeight: 900}),
+                               resultTextH, {lineHeight: 1.12, fontWeight: 900}),
             clipPath: wipe(ramp(t, 0.66, 0.82)),
           }}>{result}</div>
         ) : null}

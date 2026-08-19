@@ -324,7 +324,14 @@ class BrollDirector:
         # quote and headline compositions carry a sentence far better; annotate
         # still shows a claim in place on the real page when the point is that
         # it IS on the page.
-        types.append("mechanism")          # needs only a described process
+        # `mechanism` is retired for the same reason code_walkthrough was: it
+        # describes a process as stacked text, and flow_scene DRAWS it —
+        # numbered nodes, connectors that trace themselves, a token moving
+        # through. Offered side by side the planner kept choosing the text one
+        # out of familiarity, which is exactly the "just text and design"
+        # complaint. A process is the one thing a diagram states outright and a
+        # paragraph only approximates, so there is no story where the text card
+        # is the better answer.
         # Generated footage needs BOTH a host that can make it and an explicit
         # opt-in. The capability check alone is not enough: the weights are
         # installed on this host and the check passes, but the measured output is
@@ -845,7 +852,7 @@ PAYLOAD_SPEC: dict[str, str] = {
     "annotate": '"phrase": one exact phrase present on the page',
     "macro": '"phrase": one small element visible on the page',
     "ai_video": '"scene": a described scene, never a concept',
-    "flow_scene": '"title": 2-5 words. "input": what enters, 3-6 words. "stages": 3-5 stages, EACH UNDER 26 CHARACTERS. "result": what comes out',
+    "flow_scene": '"title": 2-5 words. "input": what enters, 3-6 words. "stages": 3-5 stages, EACH UNDER 26 CHARACTERS. "result": what comes out, UNDER 22 CHARACTERS',
     "window_scene": '"title": 1-4 words, editorial. "windowTitle": the file or repo label. "lines": UP TO 6 short lines, prefix "+ " or "- " for a diff',
     "ai_scene": '"scene": a described physical place and camera move, 12-30 words, no text or logos in it',
     "pageroll": "(no payload needed)",
@@ -924,7 +931,9 @@ def _props_for(slot: "Slot") -> dict:
             "input": _cap_words(_clean(p.get("input"), 60), 6),
             # 26 chars keeps each stage on ONE line in the node box.
             "stages": [_clean(x, 26) for x in (p.get("stages") or []) if _clean(x)][:5],
-            "result": _cap_words(_clean(p.get("result") or p.get("output"), 60), 6),
+            # Two lines in the banner is the hard budget; 22 chars keeps it
+            # there without the fitter having to shrink to unreadable.
+            "result": _cap_words(_clean(p.get("result") or p.get("output"), 22), 4),
         }
 
     if k == "window_scene":

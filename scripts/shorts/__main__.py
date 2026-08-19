@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from shorts.config import ShortsConfig          # noqa: E402
+from shorts.config import ShortsConfig, resolve_endpoints  # noqa: E402
 from shorts import stages                        # noqa: E402
 
 # Where a .env may live, in order of precedence. The repo root sits two levels
@@ -146,6 +146,11 @@ def main() -> int:
     if args.words is not None:
         cfg.target_words_min = args.words
         cfg.target_words_max = args.words + 15
+
+    # Do this before any stage runs: the container IPs are not stable across
+    # restarts, and a stale one fails the run 40s in with "connection refused"
+    # from a service that is actually healthy.
+    resolve_endpoints(cfg)
 
     spec = args.source
     if args.source_file:

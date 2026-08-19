@@ -37,7 +37,15 @@ export const HeadlineBurst: React.FC<HeadlineBurstProps> = ({
   const byCount = n <= 3 ? ty.solo * 0.7 : n <= 6 ? ty.hero * 1.3 : n <= 10 ? ty.hero : ty.title;
   // Both axes. Width alone let an eight-word headline wrap to six lines and
   // run off the panel; the kicker and the rule below also take height.
-  const reserved = (kicker ? ty.label * 2.9 : 0) + height * 0.10;
+  // Every sibling that shares the column, counted from what it actually
+  // renders rather than one round number for "the other stuff". The old
+  // estimate omitted `support` entirely and undercounted the kicker, so a
+  // three-word headline claimed the whole panel and pushed the kicker off the
+  // top edge.
+  const kickerH = kicker ? ty.label * 1.5 + height * 0.026 + height * 0.032 : 0;
+  const ruleH = height * 0.022 + height * 0.014;          // margin + bar
+  const supportH = support ? height * 0.03 + ty.body * 1.25 * 2 : 0;
+  const reserved = kickerH + ruleH + supportH;
   const size = Math.min(
     fitWrapped(headline, byCount, width - s.pad * 2),
     fitBlock(headline, byCount, width - s.pad * 2,

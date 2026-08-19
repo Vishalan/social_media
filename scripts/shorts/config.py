@@ -7,8 +7,12 @@ carries the reason inline so it is not "tidied" back to a broken value.
 from __future__ import annotations
 
 import os
+import logging
+import subprocess
 from dataclasses import dataclass, field
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -144,8 +148,11 @@ class ShortsConfig:
     speech_atempo_floor: float = 0.85
 
     # --- avatar ---------------------------------------------------------
-    latentsync_endpoint: str = "http://172.18.0.7:7778"
-    chatterbox_endpoint: str = "http://172.18.0.8:7777"
+    # Resolved from the running containers at startup — see _resolve_endpoints
+    # below. These literals are only the fallback for when docker cannot be
+    # queried, and they WILL be wrong after a container restart.
+    latentsync_endpoint: str = "http://172.18.0.8:7778"
+    chatterbox_endpoint: str = "http://172.18.0.7:7777"
     inference_steps: int = 20
     guidance_scale: float = 1.5
     seed: int = 1247
@@ -369,3 +376,46 @@ class ShortsConfig:
 
     def path(self, *parts: str) -> str:
         return os.path.join(self.work_dir, *parts)
+
+
+def _container_ip(name: str) -> str:
+    """The bridge-network IP of a running container, or "" if unknown."""
+    try:
+        out = subprocess.run(
+            ["docker", "inspect", "-f",
+             "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", name],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    ip = out.stdout.strip()
+    return ip if out.returncode == 0 and ip.count(".") == 3 else ""
+
+
+def resolve_endpoints(cfg: "ShortsConfig") -> None:
+    """Point the endpoints at wherever the containers actually are.
+
+    Docker hands out bridge IPs in start order, so the addresses are NOT
+    stable across a restart. They had in fact SWAPPED: the config aimed
+    chatterbox at LatentSync's address and vice versa, and every run died on
+    "connection refused" from a service that was up and healthy the whole time.
+
+    A hostname that is really an implementation detail of another process's
+    start order has no business being a constant. Resolving it by container
+    name — the one thing that IS stable — makes a restart a non-event.
+
+    Failure is non-fatal: if docker is unavailable the configured literal is
+    kept, so a host that runs these services some other way still works.
+    """
+    for name, attr, port in (
+        ("commoncreed_chatterbox", "chatterbox_endpoint", 7777),
+        ("commoncreed_latentsync", "latentsync_endpoint", 7778),
+    ):
+        ip = _container_ip(name)
+        if not ip:
+            logger.warning("Could not resolve %s — keeping %s", name,
+                           getattr(cfg, attr))
+            continue
+        url = f"http://{ip}:{port}"
+        if url != getattr(cfg, attr):
+            logger.info("%s moved to %s (was %s)", name, url, getattr(cfg, attr))
+        setattr(cfg, attr, url)
