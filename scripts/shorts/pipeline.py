@@ -39,6 +39,9 @@ _SCRIPT_SCHEMA: dict[str, Any] = {
         # trust than the engagement is worth.
         "cta": {"type": "string"},
         "cta_keyword": {"type": "string"},
+        # WHO THE STORY IS ABOUT, as canonical domains — not who published it.
+        # These drive the brand marks on the graphics.
+        "subject_domains": {"type": "array", "items": {"type": "string"}},
         "script": {"type": "string"},
         "description": {"type": "string"},
         "visual_identity": {
@@ -126,8 +129,19 @@ and write no call to action at all.
   viewer should take away. Not padding, not repetition.
 - End on something concrete.
 
+SUBJECT vs PUBLISHER — these are different and the distinction matters:
+- 'subject_domains': the canonical domains of the companies, products or
+  projects the story is ABOUT, most important first. For a story about X
+  open-sourcing its algorithm on GitHub, that is ["x.com", "github.com"] — NOT
+  the publication that reported it. Their logos are what belongs on the
+  graphics; a viewer should see the brand of the thing being discussed.
+- The publication is a citation. It belongs on a quoted line, nowhere else.
+- Use 2-3 domains at most, real ones you are confident exist.
+
 VISUAL IDENTITY
-Derive the look from the SOURCE ITSELF, not from generic tech-video style. If
+Derive the look from the SUBJECT of the story — the company, product or project
+it is about — not from the publication that reported it, and not from generic
+tech-video style. If
 the story is about a specific company, product or repository, borrow its actual
 visual language: brand colours, interface, typographic register, iconography,
 the artifacts a reader of that source would recognise.

@@ -116,6 +116,19 @@ TYPE_CATALOG: dict[str, dict[str, str]] = {
                 "in under that. The workhorse for 'X is now Y': a licence, a "
                 "release, a rename. Use when the story turns on naming a thing."),
     },
+    "window_scene": {
+        "needs": "a file, repo, config, terminal or app surface in the story",
+        "for": ("THE DEFAULT for anything a developer would open — a repo, a "
+                "diff, a config, a log, a terminal. Prefer it over a text card "
+                "whenever the story touches a file or an interface. "
+                "The subject's actual interface as a real window — chrome, "
+                "title bar, syntax-coloured lines — sitting on a full-bleed "
+                "field in the SUBJECT's brand colour, under an editorial "
+                "title. Use it whenever the story turns on something a "
+                "developer would open: a repo, a diff, a config, a log. It "
+                "carries far more than a text card because the viewer sees the "
+                "thing itself."),
+    },
     "ai_scene": {
         "needs": ("a beat with NO concrete artifact to show — no page, no "
                   "figure, no quote, no file. Atmosphere, stakes or scale"),
@@ -260,7 +273,9 @@ class BrollDirector:
                  source_url: str = "", source_text: str = "",
                  source_title: str = "",
                  allow_ai_video: bool = False,
-                 h3_budget: int = 0) -> None:
+                 h3_budget: int = 0,
+                 fullscreen_kinds: tuple = (),
+                 frame_height: int = 1920) -> None:
         self.llm = intelligence
         self.work_dir = Path(work_dir)
         self.work_dir.mkdir(parents=True, exist_ok=True)
@@ -274,6 +289,9 @@ class BrollDirector:
         self.h3_gen_size = 640
         self.h3_steps = 20
         self.h3_first_frame = ""
+        self.subject_icon = ""
+        self.fullscreen_kinds = frozenset(fullscreen_kinds)
+        self.frame_height = frame_height
 
     # -- capability gating ------------------------------------------------
     def available_types(self) -> list[str]:
@@ -283,7 +301,11 @@ class BrollDirector:
         something the dispatcher cannot render — a page-roll with no URL, or a
         highlight with no article body.
         """
-        types = ["stats_card", "headline_burst", "code_walkthrough",
+        # code_walkthrough is retired in favour of window_scene, which does the
+        # same job strictly better: a real window with chrome and a brand field
+        # rather than a bordered pane on a dark card. Leaving both on offer just
+        # gave the planner a weaker option it kept choosing out of familiarity.
+        types = ["stats_card", "headline_burst", "window_scene",
                  "split_screen", "cinematic_chart", "lockup"]
         # `highlight` — the phone mockup sweeping a sentence — is retired. It
         # rendered the source's own body copy at phone-screenshot scale inside a
@@ -435,6 +457,12 @@ class BrollDirector:
         return slots
 
     # -- rendering --------------------------------------------------------
+    def target_size(self, kind: str) -> tuple:
+        """Canvas for a kind: the content panel, or the whole frame."""
+        if kind in self.fullscreen_kinds:
+            return self.width, self.frame_height
+        return self.width, self.height
+
     async def render(self, slot: Slot) -> Slot:
         out = str(self.work_dir / f"broll_{slot.index:02d}_{slot.kind}.mp4")
         try:
@@ -445,8 +473,9 @@ class BrollDirector:
             # — auto-framing would re-crop a deliberate layout, and the push
             # would shave 4% off edges the design placed on purpose.
             designed = slot.kind in _remotion_kinds()
+            cw, ch = self.target_size(slot.kind)
             slot.path = _normalise_clip(
-                path, slot.duration, self.fps, self.width, self.height,
+                path, slot.duration, self.fps, cw, ch,
                 autoframe=not designed and slot.kind not in _SELF_FRAMED,
                 push=not designed)
         except Exception as exc:                   # noqa: BLE001 — per-slot isolation
@@ -494,7 +523,8 @@ class BrollDirector:
             return await asyncio.to_thread(
                 h3_client.render,
                 scene=scene, out_path=out, duration_s=slot.duration,
-                width=self.width, height=self.height, fps=self.fps,
+                width=self.target_size(k)[0], height=self.target_size(k)[1],
+                fps=self.fps,
                 gen_size=self.h3_gen_size, steps=self.h3_steps,
                 seed=1000 + slot.index, first_frame=self.h3_first_frame or None)
 
@@ -569,14 +599,18 @@ class BrollDirector:
         """
         from . import remotion_client
 
+        w, h = self.target_size(slot.kind)
+        props = _props_for(slot)
+        if slot.kind == "window_scene" and self.subject_icon:
+            props["icon"] = self.subject_icon
         return await asyncio.to_thread(
             remotion_client.render,
             kind=slot.kind,
-            props=_props_for(slot),
+            props=props,
             out_path=out,
             duration_s=slot.duration,
-            width=self.width,
-            height=self.height,
+            width=w,
+            height=h,
             fps=self.fps,
             palette=self.palette,
         )
@@ -801,6 +835,7 @@ PAYLOAD_SPEC: dict[str, str] = {
     "annotate": '"phrase": one exact phrase present on the page',
     "macro": '"phrase": one small element visible on the page',
     "ai_video": '"scene": a described scene, never a concept',
+    "window_scene": '"title": 1-4 words, editorial. "windowTitle": the file or repo label. "lines": UP TO 6 short lines, prefix "+ " or "- " for a diff',
     "ai_scene": '"scene": a described physical place and camera move, 12-30 words, no text or logos in it',
     "pageroll": "(no payload needed)",
     "lockup": '"title": the name (1-3 words), "badge": a short pill, '
@@ -870,6 +905,17 @@ def _props_for(slot: "Slot") -> dict:
             "kicker": _clean(p.get("kicker") or p.get("title"), 28),
             "left": side("left_title", "left_lines", "left_value", "Before"),
             "right": side("right_title", "right_lines", "right_value", "After"),
+        }
+
+    if k == "window_scene":
+        return {
+            "title": _cap_words(_clean(p.get("title"), 60), 5),
+            "windowTitle": _clean(p.get("windowTitle") or p.get("filename"), 44),
+            # Capped by CHARACTERS, not words. A path like
+            # "+ ranking/eval-harness/features.json" is two words and far too
+            # wide for a monospace window at panel scale — the first build
+            # clipped its lines at the right edge.
+            "lines": [_clean(x, 30) for x in (p.get("lines") or []) if _clean(x)][:6],
         }
 
     if k == "code_walkthrough":
@@ -950,6 +996,7 @@ _DURATION_BOUNDS: dict[str, tuple] = {
     # at ~2 min per second of output the difference between a 4s and a 6s clip
     # is four minutes of GPU on the single most expensive item in the build.
     "ai_scene": (3.0, 4.0),
+    "window_scene": (4.5, 7.0),
 }
 
 # The most words a card may carry, per type. Enforced when building props.

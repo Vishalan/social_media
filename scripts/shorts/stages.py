@@ -341,18 +341,35 @@ async def _direct_broll(self: ShortsPipeline, *, url: str,
         source_url=url, source_text=src_text,
         source_title=script.get("title", ""),
         allow_ai_video=cfg.ai_video_enabled,
-        h3_budget=cfg.h3_max_per_video if cfg.h3_enabled else 0)
+        h3_budget=cfg.h3_max_per_video if cfg.h3_enabled else 0,
+        fullscreen_kinds=cfg.fullscreen_kinds,
+        frame_height=cfg.height)
 
     d.h3_gen_size = cfg.h3_gen_size
     d.h3_steps = cfg.h3_steps
+
+    # The mark that goes ON the graphics is the SUBJECT's, not the publisher's.
+    # Getting this backwards is what put the TechCrunch logo on a story about X:
+    # the publication reported it, X is what it is about. The publisher survives
+    # only as an attribution line on quoted source text.
+    try:
+        from .sourcebrand import fetch_subject_brand, icon_data_uri
+        subject = fetch_subject_brand(
+            script.get("subject_domains") or [], cfg.broll_dir)
+        d.subject_icon = icon_data_uri(subject.get("icon"))
+        if subject.get("domain"):
+            logger.info("Graphics will wear the %s mark", subject["domain"])
+    except Exception as exc:                       # noqa: BLE001 — optional
+        logger.info("no subject mark available: %s", str(exc)[:100])
     # A card built from the source's own mark, used as frame zero of any
     # generated clip. Verified on a real generation: the supplied image IS the
     # first frame and its colours carry through, so the scene inherits the
     # story's palette instead of defaulting to generic teal.
     if cfg.h3_enabled and cfg.h3_brand_first_frame and url:
         try:
-            from .sourcebrand import fetch_brand, build_brand_card
-            brand = fetch_brand(url, cfg.broll_dir)
+            from .sourcebrand import fetch_subject_brand, build_brand_card
+            brand = fetch_subject_brand(
+                script.get("subject_domains") or [], cfg.broll_dir)
             d.h3_first_frame = build_brand_card(
                 out_png=os.path.join(cfg.broll_dir, "brand_card.png"),
                 icon=brand.get("icon"),
@@ -372,7 +389,8 @@ async def _direct_broll(self: ShortsPipeline, *, url: str,
         return await fetch_broll(self, [], url=url, force=True)
 
     out = [{"path": s.path, "duration": s.duration, "kind": s.kind,
-            "start": s.start, "why": s.why, "error": s.error}
+            "start": s.start, "why": s.why, "error": s.error,
+            "fullscreen": s.kind in set(cfg.fullscreen_kinds)}
            for s in slots if s.path]
     self._save("broll.json", out)
     logger.info("Director b-roll: %d clips — %s", len(out),
@@ -480,7 +498,28 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
         prev = placed[i - 1]
         if placed[i]["t"] < prev["t"] + prev["len"] + 0.4:
             placed[i]["t"] = prev["t"] + prev["len"] + 0.4
-    placed = [p for p in placed if p["t"] + p["len"] <= dur - 0.3]
+    # A clip that runs past the end gets SLID EARLIER, not dropped. Dropping was
+    # silent, and it threw away the most expensive item in the build: a
+    # window_scene planned onto a late beat simply never appeared in the video,
+    # with nothing in the log to say so.
+    kept = []
+    for q in placed:
+        if q["t"] + q["len"] <= dur - 0.3:
+            kept.append(q)
+            continue
+        latest = dur - 0.3 - q["len"]
+        clash = any(not (latest + q["len"] <= a or latest >= z)
+                    for a, z in [(x["t"], x["t"] + x["len"]) for x in kept])
+        if latest > 0.5 and not clash:
+            logger.info("  %s slid %.2fs -> %.2fs to fit before the end",
+                        q["slug"], q["t"], latest)
+            q["t"] = latest
+            kept.append(q)
+        else:
+            logger.warning("  %s dropped: %.2fs + %.2fs runs past %.2fs and "
+                           "there is no free slot earlier", q["slug"], q["t"],
+                           q["len"], dur)
+    placed = kept
     busy = [(p["t"], p["t"] + p["len"]) for p in placed]
 
     for b in broll:
@@ -501,7 +540,8 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
             guard += 1
         if t + L <= dur - 0.5:
             placed.append({"t": t, "len": L, "path": b["path"],
-                           "slug": b.get("kind") or os.path.basename(b["path"])})
+                           "slug": b.get("kind") or os.path.basename(b["path"]),
+                           "full": bool(b.get("fullscreen"))})
             busy.append((t, t + L))
 
     # THE CALL TO ACTION gets its own card, placed where it is spoken.
@@ -643,10 +683,21 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
         placed.sort(key=lambda x: x["t"])
         busy = [(q["t"], q["t"] + q["len"]) for q in placed]
 
+    # Cap how much of the video the presenter can be absent from. Full-frame
+    # graphics are a change of scale, not a replacement for the face.
+    full_budget = dur * cfg.fullscreen_max_share
+    full_used = 0.0
     for p in placed:
         add_gap(cursor, p["t"])
-        spans.append({"mode": "content", "start": p["t"],
-                      "end": p["t"] + p["len"], "content": p["path"]})
+        as_full = bool(p.get("full")) and full_used + p["len"] <= full_budget
+        if p.get("full") and not as_full:
+            logger.info("  %s stays in the panel — full-frame budget spent "
+                        "(%.1fs of %.1fs)", p["slug"], full_used, full_budget)
+        if as_full:
+            full_used += p["len"]
+        spans.append({"mode": "content_full" if as_full else "content",
+                      "start": p["t"], "end": p["t"] + p["len"],
+                      "content": p["path"]})
         cursor = p["t"] + p["len"]
     add_gap(cursor, dur)
 
@@ -920,6 +971,16 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
                 logger.warning("span %d has no content panel — presenter will "
                                "be full-frame", i)
                 os.replace(seg, out)
+        elif sp["mode"] == "content_full":
+            # The graphic owns the whole 1080x1920 frame; the presenter is not
+            # composited at all for its duration.
+            self._sh("ffmpeg", "-v", "error", "-y", "-stream_loop", "-1",
+                     "-i", sp["content"], "-t", f"{L:.3f}", "-an",
+                     "-vf", (f"scale={cfg.width}:{cfg.height}:"
+                             f"force_original_aspect_ratio=increase,"
+                             f"crop={cfg.width}:{cfg.height}"),
+                     "-r", str(cfg.fps), "-c:v", "libx264", "-crf", "17",
+                     "-pix_fmt", "yuv420p", out)
         elif sp["mode"] == "full":
             os.replace(seg, out)
         else:
@@ -949,7 +1010,19 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
             if not any(not (e <= a or s >= z) for a, z in dspans)]
 
     from .branding import CAPTIONS
-    df = [CAPTIONS.drawtext(t, s, e, y_frac=cfg.caption_y())
+    # A caption sits just under the panel seam, which is correct while the
+    # presenter holds the lower half — and lands in the MIDDLE of a graphic
+    # that owns the whole frame. Full-frame spans push their captions to the
+    # lower third instead.
+    full_spans = [(sp["start"], sp["end"]) for sp in spans
+                  if sp["mode"] == "content_full"]
+
+    def caption_y(start: float, end: float) -> float:
+        if any(not (end <= a or start >= z) for a, z in full_spans):
+            return 0.82
+        return cfg.caption_y()
+
+    df = [CAPTIONS.drawtext(t, s, e, y_frac=caption_y(s, e))
           for s, e, t in cues]
     self._sh("ffmpeg", "-v", "error", "-y", "-i", cfg.path("v_layout.mp4"),
              "-vf", ",".join(df), "-c:v", "libx264", "-crf", "17",

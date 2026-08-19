@@ -40,8 +40,13 @@ export const CtaCard: React.FC<CtaCardProps> = ({palette, action, keyword, kicke
   // A slow breath, running the whole clip so the card never sits still.
   const pulse = 1 + 0.02 * Math.sin((frame / Math.max(1, fps)) * 2.2);
 
+  // The keyword sits INSIDE a bordered box, so the space it has is the panel
+  // minus the frame padding, minus the box's own padding, minus its border.
+  // Fitting to an approximation of that overflowed the box on a long keyword —
+  // "ALGORITHM" ran past its own frame.
+  const boxInner = width - s.pad * 2 - s.gap * 2 - 6;
   const wordSize = keyword
-    ? fitOneLine(keyword, ty.solo * 0.78, width - s.pad * 2.4, 900, '-0.02em')
+    ? fitOneLine(keyword, ty.solo * 0.78, boxInner, 900, '-0.02em')
     : 0;
   const actionSize = fitWrapped(action, ty.body * 1.15, width - s.pad * 2, 700);
 

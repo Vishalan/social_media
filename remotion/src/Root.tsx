@@ -10,6 +10,7 @@ import {QuoteCard, QuoteCardProps} from './compositions/QuoteCard';
 import {Lockup, LockupProps} from './compositions/Lockup';
 import {SourcePull, SourcePullProps} from './compositions/SourcePull';
 import {CtaCard, CtaCardProps} from './compositions/CtaCard';
+import {WindowScene, WindowSceneProps} from './compositions/WindowScene';
 
 /**
  * Canvas and duration come from input props, not from these defaults.
@@ -185,6 +186,25 @@ export const RemotionRoot: React.FC = () => {
           kicker: 'want the link?',
           keyword: 'ALGORITHM',
           action: "Comment it and I'll send you the repo",
+        } as any}
+      />
+      <Composition
+        id="WindowScene"
+        component={WindowScene as any}
+        durationInFrames={110}
+        fps={25}
+        width={1080}
+        height={998}
+        calculateMetadata={sized}
+        defaultProps={{
+          ...common,
+          durationInSeconds: 4.5,
+          title: 'What shipped',
+          windowTitle: 'the-algorithm — main',
+          lines: ['+ ranking/features.json', '+ ranking/eval-harness/',
+                  '- core/grok-integration/', '+ LICENSE (Apache-2.0)'],
+          step: 2,
+          steps: 5,
         } as any}
       />
     </>

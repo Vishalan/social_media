@@ -157,3 +157,28 @@ def build_brand_card(*, out_png: str, icon: Optional[str], palette: list,
     img.save(out_png)
     logger.info("Brand card for generated footage: %s", out_png)
     return out_png
+
+
+def fetch_subject_brand(domains: list, out_dir: str) -> dict:
+    """Brand marks for what the story is ABOUT, not who reported it.
+
+    This distinction was got wrong first time round and it showed: a story about
+    X open-sourcing its ranking algorithm opened on the TechCrunch logo and wore
+    TechCrunch green throughout, because the code treated "source" as one idea.
+    The publication is a citation — it belongs on a quoted line. The subject is
+    the identity the graphics should wear.
+
+    Takes the first domain that yields a usable icon, so the script can list
+    fallbacks in priority order.
+    """
+    for domain in (domains or []):
+        d = str(domain).strip().lower().replace("https://", "").replace("http://", "")
+        d = d.split("/")[0]
+        if not d or "." not in d:
+            continue
+        brand = fetch_brand(f"https://{d}/", out_dir)
+        if brand.get("icon"):
+            logger.info("Subject brand: %s", d)
+            return brand
+        logger.info("No usable mark for subject %s — trying the next", d)
+    return {"icon": None, "theme": None, "domain": ""}

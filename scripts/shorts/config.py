@@ -299,6 +299,20 @@ class ShortsConfig:
     # real generation: the supplied frame IS frame zero and its colours carry
     # through the whole clip, so the scene inherits the story's palette.
     h3_brand_first_frame: bool = True
+
+    # --- full-frame graphics --------------------------------------------
+    # Kinds allowed to take the WHOLE frame instead of the top panel.
+    #
+    # The half-and-half rule exists so the presenter is never absent for long,
+    # and that still holds — it is a rule about the AVATAR, not about every
+    # frame of the video. A designed graphic that owns 1080x1920 for four
+    # seconds is a change of scale, and changes of scale are most of what makes
+    # a cut feel deliberate rather than mechanical. These three earn it: a
+    # generated establishing shot, a window object, and the call to action.
+    fullscreen_kinds: tuple = ("ai_scene", "window_scene", "cta")
+    # Never let full-frame graphics push the presenter below this share of the
+    # video — the face is the channel.
+    fullscreen_max_share: float = 0.30
     # Ceiling on designed clips per video. Each one costs a claude -p call plus
     # a render, so this bounds the per-video cost, not the aesthetics.
     # 14 designed clips is roughly 45s of rendering, against about 2.5 hours

@@ -57,6 +57,8 @@ COMPOSITIONS: dict[str, tuple[str, tuple[str, ...]]] = {
     "tweet_reveal": ("QuoteCard", ("quote", "author")),
     "lockup": ("Lockup", ("title",)),
     # The presenter-span bed: one source sentence as a pull-quote.
+    # An app window on a full-bleed brand field — an OBJECT, not a card.
+    "window_scene": ("WindowScene", ("title", "lines")),
     "source_pull": ("SourcePull", ("sentence",)),
     # The call to action, placed where it is spoken.
     "cta": ("CtaCard", ("action",)),
