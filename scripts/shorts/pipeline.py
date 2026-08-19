@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import urllib.request
 from pathlib import Path
@@ -356,16 +357,7 @@ class ShortsPipeline:
             for j, piece in enumerate(
                     self.chunk_text(self._tts_text(text_i),
                                     cfg.tts_max_chars_per_chunk)):
-                name = f"{cfg.run_id}_c{i}_{j}"
-                self._post(f"{cfg.chatterbox_endpoint}/tts", {
-                    "text": piece, "reference_audio_path": cfg.voice_ref,
-                    "exaggeration": exaggeration,
-                    "cfg_weight": cfg.cfg_weight,
-                    "output_filename": f"{name}.wav",
-                })
-                local = cfg.path(f"chunk{i}_{j}.wav")
-                self._sh("docker", "cp",
-                         f"commoncreed_chatterbox:/app/output/{name}.wav", local)
+                local = self._synth_take(piece, exaggeration, f"chunk{i}_{j}")
                 d = self._dur(local)
                 if d >= 39.9:
                     logger.warning("take %d.%d is %.2fs — at the ~40s cap", i, j, d)
@@ -499,6 +491,72 @@ class ShortsPipeline:
         out = self._PARENTHETICAL_DASH.sub(", ", out)
         out = self._INTRAWORD_HYPHEN.sub(" ", out)
         return " ".join(out.split())
+
+    # Chatterbox sometimes LOOPS — it generates the utterance, then generates it
+    # again. Caught in a shipped build: "But it's not everything." was spoken
+    # twice, at 38.80s and again at 39.96s, and the caption aligner hid it by
+    # mapping both utterances onto the same script words, leaving only a
+    # suspicious 2.2s gap in the timings as evidence.
+    #
+    # It is a known failure mode of autoregressive TTS and it is worst on SHORT
+    # inputs — which the per-sentence rhythm work introduced, since a four-word
+    # sentence now gets its own tiny generation. The feature created the
+    # exposure, so the guard belongs with it.
+    #
+    # Detection is by duration: a doubled utterance runs about twice as long as
+    # the words can account for. Retries lower the temperature, because sampling
+    # temperature is what drives the model off the end of the sentence and back
+    # to the start.
+    _REPEAT_RATIO = 1.55
+    _RETRY_TEMPS = (0.55, 0.35)
+
+    @staticmethod
+    def _expected_speech_s(text: str) -> float:
+        """Roughly how long this many words should take to say."""
+        return len(text.split()) / 3.2 + 0.35
+
+    def _synth_take(self, text: str, exaggeration: float, name: str) -> str:
+        """Synthesise one take, retrying if the model repeats itself."""
+        cfg = self.cfg
+        expected = self._expected_speech_s(text)
+        local = cfg.path(f"{name}.wav")
+        attempts = [None, *self._RETRY_TEMPS]
+
+        best_path, best_dur = None, float("inf")
+        for i, temp in enumerate(attempts):
+            payload = {
+                "text": text, "reference_audio_path": cfg.voice_ref,
+                "exaggeration": exaggeration, "cfg_weight": cfg.cfg_weight,
+                "output_filename": f"{cfg.run_id}_{name}.wav",
+            }
+            if temp is not None:
+                payload["temperature"] = temp
+            self._post(f"{cfg.chatterbox_endpoint}/tts", payload)
+            candidate = cfg.path(f"{name}_try{i}.wav")
+            self._sh("docker", "cp",
+                     f"commoncreed_chatterbox:/app/output/{cfg.run_id}_{name}.wav",
+                     candidate)
+            got = self._dur(candidate)
+            if got < best_dur:
+                best_path, best_dur = candidate, got
+            if got <= expected * self._REPEAT_RATIO:
+                if i:
+                    logger.info("  %s: clean on retry %d (temp %.2f)", name, i, temp)
+                shutil.copyfile(candidate, local)
+                return local
+            logger.warning(
+                "%s ran %.2fs for %d words (expected ~%.2fs) — model likely "
+                "repeated itself%s", name, got, len(text.split()), expected,
+                f", retrying at temperature {attempts[i+1]}"
+                if i + 1 < len(attempts) else " and retries are exhausted")
+
+        # Every attempt looked repeated. Keep the SHORTEST, which is the least
+        # doubled — returning the last one instead would ship whichever sample
+        # happened to come out worst.
+        logger.warning("%s: keeping the shortest of %d attempts (%.2fs)",
+                       name, len(attempts), best_dur)
+        shutil.copyfile(best_path, local)
+        return local
 
     def _plan_rhythm(self, script: str) -> list:
         """Split the script into sentences, each with its own energy and gap.
