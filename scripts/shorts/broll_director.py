@@ -116,6 +116,16 @@ TYPE_CATALOG: dict[str, dict[str, str]] = {
                 "in under that. The workhorse for 'X is now Y': a licence, a "
                 "release, a rename. Use when the story turns on naming a thing."),
     },
+    "flow_scene": {
+        "needs": "a process with 3-5 ordered stages that something passes through",
+        "for": ("an actual DIAGRAM — numbered nodes down a spine, connectors "
+                "that draw themselves between them, a token travelling the "
+                "path, and the output landing at the end. Use it when the story "
+                "explains how something WORKS: what goes in, what happens to "
+                "it, what comes out. A flow is the one idea a diagram states "
+                "and a sentence only approximates, so prefer this over "
+                "mechanism whenever there is a genuine pipeline."),
+    },
     "window_scene": {
         "needs": "a file, repo, config, terminal or app surface in the story",
         "for": ("THE DEFAULT for anything a developer would open — a repo, a "
@@ -306,7 +316,7 @@ class BrollDirector:
         # rather than a bordered pane on a dark card. Leaving both on offer just
         # gave the planner a weaker option it kept choosing out of familiarity.
         types = ["stats_card", "headline_burst", "window_scene",
-                 "split_screen", "cinematic_chart", "lockup"]
+                 "split_screen", "cinematic_chart", "lockup", "flow_scene"]
         # `highlight` — the phone mockup sweeping a sentence — is retired. It
         # rendered the source's own body copy at phone-screenshot scale inside a
         # bezel, so the actual words were small, the bezel ate frame, and the
@@ -835,6 +845,7 @@ PAYLOAD_SPEC: dict[str, str] = {
     "annotate": '"phrase": one exact phrase present on the page',
     "macro": '"phrase": one small element visible on the page',
     "ai_video": '"scene": a described scene, never a concept',
+    "flow_scene": '"title": 2-5 words. "input": what enters, 3-6 words. "stages": 3-5 stages, EACH UNDER 26 CHARACTERS. "result": what comes out',
     "window_scene": '"title": 1-4 words, editorial. "windowTitle": the file or repo label. "lines": UP TO 6 short lines, prefix "+ " or "- " for a diff',
     "ai_scene": '"scene": a described physical place and camera move, 12-30 words, no text or logos in it',
     "pageroll": "(no payload needed)",
@@ -905,6 +916,15 @@ def _props_for(slot: "Slot") -> dict:
             "kicker": _clean(p.get("kicker") or p.get("title"), 28),
             "left": side("left_title", "left_lines", "left_value", "Before"),
             "right": side("right_title", "right_lines", "right_value", "After"),
+        }
+
+    if k == "flow_scene":
+        return {
+            "title": _cap_words(_clean(p.get("title"), 50), 5),
+            "input": _cap_words(_clean(p.get("input"), 60), 6),
+            # 26 chars keeps each stage on ONE line in the node box.
+            "stages": [_clean(x, 26) for x in (p.get("stages") or []) if _clean(x)][:5],
+            "result": _cap_words(_clean(p.get("result") or p.get("output"), 60), 6),
         }
 
     if k == "window_scene":
@@ -997,6 +1017,7 @@ _DURATION_BOUNDS: dict[str, tuple] = {
     # is four minutes of GPU on the single most expensive item in the build.
     "ai_scene": (3.0, 4.0),
     "window_scene": (4.5, 7.0),
+    "flow_scene": (5.5, 7.5),
 }
 
 # The most words a card may carry, per type. Enforced when building props.

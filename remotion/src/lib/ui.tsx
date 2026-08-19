@@ -3,6 +3,7 @@ import {AbsoluteFill, useCurrentFrame, useVideoConfig} from 'remotion';
 import {FONT_CSS, SANS, MONO, bgOf, inkOf, accentOf, accent2Of, spacing, typeScale, Palette} from '../theme';
 import {useClip, drift, at, blink} from './timing';
 import {EXPO, pop, settle, ramp, wipe, focusIn, rand} from './motion';
+import {Aurora, jitter} from './atmosphere';
 
 /**
  * The layered backdrop every composition sits on.
@@ -24,7 +25,10 @@ const Backdrop: React.FC<{palette: Palette}> = ({palette}) => {
   return (
     <>
       <AbsoluteFill style={{background: `linear-gradient(160deg, ${bg} 0%, ${shade(bg, 14)} 55%, ${bg} 100%)`}} />
-      {/* Drifting colour orbs: the whole reason the field reads as lit. */}
+      {/* Orbital colour field. Replaces two linearly-drifting radials: linear
+          drift is the one motion the eye reads as mechanical straight away. */}
+      <Aurora palette={palette} />
+      {/* Kept as a second, slower pair for depth behind the aurora. */}
       <AbsoluteFill
         style={{
           background: `radial-gradient(closest-side, ${acc}2E, transparent)`,
@@ -117,7 +121,9 @@ export const Words: React.FC<{
   to?: number;
   lineHeight?: number;
   gradient?: [string, string];
-}> = ({text, size, weight = 900, color, accent, accentFrom, accentRange, from = 0.02, to = 0.66, lineHeight = 1.04, gradient}) => {
+  /** Draw a skewed marker bar behind the accented words. */
+  marker?: boolean;
+}> = ({text, size, weight = 900, color, accent, accentFrom, accentRange, from = 0.02, to = 0.66, lineHeight = 1.04, gradient, marker}) => {
   const {t, frame, fps, durationInFrames} = useClip();
   const words = text.split(/\s+/).filter(Boolean);
   const slot = (to - from) / Math.max(1, words.length);
@@ -128,6 +134,7 @@ export const Words: React.FC<{
         const start = from + slot * i;
         const p = ramp(t, start, Math.min(to, start + slot * 1.7));
         const sp = settle(frame, fps, Math.round(start * durationInFrames));
+        const jit = jitter(`w${i}`, frame, size * 0.012);
         // accentRange highlights a PHRASE; accentFrom colours a tail. Using
         // the tail form for a mid-sentence emphasis painted everything after
         // it, which defeats the point of having one focal target.
@@ -139,6 +146,7 @@ export const Words: React.FC<{
           <span
             key={i}
             style={{
+              position: 'relative',
               fontSize: size,
               fontWeight: weight,
               letterSpacing: '-0.025em',
@@ -153,10 +161,35 @@ export const Words: React.FC<{
               backgroundClip: grad ? ('text' as const) : undefined,
               display: 'inline-block',
               clipPath: wipe(p),
-              transform: `translateY(${(1 - sp) * size * 0.16}px)`,
+              // Blur-to-sharp on entry, plus a couple of pixels of noise
+              // displacement. The spring alone still lands on a dead-straight
+              // path; the noise is what stops a row of words animating like a
+              // spreadsheet.
+              filter: sp < 0.98 ? focusIn(sp, size * 0.06) : undefined,
+              transform: `translateY(${(1 - sp) * size * 0.16 + jit.y}px) `
+                + `translateX(${jit.x}px)`,
             }}
           >
-            {w}
+            {marker && isAccent ? (
+              // A skewed bar behind the word, scaling out from the left. Reads
+              // as a marker pen: far stronger emphasis than recolouring text,
+              // and it survives being seen for half a second.
+              <span
+                style={{
+                  position: 'absolute',
+                  left: -size * 0.06,
+                  right: -size * 0.06,
+                  top: '0.14em',
+                  bottom: '0.14em',
+                  background: accent,
+                  opacity: 0.28,
+                  borderRadius: size * 0.06,
+                  transform: `skewX(-10deg) scaleX(${ramp(t, start, start + 0.14)})`,
+                  transformOrigin: 'left center',
+                }}
+              />
+            ) : null}
+            <span style={{position: 'relative'}}>{w}</span>
           </span>
         );
       })}

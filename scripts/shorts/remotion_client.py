@@ -59,6 +59,8 @@ COMPOSITIONS: dict[str, tuple[str, tuple[str, ...]]] = {
     # The presenter-span bed: one source sentence as a pull-quote.
     # An app window on a full-bleed brand field — an OBJECT, not a card.
     "window_scene": ("WindowScene", ("title", "lines")),
+    # A real diagram: nodes, drawn connectors, a token travelling the path.
+    "flow_scene": ("FlowScene", ("stages",)),
     "source_pull": ("SourcePull", ("sentence",)),
     # The call to action, placed where it is spoken.
     "cta": ("CtaCard", ("action",)),

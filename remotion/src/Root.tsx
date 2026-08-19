@@ -11,6 +11,7 @@ import {Lockup, LockupProps} from './compositions/Lockup';
 import {SourcePull, SourcePullProps} from './compositions/SourcePull';
 import {CtaCard, CtaCardProps} from './compositions/CtaCard';
 import {WindowScene, WindowSceneProps} from './compositions/WindowScene';
+import {FlowScene, FlowSceneProps} from './compositions/FlowScene';
 
 /**
  * Canvas and duration come from input props, not from these defaults.
@@ -205,6 +206,26 @@ export const RemotionRoot: React.FC = () => {
                   '- core/grok-integration/', '+ LICENSE (Apache-2.0)'],
           step: 2,
           steps: 5,
+        } as any}
+      />
+      <Composition
+        id="FlowScene"
+        component={FlowScene as any}
+        durationInFrames={150}
+        fps={25}
+        width={1080}
+        height={1920}
+        calculateMetadata={sized}
+        defaultProps={{
+          ...common,
+          width: 1080,
+          height: 1920,
+          durationInSeconds: 6,
+          title: 'how the feed gets built',
+          input: 'Every post you could see',
+          stages: ['Pull candidate posts', 'Score by signal weights',
+                   'Filter rule-violating', 'Rank and assemble'],
+          result: 'Your For You timeline',
         } as any}
       />
     </>

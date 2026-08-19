@@ -309,7 +309,7 @@ class ShortsConfig:
     # seconds is a change of scale, and changes of scale are most of what makes
     # a cut feel deliberate rather than mechanical. These three earn it: a
     # generated establishing shot, a window object, and the call to action.
-    fullscreen_kinds: tuple = ("ai_scene", "window_scene", "cta")
+    fullscreen_kinds: tuple = ("ai_scene", "window_scene", "flow_scene", "cta")
     # Never let full-frame graphics push the presenter below this share of the
     # video — the face is the channel.
     fullscreen_max_share: float = 0.30
