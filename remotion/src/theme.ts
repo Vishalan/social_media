@@ -37,19 +37,129 @@ const LUMA = (hex: string): number => {
  * entries are the source's background and body colours. Mid-luminance only,
  * with amber as the fallback because it reads on any background.
  */
-export const accentOf = (palette: Palette, fallback = '#FFD43B'): string => {
-  for (let i = palette.length - 1; i >= 0; i--) {
-    const c = palette[i];
-    if (typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c)) {
-      const l = LUMA(c);
-      if (l > 70 && l < 210) return c;
-    }
-  }
-  return fallback;
-};
-
 export const bgOf = (palette: Palette): string =>
   palette?.[0] && /^#[0-9a-f]{6}$/i.test(palette[0]) ? palette[0] : '#0B0D11';
+
+// ─── contrast ────────────────────────────────────────────────────────────────
+//
+// A palette lifted from a brand is a set of colours that work TOGETHER on that
+// brand's own site — where the accent sits on white, not on the brand's own
+// background. Dropping both into the same frame is not the same arrangement.
+//
+// Anthropic's palette is the case that exposed it: a coral background with a
+// slightly darker coral in the set. The old accent picker filtered on absolute
+// brightness alone (70 < luma < 210), so the darker coral passed happily and
+// was used for display type ON the coral background — a contrast ratio of
+// roughly 1.2:1, which is invisible. Half a headline and the source kicker
+// disappeared into the background of a finished video.
+//
+// Brightness cannot answer this question, because legibility is not a property
+// of a colour. It is a property of a PAIR.
+
+/** WCAG relative luminance. Linearises sRGB first — the crude 0-255 average is
+ *  what let a 1.2:1 pair look acceptable to the old check. */
+const relLum = (hex: string): number => {
+  const h = hex.replace('#', '');
+  const ch = [0, 2, 4].map((i) => {
+    const v = parseInt(h.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+};
+
+/** WCAG contrast ratio, 1 (identical) to 21 (black on white). */
+export const contrastRatio = (a: string, b: string): number => {
+  const la = relLum(a);
+  const lb = relLum(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+};
+
+const toHsl = (hex: string): [number, number, number] => {
+  const h = hex.replace('#', '');
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return [0, 0, l];
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let hue: number;
+  if (max === r) hue = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) hue = ((b - r) / d + 2) / 6;
+  else hue = ((r - g) / d + 4) / 6;
+  return [hue, s, l];
+};
+
+const fromHsl = (hh: number, s: number, l: number): string => {
+  const f = (n: number) => {
+    const k = (n + hh * 12) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const v = l - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1)));
+    return Math.round(255 * v).toString(16).padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+};
+
+/**
+ * The nearest version of `fg` that is actually legible on `bg`.
+ *
+ * Hue and saturation are preserved and only LIGHTNESS moves, so the result
+ * still reads as the brand's colour rather than a generic swatch — the point
+ * is to keep borrowing the subject's identity, just legibly. It walks away
+ * from the background in whichever direction has more headroom, and gives up
+ * to plain ink or paper if the hue cannot reach the target at any lightness.
+ */
+/** Ink or paper, whichever is legible ON the given colour. */
+export const onColor = (bg: string): string =>
+  contrastRatio('#FFFFFF', bg) >= contrastRatio('#0B0D11', bg) ? '#FFFFFF' : '#0B0D11';
+
+export const ensureContrast = (fg: string, bg: string, min = 4.5): string => {
+  if (contrastRatio(fg, bg) >= min) return fg;
+  const [h, s] = toHsl(fg);
+  const bgL = relLum(bg);
+  // Move toward whichever end is further from the background.
+  const up = bgL < 0.5;
+  for (let i = 1; i <= 20; i++) {
+    const l = up ? 0.5 + (i / 20) * 0.5 : 0.5 - (i / 20) * 0.5;
+    const cand = fromHsl(h, s, l);
+    if (contrastRatio(cand, bg) >= min) return cand;
+  }
+  // Saturated hues cannot always reach 4.5:1 at any lightness; fall back to
+  // the highest-contrast neutral rather than shipping something unreadable.
+  return contrastRatio('#FFFFFF', bg) >= contrastRatio('#0B0D11', bg)
+    ? '#FFFFFF'
+    : '#0B0D11';
+};
+
+export const accentOf = (palette: Palette, fallback = '#FFD43B'): string => {
+  const bg = bgOf(palette);
+  const cands: string[] = [];
+  for (let i = palette.length - 1; i >= 0; i--) {
+    const c = palette[i];
+    if (typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c)) cands.push(c);
+  }
+  // An accent has two jobs and the first fix only enforced one of them. It has
+  // to be legible ON the background, and DISTINCT from the body ink — an
+  // accent the same colour as the surrounding text is not an accent, it is
+  // just text. Enforcing legibility alone drove the Anthropic accent to
+  // near-black, which is exactly what the ink already was, so a headline came
+  // out perfectly readable with no emphasis anywhere in it.
+  const ink = LUMA(bg) > 140 ? '#0B0D11' : '#F4F6F8';
+  const legible = cands.filter((c) => contrastRatio(c, bg) >= 4.5);
+  const distinct = legible.filter((c) => contrastRatio(c, ink) >= 1.7);
+  if (distinct.length) return distinct[0];
+  if (legible.length) return legible[0];
+  // Otherwise take the most promising one and lift it until it reads. The old
+  // code returned the first mid-bright colour regardless, which on a coral
+  // background meant coral-on-coral.
+  if (cands.length) {
+    const best = cands.reduce((a, b) =>
+      contrastRatio(b, bg) > contrastRatio(a, bg) ? b : a);
+    return ensureContrast(best, bg, 4.5);
+  }
+  return ensureContrast(fallback, bg, 4.5);
+};
+
 
 export const inkOf = (palette: Palette): string => {
   const bg = bgOf(palette);
@@ -149,8 +259,15 @@ export const accent2Of = (palette: Palette): string => {
     const l = LUMA(c);
     return l > 55 && l < 220;
   });
-  if (mids.length) return mids[0];
+  // Same rule as the primary: a second accent nobody can see is not a second
+  // accent. Filtering on brightness alone let this pick another near-background
+  // tone from the same brand family.
+  const bg2 = bgOf(palette);
+  const legible = mids.filter((c) => contrastRatio(c, bg2) >= 4.5);
+  if (legible.length) return legible[0];
+  if (mids.length) return ensureContrast(mids[0], bg2, 4.5);
   // Rotate the primary's channels: cheap, deterministic, always distinct.
   const h = primary.replace('#', '');
-  return `#${h.slice(2, 4)}${h.slice(4, 6)}${h.slice(0, 2)}`;
+  return ensureContrast(
+    `#${h.slice(2, 4)}${h.slice(4, 6)}${h.slice(0, 2)}`, bg2, 4.5);
 };

@@ -114,6 +114,21 @@ CAPTIONS = CaptionStyle()
 
 
 # -------------------------------------------------------------- thumbnail
+def _rel_lum(rgb: tuple[int, int, int]) -> float:
+    """WCAG relative luminance from 8-bit sRGB."""
+    out = []
+    for v in rgb:
+        c = v / 255
+        out.append(c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * out[0] + 0.7152 * out[1] + 0.0722 * out[2]
+
+
+def contrast_ratio(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
+    """WCAG contrast ratio between two colours, 1 to 21."""
+    la, lb = _rel_lum(a), _rel_lum(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
 def make_thumbnail(*, title: str, kicker: str, avatar_frame: str,
                    out_path: str, brand: Brand = BRAND,
                    accent: Optional[str] = None,
@@ -148,15 +163,25 @@ def make_thumbnail(*, title: str, kicker: str, avatar_frame: str,
     # text on it and an invisible rule under the title. An accent has to contrast
     # with both the dark scrim and the white type, so anything close to black or
     # white falls back to the channel accent.
+    # Legibility is a property of a PAIR, not of a colour.
+    #
+    # The old test asked only whether the accent was mid-bright in absolute
+    # terms, which cannot answer "will this be readable here". The same blind
+    # spot in the Remotion theme picked a subject's background colour as its
+    # own accent and rendered display type invisibly on itself. Here the accent
+    # carries the kicker pill and the rule over a dark scrim, so it is measured
+    # against that scrim.
     acc = brand.accent
     if accent:
         try:
-            r, g, b = brand.rgb(accent)
-            if 60 < (r + g + b) / 3 < 225:
+            cand = brand.rgb(accent)
+            scrim = brand.rgb(brand.ink)
+            ratio = contrast_ratio(cand, scrim)
+            if ratio >= 3.0:
                 acc = accent
             else:
-                logger.info("Thumbnail accent %s is too close to black/white "
-                            "to read — using the channel accent", accent)
+                logger.info("Thumbnail accent %s reads at only %.1f:1 against "
+                            "the scrim — using the channel accent", accent, ratio)
         except (ValueError, IndexError):
             pass
     W, H = brand.width, brand.height
@@ -190,8 +215,15 @@ def make_thumbnail(*, title: str, kicker: str, avatar_frame: str,
     px, py = 64, int(H * 0.075)
     d.rounded_rectangle([px, py, px + kw + 56, py + kh + 34], radius=10,
                         fill=brand.rgb(acc) + (255,))
+    # Ink on the pill is only right when the pill is light. A dark accent got
+    # near-black text on a near-black pill.
+    pill_rgb = brand.rgb(acc)
+    label = (brand.rgb(brand.ink)
+             if contrast_ratio(brand.rgb(brand.ink), pill_rgb)
+             >= contrast_ratio(brand.rgb(brand.paper), pill_rgb)
+             else brand.rgb(brand.paper))
     d.text((px + 28 - kb[0], py + 17 - kb[1]), ktext, font=f_kick,
-           fill=brand.rgb(brand.ink) + (255,))
+           fill=label + (255,))
 
     # --- title, lower third, wrapped and FITTED ---
     #

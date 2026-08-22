@@ -1,6 +1,6 @@
 import React from 'react';
 import {AbsoluteFill, useCurrentFrame, useVideoConfig} from 'remotion';
-import {FONT_CSS, SANS, MONO, bgOf, inkOf, accentOf, accent2Of, spacing, typeScale, Palette} from '../theme';
+import {FONT_CSS, SANS, MONO, bgOf, inkOf, accentOf, accent2Of, spacing, typeScale, Palette, contrastRatio, onColor} from '../theme';
 import {useClip, drift, vignette, at, blink} from './timing';
 import {EXPO, pop, settle, ramp, wipe, focusIn, rand} from './motion';
 import {Aurora, jitter} from './atmosphere';
@@ -145,6 +145,10 @@ export const Words: React.FC<{
   const words = text.split(/\s+/).filter(Boolean);
   const slot = (to - from) / Math.max(1, words.length);
 
+  // Colour alone cannot mark a word when the accent and the ink are close.
+  const useMarker = Boolean(
+    marker || (accent && color && contrastRatio(accent, color) < 1.7));
+
   return (
     <div style={{display: 'flex', flexWrap: 'wrap', width: '100%', gap: `0 ${size * 0.26}px`, lineHeight}}>
       {words.map((w, i) => {
@@ -196,7 +200,14 @@ export const Words: React.FC<{
                 + `translateX(${jit.x}px)`,
             }}
           >
-            {marker && isAccent ? (
+            {/* Emphasis falls back to the marker bar whenever the accent is
+                too close to the body ink to read as emphasis at all. On a
+                mid-tone background — Anthropic's coral, say — near-black is
+                the only colour that clears 4.5:1, so it collides with the ink
+                and colour alone cannot mark anything. A bar behind the word
+                works at any contrast because it does not depend on the two
+                colours differing. */}
+            {useMarker && isAccent ? (
               // A skewed bar behind the word, scaling out from the left. Reads
               // as a marker pen: far stronger emphasis than recolouring text,
               // and it survives being seen for half a second.
@@ -208,14 +219,31 @@ export const Words: React.FC<{
                   top: '0.14em',
                   bottom: '0.14em',
                   background: accent,
-                  opacity: 0.28,
+                  // Solid when the bar IS the emphasis. A 28% wash was fine as
+                  // decoration behind an already-contrasting word, but as the
+                  // sole marker it left dark text sitting on a dark haze —
+                  // less legible than no marker at all.
+                  opacity: marker ? 0.28 : 1,
                   borderRadius: size * 0.06,
                   transform: `skewX(-10deg) scaleX(${ramp(t, start, start + 0.14)})`,
                   transformOrigin: 'left center',
                 }}
               />
             ) : null}
-            <span style={{position: 'relative'}}>{w}</span>
+            <span
+              style={{
+                position: 'relative',
+                // The word sits ON the bar now, so it takes its colour from
+                // the BAR, not from the page. Drawing a solid bar and leaving
+                // the text its original colour is how the emphasis fix first
+                // made things worse: near-black on near-black.
+                color: useMarker && isAccent && !marker
+                  ? onColor(accent as string)
+                  : undefined,
+              }}
+            >
+              {w}
+            </span>
           </span>
         );
       })}
