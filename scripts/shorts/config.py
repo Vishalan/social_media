@@ -47,6 +47,23 @@ class ShortsConfig:
     # at half the median. Requiring 90% of frames inside the core band before
     # ranking is what separates an animated speaker from a mistracked one.
     voice_ref: str = "vishalan_voice_ref_v4.wav"
+
+    # --- voice blend -----------------------------------------------------
+    # The shipped voice is a BLEND, not a clone. Chatterbox conditions on two
+    # separable things and they are sourced independently here:
+    #
+    #   * DELIVERY — cadence, phrasing, clarity and crucially ACCENT — comes
+    #     wholly from `voice_ref_b`, because it lives in discrete tokens that
+    #     cannot be averaged.
+    #   * IDENTITY — the speaker embedding — is interpolated by `voice_blend`.
+    #
+    # Chosen by the owner from a measured listening set: Psi's delivery with
+    # 30% of Psi's identity, so it reads as the owner, calmer and clearer.
+    # See docs/voices.md and services/chatterbox/README.md.
+    voice_blend_enabled: bool = True
+    voice_ref_b: str = "k_hm_psi.wav"
+    voice_blend: float = 0.30
+    voice_prompt_from: str = "b"
     # cfg_weight was NOT exposed by the service until 2026-08-17, so it sat at
     # the library default while exaggeration was tuned alone. They interact:
     # higher exaggeration speeds speech up, lower cfg_weight slows it into
@@ -56,7 +73,7 @@ class ShortsConfig:
     # 0.15-0.35 on the real service moved the measured rate from 3.00 to 2.88
     # w/s — noise. Pace is handled by _conform_pace's measured time-stretch.
     # This value is kept for its effect on delivery character, not speed.
-    cfg_weight: float = 0.35
+    cfg_weight: float = 0.28
     # Baseline for body sentences. Hook and turn sentences get more — see
     # rhythm_* below. A single flat value across the whole script is what made
     # the delivery monotone: every sentence performed identically.
@@ -64,7 +81,7 @@ class ShortsConfig:
     # result is not monotonic — 0.80 was WORSE than 0.65 (5.9 st against 7.0),
     # so "more expressive" is not simply "turn it up". 0.65 recovered the
     # reference's full range; the roles below sit around it rather than above.
-    exaggeration: float = 0.62
+    exaggeration: float = 0.55
 
     # --- speech rhythm --------------------------------------------------
     # Short-form attention rhythm: the hook is performed, the body moves, and a
@@ -76,9 +93,9 @@ class ShortsConfig:
     # the gaps between them are set deliberately. The cost is ~15 TTS calls
     # instead of 4, which is seconds on this hardware.
     rhythm_enabled: bool = True
-    exaggeration_hook: float = 0.70      # first line: sell it
-    exaggeration_turn: float = 0.68     # "but here's the part that matters"
-    exaggeration_payoff: float = 0.66   # last line: land it
+    exaggeration_hook: float = 0.62      # first line: sell it
+    exaggeration_turn: float = 0.60     # "but here's the part that matters"
+    exaggeration_payoff: float = 0.58   # last line: land it
     pause_after_hook_s: float = 0.30    # let the hook breathe before the body
     pause_before_turn_s: float = 0.26   # the beat that makes a turn land
     pause_between_s: float = 0.10       # ordinary sentence gap, kept tight
@@ -109,17 +126,25 @@ class ShortsConfig:
     # to 1.8 took the nasal band to -2.3 dB but flattened the 500-800 fill to
     # zero, and that scoop is itself part of what makes a voice sound nasal.
     # Q 2.2 keeps both.
-    voice_sub_db: float = 12.0
-    voice_sub_hz: int = 120
+    # Re-derived for the BLEND, not carried over from the owner's clone. A
+    # third-octave profile of the blend against the owner's raw voice showed
+    # it is already 5.2 dB less nasal at 850-1200 Hz, 8.5 dB less present at
+    # 2400-3400, and has its fundamental intact at 90-130. So the old chain
+    # was wrong in three directions at once for this voice: it notched
+    # nasality that was no longer there, under-boosted a presence deficit
+    # twice as large, and put a +12 dB shelf at 120 Hz directly on top of a
+    # 125 Hz fundamental, which booms. The shelf now sits BELOW the note.
+    voice_sub_db: float = 6.0
+    voice_sub_hz: int = 95
     voice_body_db: float = 1.5
     voice_body_hz: int = 250
     voice_scoop_fill_db: float = 3.0
     voice_scoop_fill_hz: int = 600
-    voice_nasal_cut_db: float = -10.0
-    voice_nasal_hz: int = 1150
-    voice_presence_db: float = 2.5
-    voice_presence_hz: int = 3600
-    voice_air_db: float = 5.0
+    voice_nasal_cut_db: float = -4.0
+    voice_nasal_hz: int = 1000
+    voice_presence_db: float = 6.0
+    voice_presence_hz: int = 3000
+    voice_air_db: float = 6.0
     voice_air_hz: int = 7000
     # 2.0:1, down from 2.5:1. Compression is what makes a voice sound processed
     # rather than recorded, and "natural" was an explicit ask; the loudnorm pass

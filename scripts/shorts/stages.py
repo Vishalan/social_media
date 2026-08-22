@@ -1173,11 +1173,22 @@ def _resume_source(cfg: ShortsConfig):
 async def run(cfg: ShortsConfig, source_spec: str, *,
               source_kind: str | None = None) -> str:
     """Run the whole pipeline for one source. Returns the finished MP4 path."""
-    from .sources import load_source
+    from .sources import load_source, research
     pipe = ShortsPipeline(cfg)
     src = _resume_source(cfg) if not source_spec else None
     if src is None:
-        src = load_source(source_spec, kind=source_kind)
+        if source_kind == "research":
+            # A bare topic, not a document: go and find out what happened.
+            # Runs through the same claude CLI the rest of the pipeline uses,
+            # which already has web access and is already authenticated.
+            async def _ask(prompt: str) -> str:
+                r = await pipe.llm.messages.create(
+                    model=cfg.intelligence_model, max_tokens=4000,
+                    messages=[{"role": "user", "content": prompt}])
+                return r.content[0].text
+            src = await research(source_spec, _ask)
+        else:
+            src = load_source(source_spec, kind=source_kind)
     script = await pipe.write_script(src)
 
     pipe.generate_voice(script["script"])

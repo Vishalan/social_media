@@ -538,14 +538,27 @@ class ShortsPipeline:
 
         best_path, best_dur = None, float("inf")
         for i, temp in enumerate(attempts):
-            payload = {
-                "text": text, "reference_audio_path": cfg.voice_ref,
-                "exaggeration": exaggeration, "cfg_weight": cfg.cfg_weight,
-                "output_filename": f"{cfg.run_id}_{name}.wav",
-            }
+            # The shipped voice is a blend of two references, so this posts to
+            # /tts_blend. Delivery — phrasing, clarity, accent — comes wholly
+            # from ref_b; only identity is interpolated. See config.voice_blend.
+            if cfg.voice_blend_enabled:
+                endpoint = "/tts_blend"
+                payload = {
+                    "text": text, "ref_a": cfg.voice_ref, "ref_b": cfg.voice_ref_b,
+                    "alpha": cfg.voice_blend, "prompt_from": cfg.voice_prompt_from,
+                    "exaggeration": exaggeration, "cfg_weight": cfg.cfg_weight,
+                    "output_filename": f"{cfg.run_id}_{name}.wav",
+                }
+            else:
+                endpoint = "/tts"
+                payload = {
+                    "text": text, "reference_audio_path": cfg.voice_ref,
+                    "exaggeration": exaggeration, "cfg_weight": cfg.cfg_weight,
+                    "output_filename": f"{cfg.run_id}_{name}.wav",
+                }
             if temp is not None:
                 payload["temperature"] = temp
-            self._post(f"{cfg.chatterbox_endpoint}/tts", payload)
+            self._post(f"{cfg.chatterbox_endpoint}{endpoint}", payload)
             candidate = cfg.path(f"{name}_try{i}.wav")
             self._sh("docker", "cp",
                      f"commoncreed_chatterbox:/app/output/{cfg.run_id}_{name}.wav",

@@ -88,8 +88,11 @@ def main() -> int:
     src = ap.add_mutually_exclusive_group()
     src.add_argument("--source", help="URL, owner/repo, or raw text")
     src.add_argument("--source-file", help="file containing the source text")
-    ap.add_argument("--kind", choices=["article", "github_repo", "text"],
-                    help="force the source kind (inferred otherwise)")
+    ap.add_argument("--kind",
+                    choices=["article", "github_repo", "text", "research"],
+                    help="force the source kind (inferred otherwise). "
+                         "'research' treats --source as a TOPIC and searches "
+                         "the web for current reporting before writing.")
     ap.add_argument("--id", default="short", help="run id; names the work dir")
     ap.add_argument("--work-root", default="/home/vishalan/shorts")
     ap.add_argument("--layout", default="pip_circle",

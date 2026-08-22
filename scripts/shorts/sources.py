@@ -88,6 +88,61 @@ def _fetch(url: str) -> str:
         raise SourceError(f"cannot reach {url}: {exc}") from exc
 
 
+
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def split_spec(spec: str) -> tuple[str, str]:
+    """Separate a leading URL from any prose pasted with it.
+
+    Real inputs arrive as a link AND a summary together — someone forwards a
+    newsletter blurb with the article link above it. Treating that whole blob
+    as one thing gets it wrong either way: as a URL the trailing prose corrupts
+    it, as text the link becomes narration.
+
+    Both halves are worth keeping. The URL identifies the publisher, which is
+    what the source badge and palette are built from, while the prose is often
+    the only body text available when the page is paywalled.
+    """
+    m = _URL_RE.search(spec)
+    if not m:
+        return "", spec.strip()
+    url = m.group(0).rstrip(").,\u201d\"'")
+    rest = (spec[:m.start()] + spec[m.end():]).strip()
+    return url, rest
+
+
+async def research(topic: str, ask) -> Source:
+    """Build source material for a bare topic by searching the web.
+
+    `ask` is the pipeline's intelligence callable. Research runs through it
+    rather than a search API because the claude CLI already has web access and
+    is already authenticated — adding a second search dependency would be a
+    second thing to key, rate-limit and break.
+
+    The prompt demands dates and figures explicitly. Without that the model
+    returns a confident essay of general knowledge, which is indistinguishable
+    from research until it goes into a video as fact.
+    """
+    prompt = (
+        f"Research this topic on the web and report what you FIND, not what "
+        f"you already know: {topic}\n\n"
+        "Search for current reporting. Return 400-800 words of plain prose "
+        "covering: what happened, when (give absolute dates), the specific "
+        "numbers and named parties involved, and why it matters now. "
+        "Attribute each significant claim to the outlet that reported it. "
+        "If you cannot verify something, leave it out rather than hedging. "
+        "No preamble, no bullet points, no headings — prose only."
+    )
+    text = (await ask(prompt) or "").strip()
+    if len(text) < 300:
+        raise SourceError(
+            f"research on {topic!r} returned only {len(text)} chars — refusing "
+            f"to build a video on it")
+    logger.info("Researched %r (%d chars)", topic, len(text))
+    return Source(kind="text", title=topic.strip()[:120], text=text)
+
+
 def load_source(spec: str, *, kind: SourceKind | None = None,
                 title: str = "") -> Source:
     """Load source material from a URL, a repo reference, or raw text.
@@ -98,6 +153,26 @@ def load_source(spec: str, *, kind: SourceKind | None = None,
         title: optional title override for raw text.
     """
     s = spec.strip()
+
+    # A link pasted together with prose is one input describing one story.
+    url, prose = split_spec(s)
+    if url and prose and kind != "text":
+        try:
+            src = load_source(url, kind=kind, title=title)
+            # Prefer the fetched body, but keep the prose when the fetch came
+            # back thin — paywalled pages return a teaser, not an error.
+            if len(src.text) < max(600, len(prose)):
+                logger.info("Fetched only %d chars from %s; using the supplied "
+                            "text as the body and keeping the URL for "
+                            "attribution", len(src.text), url)
+                return Source(kind=src.kind, title=src.title or title or "untitled",
+                              text=prose, url=url)
+            return src
+        except SourceError as exc:
+            logger.info("Could not fetch %s (%s) — using the supplied text, "
+                        "still crediting the source", url, str(exc)[:90])
+            return Source(kind="article", title=title or "untitled",
+                          text=prose, url=url)
 
     if kind == "text" or (kind is None and not s.startswith("http")
                           and "/" not in s.split("\n")[0][:60]):
