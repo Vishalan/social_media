@@ -56,7 +56,6 @@ export const DeviceScene: React.FC<DeviceSceneProps> = ({
   // Phone geometry: tall enough to read as a phone, small enough that the
   // camera has somewhere to push from.
   const phoneW = Math.min(width * 0.60, height * 0.34);
-  const phoneH = phoneW * 2.05;
   const bezel = phoneW * 0.035;
   const cx = width / 2;
   const cy = height / 2 + (title ? height * 0.03 : 0);
@@ -64,12 +63,30 @@ export const DeviceScene: React.FC<DeviceSceneProps> = ({
   const body = Math.min(ty.body * 0.62, phoneW / 16);
   const cardPad = phoneW * 0.055;
 
+  // The phone is as tall as what is IN it. A fixed 2.05 aspect left roughly
+  // 40% of the screen blank whenever the planner returned three rows instead
+  // of four, and a phone with a large empty area below the content reads as a
+  // half-loaded app rather than as a feed.
+  const statusH = phoneW * 0.14;
+  // A row's real height, summed from what it draws: its own padding, the
+  // avatar line, the gap, and two lines of wrapped text.
+  const rowH = cardPad * 1.44 + body * 1.9 + cardPad * 0.5 + body * 1.32 * 2;
+  const gap = cardPad * 0.72;
+
+  // How many rows FIT, rather than how many were supplied. Clamping the phone
+  // height instead cut the last card in half, and half a card reads as a
+  // rendering fault; three whole rows say the same thing and look deliberate.
+  const room = height * 0.62 - statusH - cardPad * 2;
+  const fitRows = Math.max(1, Math.floor((room + gap) / (rowH + gap)));
+  const rowCount = Math.min(items.length, 4, fitRows);
+  const phoneH = statusH + cardPad * 2 + rowH * rowCount + gap * (rowCount - 1);
+
   // One displacement drives every plane.
   const drive = interpolate(t, [0, 1], [0, 140], {easing: Easing.inOut(Easing.quad)});
 
   const stops = slowPush(durationInFrames, cx, cy, 1.13);
 
-  const rows = items.slice(0, 5);
+  const rows = items.slice(0, rowCount);
 
   return (
     <AbsoluteFill style={{background: bgOf(palette), fontFamily: SANS, color: ink}}>
@@ -90,7 +107,12 @@ export const DeviceScene: React.FC<DeviceSceneProps> = ({
       <World frame={frame} stops={stops} width={width} height={height} trail={false}>
         {/* MID plane: the phone. Never blurred — this is what is being read. */}
         <At x={cx} y={cy}>
-          <div style={{transform: `translateX(${-drive * 0.7}px)`}}>
+          {/* The phone is the SUBJECT and stays pinned. shotcraft is explicit
+              that in a depth rig the read layer takes no transform of its own
+              — parallax is the far and near planes moving AROUND it. Driving
+              the subject too slid the phone a hundred-odd pixels off centre
+              and left the frame lopsided. */}
+          <div>
             {title ? (
               <div
                 style={{
@@ -123,7 +145,7 @@ export const DeviceScene: React.FC<DeviceSceneProps> = ({
               {/* Status bar + notch, so it reads as a phone at a glance. */}
               <div
                 style={{
-                  height: phoneH * 0.062,
+                  height: statusH,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -134,9 +156,9 @@ export const DeviceScene: React.FC<DeviceSceneProps> = ({
                 <div
                   style={{
                     position: 'absolute',
-                    top: phoneH * 0.012,
+                    top: statusH * 0.19,
                     width: phoneW * 0.3,
-                    height: phoneH * 0.022,
+                    height: statusH * 0.24,
                     borderRadius: 99,
                     background: '#000',
                   }}
@@ -146,17 +168,21 @@ export const DeviceScene: React.FC<DeviceSceneProps> = ({
                     fontSize: body * 0.82,
                     fontWeight: 700,
                     color: '#6E7C8D',
-                    marginTop: phoneH * 0.026,
+                    marginTop: statusH * 0.30,
                   }}
                 >
-                  {app ?? ''}
+                  {/* The planner cheerfully returns the same string for
+                      both; printing it twice in one frame looks like a bug. */}
+                  {app && app.toLowerCase() !== (title ?? '').toLowerCase()
+                    ? app
+                    : ''}
                 </div>
               </div>
 
               {/* The feed. Each card arrives in order, and the marked one gets
                   its badge after it has settled, so the eye reads the post
                   first and the verdict second. */}
-              <div style={{padding: cardPad, display: 'flex', flexDirection: 'column', gap: cardPad * 0.72}}>
+              <div style={{padding: cardPad, display: 'flex', flexDirection: 'column', gap}}>
                 {rows.map((it, i) => {
                   const a = ramp(t, 0.10 + i * 0.11, 0.24 + i * 0.11);
                   const badge = ramp(t, 0.34 + i * 0.11, 0.46 + i * 0.11);
@@ -171,7 +197,7 @@ export const DeviceScene: React.FC<DeviceSceneProps> = ({
                         borderRadius: phoneW * 0.045,
                         padding: cardPad * 0.72,
                         opacity: a,
-                        transform: `translateY(${(1 - a) * phoneH * 0.03}px)`,
+                        transform: `translateY(${(1 - a) * body * 1.2}px)`,
                       }}
                     >
                       <div style={{display: 'flex', alignItems: 'center', gap: cardPad * 0.5}}>
