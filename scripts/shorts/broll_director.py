@@ -116,6 +116,16 @@ TYPE_CATALOG: dict[str, dict[str, str]] = {
                 "in under that. The workhorse for 'X is now Y': a licence, a "
                 "release, a rename. Use when the story turns on naming a thing."),
     },
+    "stock_clip": {
+        "needs": "a concrete, filmable subject: a place, an object, an activity",
+        "for": ("REAL FOOTAGE of the thing. Not a diagram of it, not a card "
+                "naming it — actual moving imagery. Use it for atmosphere and "
+                "for subjects that exist in the physical world: trading "
+                "floors, city skylines, server rooms, hands on a keyboard, "
+                "traffic, crowds. The query is a camera brief, so describe a "
+                "SHOT and not a concept: 'stock exchange trading floor' finds "
+                "footage, 'financial growth' finds nothing usable."),
+    },
     "comparison_scene": {
         "needs": "two or three quantities that can be set against each other",
         "for": ("bars that GROW and numbers that COUNT UP, side by side. Use "
@@ -298,9 +308,9 @@ Payload shapes, exactly:
 Reply with JSON only."""
 
 
-_SCENE_KINDS = frozenset({"ai_scene", "terminal_scene", "device_scene",
-                          "window_scene", "flow_scene",
-                          "comparison_scene"})
+_SCENE_KINDS = frozenset({"ai_scene", "stock_clip", "terminal_scene",
+                          "device_scene", "window_scene",
+                          "flow_scene", "comparison_scene"})
 
 class BrollDirector:
     """Plans and renders a varied b-roll slate for one short."""
@@ -354,6 +364,14 @@ class BrollDirector:
         types = ["stats_card", "headline_burst", "window_scene",
                  "split_screen", "cinematic_chart", "lockup", "flow_scene",
                  "terminal_scene", "device_scene", "comparison_scene"]
+        # Real footage, when there is a key for it. Cheapest non-typographic
+        # b-roll available: seconds to fetch, where generation costs minutes.
+        try:
+            from .stock import available as _stock_ok
+            if _stock_ok():
+                types.append("stock_clip")
+        except Exception:              # noqa: BLE001 — optional capability
+            pass
         # `highlight` — the phone mockup sweeping a sentence — is retired. It
         # rendered the source's own body copy at phone-screenshot scale inside a
         # bezel, so the actual words were small, the bezel ate frame, and the
@@ -422,20 +440,26 @@ class BrollDirector:
         LTX experiment failed. Naming a camera, a subject and a light source
         is what produces something recognisable.
         """
+        # Deliberately short and noun-led. The same string is used two ways:
+        # as a generation prompt, and as a STOCK SEARCH QUERY. A search engine
+        # given 40 words of cinematography returns nothing, so the brief has to
+        # be a subject a library would be indexed by, with the camera implied.
         prompt = (
-            "Write ONE shot description for a 3-second cinematic b-roll clip "
-            "that could sit under this line of narration:\n\n"
+            "Name ONE filmable shot that could sit under this line of "
+            "narration:\n\n"
             f"  \"{narration}\"\n\n"
-            "Describe only what a CAMERA WOULD SEE: a physical subject, a "
-            "camera move, and the light. No abstractions, no concepts, no "
-            "text or logos or writing of any kind in the frame, no people's "
-            "faces. Under 40 words. Reply with the description alone."
+            "It must be a physical, concrete subject someone could point a "
+            "camera at — a place, an object, an activity. No abstractions "
+            "('growth', 'innovation'), no text or logos in frame, no "
+            "recognisable faces. Answer in 3-6 words, as a noun phrase, the "
+            "way you would type it into a stock footage search. Reply with "
+            "the phrase alone."
         )
         try:
             resp = await self.llm.messages.create(
                 model="claude-sonnet-4-5", max_tokens=200,
                 messages=[{"role": "user", "content": prompt}])
-            return " ".join((resp.content[0].text or "").split())[:300]
+            return " ".join((resp.content[0].text or "").split())[:80]
         except Exception as exc:              # noqa: BLE001 — optional
             logger.warning("scene prompt failed (%s)", str(exc)[:100])
             return ""
@@ -478,8 +502,9 @@ class BrollDirector:
             # card that fits any beat rather than the scene that fits this one.
             f"COMPOSITION RULES — these decide whether the video looks made or "
             f"generated:\n"
-            f"* SCENES BEFORE CARDS. ai_scene, terminal_scene, device_scene, "
-            f"window_scene, flow_scene, comparison_scene are SCENES: generated footage, a real "
+            f"* SCENES BEFORE CARDS. stock_clip, ai_scene, terminal_scene, "
+            f"device_scene, window_scene, flow_scene, comparison_scene "
+            f"are SCENES: generated footage, a real "
             f"terminal, a real phone, a real window, a real diagram, each shot "
             f"with a moving camera. The rest are cards with words on them. At "
             f"least HALF the slots must be scenes. A card is the right answer "
@@ -591,23 +616,43 @@ class BrollDirector:
         have = sum(1 for x in slots if x.kind in _SCENE_KINDS)
         cards = sorted((x for x in slots if x.kind not in _SCENE_KINDS),
                        key=lambda x: -x.duration)
+        try:
+            from .stock import available as _stock_ok
+            can_stock = _stock_ok()
+        except Exception:                          # noqa: BLE001 — optional
+            can_stock = False
+
         for victim in cards:
-            if have >= want or used_h3 >= self.h3_budget:
+            if have >= want:
                 break
-            scene = await self._scene_prompt_for(victim.narration)
-            if not scene:
+            desc = await self._scene_prompt_for(victim.narration)
+            if not desc:
                 continue
-            logger.info("Scene floor: converting the %s at %.1fs into "
-                        "generated footage (%d/%d scenes)",
-                        victim.kind, victim.start, have + 1, want)
-            victim.kind = "ai_scene"
-            victim.payload = {"scene": scene}
-            victim.why = "scene floor: generated footage"
+            # Real footage first, generation second.
+            #
+            # Both put moving imagery on screen, so for the floor's purposes
+            # they are interchangeable — but one returns in seconds for free
+            # and the other costs ~10 minutes of GPU. Spending the expensive
+            # option first would mean burning the budget on beats that a
+            # stock search would have covered, then having nothing left for
+            # the ones it cannot.
+            if can_stock:
+                kind, payload = "stock_clip", {"query": desc}
+            elif used_h3 < self.h3_budget:
+                kind, payload = "ai_scene", {"scene": desc}
+                used_h3 += 1
+            else:
+                break
+            logger.info("Scene floor: converting the %s at %.1fs into %s "
+                        "(%d/%d scenes)", victim.kind, victim.start, kind,
+                        have + 1, want)
+            victim.kind = kind
+            victim.payload = payload
+            victim.why = f"scene floor: {kind}"
             victim.duration = max(
-                readable_duration("ai_scene", _props_for(victim)),
-                self.MIN_DURATION.get("ai_scene", 0.0))
+                readable_duration(kind, _props_for(victim)),
+                self.MIN_DURATION.get(kind, 0.0))
             have += 1
-            used_h3 += 1
         if have < want:
             logger.info("Scene floor not met: %d/%d — the generation budget "
                         "of %d is the binding constraint",
@@ -687,6 +732,16 @@ class BrollDirector:
                 words=synth_phrases(sent, slot.duration),
                 out_path=out, duration_s=slot.duration,
                 palette=self.palette, focus_paragraph=focus)
+
+        if k == "stock_clip":
+            from . import stock
+            q = str(p.get("query") or "").strip()
+            if not q:
+                raise DirectorError("stock_clip needs a query")
+            w, h = self.target_size(k, getattr(slot, "fullscreen", None))
+            return await asyncio.to_thread(
+                stock.fetch, q, out, duration_s=slot.duration,
+                width=w, height=h, fps=self.fps)
 
         if k == "ai_scene":
             from . import h3_client
@@ -1019,6 +1074,7 @@ PAYLOAD_SPEC: dict[str, str] = {
     "annotate": '"phrase": one exact phrase present on the page',
     "macro": '"phrase": one small element visible on the page',
     "ai_video": '"scene": a described scene, never a concept',
+    "stock_clip": '"query": 2-5 words naming a filmable SHOT, e.g. "stock exchange trading floor" or "city skyline at dusk". No abstractions.',
     "comparison_scene": '"kicker": 2-4 words. "title": 2-5 words. "items": 2-3 of {"label": UNDER 18 CHARS, "value": a NUMBER only, "prefix": e.g. "$", "suffix": e.g. "B", "lead": true for the story subject}. "note": under 45 chars',
     "terminal_scene": '"title": the repo or directory, "lines": 4-6 lines, each {"text": UNDER 26 CHARS, "kind": one of command|out|ok|warn}, "focus_line": index of the payoff line',
     "device_scene": '"title": 2-4 words, "app": the surface name e.g. "For You", "items": 3-4 {"text": UNDER 30 CHARS, "score": short number, "mark": up|down}',
@@ -1113,6 +1169,9 @@ def _props_for(slot: "Slot") -> dict:
         if isinstance(fl, int) and 0 <= fl < len(lines):
             out["focusLine"] = fl
         return out
+
+    if k == "stock_clip":
+        return {"query": _cap_words(_clean(p.get("query") or p.get("scene"), 60), 6)}
 
     if k == "comparison_scene":
         items = []
@@ -1263,6 +1322,7 @@ _DURATION_BOUNDS: dict[str, tuple] = {
     "terminal_scene": (6.0, 8.0),
     "device_scene": (5.0, 7.0),
     "comparison_scene": (5.0, 7.0),
+    "stock_clip": (3.0, 5.0),
 }
 
 # The most words a card may carry, per type. Enforced when building props.

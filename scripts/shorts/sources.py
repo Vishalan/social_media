@@ -19,12 +19,12 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Literal
 
+from .net import BROWSER_UA as _UA
+
 logger = logging.getLogger(__name__)
 
 SourceKind = Literal["article", "github_repo", "text"]
 
-_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-       "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
 
 class SourceError(RuntimeError):

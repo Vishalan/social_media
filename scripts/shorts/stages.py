@@ -18,6 +18,8 @@ from typing import Any
 from .config import ShortsConfig
 from .pipeline import ShortsError, ShortsPipeline
 
+from .net import BROWSER_UA as _UA
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,8 +27,6 @@ def height_for_panel(cfg) -> int:
     """Panel height for the active layout."""
     return cfg.content_height if cfg.layout == "half_stacked" else cfg.height
 
-_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-       "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
 
 # ---------------------------------------------------------------- avatar
@@ -432,16 +432,15 @@ def _fetch_stock(self: ShortsPipeline, queries: list[str], *,
         self._save("broll.json", [])
         return []
 
+    # Delegates to `stock`, which owns the Pexels contract. This function
+    # keeps a different job: assembling a whole SLATE as a fallback when the
+    # director cannot run at all, where `stock.fetch` serves one planned slot.
+    # The endpoint, the auth header and the Cloudflare user-agent workaround
+    # were duplicated here; one of them will always be the stale one.
+    from .stock import search as _stock_search
+
     def search(q: str) -> dict:
-        u = ("https://api.pexels.com/videos/search?" + urllib.parse.urlencode(
-            {"query": q, "per_page": 5, "orientation": "portrait",
-             "size": "medium"}))
-        # Cloudflare returns 403 "error code: 1010" to default library agents.
-        req = urllib.request.Request(u, headers={
-            "Authorization": key, "User-Agent": _UA,
-            "Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return json.load(r)
+        return {"videos": _stock_search(q, limit=5)}
 
     out: list[dict] = []
     for i, q in enumerate(queries[:cfg.broll_max_clips]):

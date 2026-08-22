@@ -19,10 +19,11 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
+from .net import BROWSER_UA as _UA
+from .color import to_rgb as rgb
+
 logger = logging.getLogger(__name__)
 
-_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-       "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
 _ICON_RE = re.compile(
     r'<link[^>]+rel=["\'][^"\']*icon[^"\']*["\'][^>]*>', re.I)
@@ -120,12 +121,6 @@ def build_brand_card(*, out_png: str, icon: Optional[str], palette: list,
     """
     from PIL import Image, ImageDraw
 
-    def rgb(hexstr: str, fallback=(11, 13, 17)):
-        h = (hexstr or "").lstrip("#")
-        try:
-            return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
-        except (ValueError, IndexError):
-            return fallback
 
     bg = rgb(palette[0] if palette else "#0B0D11")
     accent = bg

@@ -17,6 +17,8 @@ import logging
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .color import contrast_ratio, readable_on
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -114,21 +116,6 @@ CAPTIONS = CaptionStyle()
 
 
 # -------------------------------------------------------------- thumbnail
-def _rel_lum(rgb: tuple[int, int, int]) -> float:
-    """WCAG relative luminance from 8-bit sRGB."""
-    out = []
-    for v in rgb:
-        c = v / 255
-        out.append(c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4)
-    return 0.2126 * out[0] + 0.7152 * out[1] + 0.0722 * out[2]
-
-
-def contrast_ratio(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
-    """WCAG contrast ratio between two colours, 1 to 21."""
-    la, lb = _rel_lum(a), _rel_lum(b)
-    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
-
-
 def make_thumbnail(*, title: str, kicker: str, avatar_frame: str,
                    out_path: str, brand: Brand = BRAND,
                    accent: Optional[str] = None,

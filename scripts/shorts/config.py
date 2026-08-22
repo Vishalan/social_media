@@ -347,7 +347,7 @@ class ShortsConfig:
     # generated establishing shot, a window object, and the call to action.
     fullscreen_kinds: tuple = ("ai_scene", "window_scene", "flow_scene",
                               "terminal_scene", "device_scene",
-                              "comparison_scene", "cta")
+                              "comparison_scene", "stock_clip", "cta")
     # Never let full-frame graphics push the presenter below this share of the
     # video — the face is the channel.
     fullscreen_max_share: float = 0.55

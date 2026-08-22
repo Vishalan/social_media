@@ -1,0 +1,430 @@
+<title>Shorts Pipeline</title>
+<style>
+  /* ── tokens ───────────────────────────────────────────────────────────
+     Colour encodes WHICH SCARCE RESOURCE a stage consumes. That is real
+     information here, not decoration: three services share one 24 GB card,
+     and every generation failure in this pipeline's history traced back to
+     two of them wanting it at once. Reading the diagram by colour tells you
+     what can and cannot run concurrently. */
+  :root {
+    --ground:      #F5F6F8;
+    --raise:       #FFFFFF;
+    --sink:        #ECEEF2;
+    --ink:         #171A20;
+    --ink-soft:    #4A5260;
+    --ink-faint:   #7C8698;
+    --rule:        #D9DDE4;
+    --signal:      #E25A00;   /* patch-cable orange: the accent, used sparingly */
+    --gpu:         #B8317A;
+    --llm:         #2B6FD6;
+    --net:         #0E8F66;
+    --cpu:         #6B7280;
+    --shadow:      0 1px 2px rgba(20,26,38,.06), 0 8px 24px rgba(20,26,38,.05);
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:   #101319;
+      --raise:    #171B23;
+      --sink:     #0B0E13;
+      --ink:      #E7EBF2;
+      --ink-soft: #A7B0C0;
+      --ink-faint:#6F7A8C;
+      --rule:     #262C37;
+      --signal:   #FF8A3D;
+      --gpu:      #F06BB0;
+      --llm:      #6FA8FF;
+      --net:      #3FD2A0;
+      --cpu:      #8C97A8;
+      --shadow:   0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:   #101319;
+    --raise:    #171B23;
+    --sink:     #0B0E13;
+    --ink:      #E7EBF2;
+    --ink-soft: #A7B0C0;
+    --ink-faint:#6F7A8C;
+    --rule:     #262C37;
+    --signal:   #FF8A3D;
+    --gpu:      #F06BB0;
+    --llm:      #6FA8FF;
+    --net:      #3FD2A0;
+    --cpu:      #8C97A8;
+    --shadow:   0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 4rem 1.5rem 6rem; }
+  .prose { max-width: 68ch; }
+
+  /* ── type scale ───────────────────────────────────────────────────── */
+  h1 {
+    font-size: clamp(2.1rem, 5vw, 3.1rem);
+    line-height: 1.02;
+    letter-spacing: -0.03em;
+    font-weight: 800;
+    margin: 0 0 .5rem;
+    text-wrap: balance;
+  }
+  h2 {
+    font-size: 1.35rem; letter-spacing: -0.015em; font-weight: 700;
+    margin: 4rem 0 .35rem; text-wrap: balance;
+  }
+  h3 { font-size: 1rem; font-weight: 700; margin: 2rem 0 .35rem; }
+  p { margin: 0 0 1rem; color: var(--ink-soft); }
+  strong { color: var(--ink); font-weight: 650; }
+  code {
+    font-family: var(--mono); font-size: .87em;
+    background: var(--sink); border: 1px solid var(--rule);
+    padding: .08em .34em; border-radius: 4px; color: var(--ink);
+  }
+  .eyebrow {
+    font-family: var(--mono); font-size: .7rem; letter-spacing: .18em;
+    text-transform: uppercase; color: var(--signal); font-weight: 600;
+    margin: 0 0 1rem;
+  }
+  .lede { font-size: 1.08rem; color: var(--ink-soft); }
+  .rule { height: 1px; background: var(--rule); margin: 3.5rem 0 0; border: 0; }
+
+  /* ── resource legend ──────────────────────────────────────────────── */
+  .legend {
+    display: flex; flex-wrap: wrap; gap: .5rem .75rem;
+    margin: 1.75rem 0 0; padding: 0; list-style: none;
+  }
+  .legend li {
+    display: flex; align-items: center; gap: .45rem;
+    font-family: var(--mono); font-size: .74rem; color: var(--ink-soft);
+    background: var(--raise); border: 1px solid var(--rule);
+    border-radius: 999px; padding: .3rem .7rem .3rem .55rem;
+  }
+  .dot { width: .58rem; height: .58rem; border-radius: 50%; flex: none; }
+
+  /* ── diagram ──────────────────────────────────────────────────────── */
+  .diagram {
+    margin: 1.5rem 0 0; padding: 1.25rem;
+    background: var(--raise); border: 1px solid var(--rule);
+    border-radius: 12px; box-shadow: var(--shadow);
+    overflow-x: auto;
+  }
+  .diagram pre.mermaid { margin: 0; background: none; border: 0; }
+
+  /* ── stage cards ──────────────────────────────────────────────────── */
+  .stages { display: grid; gap: .6rem; margin: 1.5rem 0 0; padding: 0; list-style: none; }
+  @media (min-width: 720px) { .stages { grid-template-columns: 1fr 1fr; } }
+  .stage {
+    background: var(--raise); border: 1px solid var(--rule);
+    border-left: 3px solid var(--edge, var(--cpu));
+    border-radius: 8px; padding: .85rem 1rem;
+  }
+  .stage h4 {
+    margin: 0 0 .2rem; font-family: var(--mono); font-size: .82rem;
+    font-weight: 600; color: var(--ink); letter-spacing: -.01em;
+  }
+  .stage p { margin: 0; font-size: .86rem; line-height: 1.5; }
+  .stage .cost {
+    display: inline-block; margin-top: .45rem;
+    font-family: var(--mono); font-size: .68rem; color: var(--ink-faint);
+  }
+
+  /* ── tables ───────────────────────────────────────────────────────── */
+  .tablewrap { overflow-x: auto; margin: 1.25rem 0 0; }
+  table { border-collapse: collapse; width: 100%; font-size: .87rem; min-width: 560px; }
+  th, td { text-align: left; padding: .55rem .7rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th {
+    font-family: var(--mono); font-size: .7rem; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--ink-faint); font-weight: 600;
+    border-bottom-color: var(--ink-faint);
+  }
+  td:first-child { font-family: var(--mono); font-size: .82rem; color: var(--ink); white-space: nowrap; }
+  td { color: var(--ink-soft); }
+  tbody tr:last-child td { border-bottom: 0; }
+
+  /* ── callout ──────────────────────────────────────────────────────── */
+  .note {
+    margin: 1.5rem 0 0; padding: 1rem 1.15rem;
+    background: var(--raise); border: 1px solid var(--rule);
+    border-left: 3px solid var(--signal); border-radius: 8px;
+  }
+  .note p:last-child { margin-bottom: 0; }
+  .note .tag {
+    font-family: var(--mono); font-size: .68rem; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--signal); font-weight: 600;
+    display: block; margin-bottom: .4rem;
+  }
+  footer {
+    margin-top: 5rem; padding-top: 1.5rem; border-top: 1px solid var(--rule);
+    font-family: var(--mono); font-size: .74rem; color: var(--ink-faint);
+  }
+</style>
+
+<div class="wrap">
+
+  <p class="eyebrow">Local · zero marginal cost · one RTX 3090</p>
+  <h1>Shorts Pipeline</h1>
+  <p class="lede prose">
+    One input — a link, pasted prose, or a topic to research — becomes a
+    finished vertical short. Everything runs on the GPU server; no metered
+    API is in the path.
+  </p>
+
+  <ul class="legend">
+    <li><span class="dot" style="background:var(--net)"></span>network</li>
+    <li><span class="dot" style="background:var(--llm)"></span>claude&nbsp;-p</li>
+    <li><span class="dot" style="background:var(--gpu)"></span>GPU (exclusive)</li>
+    <li><span class="dot" style="background:var(--cpu)"></span>CPU / ffmpeg</li>
+  </ul>
+
+  <hr class="rule">
+
+  <h2>The flow</h2>
+  <p class="prose">
+    Colour marks which resource each stage consumes. The three GPU stages
+    cannot overlap — that constraint is the source of more failures here than
+    any logic bug.
+  </p>
+
+  <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+  IN["input: url · prose · topic"]:::net
+
+  IN --> RES{"which kind?"}:::cpu
+  RES -->|topic| RSRCH["research<br/><small>web search via claude -p</small>"]:::llm
+  RES -->|url + prose| SPLIT["split_spec<br/><small>fetch page; fall back to prose,<br/>keep url for attribution</small>"]:::net
+  RES -->|prose| TXT["load_source"]:::cpu
+
+  RSRCH --> SCRIPT
+  SPLIT --> SCRIPT
+  TXT --> SCRIPT
+
+  SCRIPT["write_script<br/><small>150-165 words · hook/turn/payoff<br/>subject_domains · palette</small>"]:::llm
+  SCRIPT --> BRAND["fetch subject brand<br/><small>favicon + palette of the SUBJECT,<br/>not the publisher</small>"]:::net
+
+  SCRIPT --> VOICE["generate_voice<br/><small>Chatterbox · per-sentence takes<br/>repetition guard · tone chain</small>"]:::gpu
+  VOICE --> ALIGN["transcribe_and_align<br/><small>Whisper · word timings</small>"]:::gpu
+  ALIGN --> BEATS["plan_segments<br/><small>narration → beats</small>"]:::cpu
+
+  BEATS --> PLAN["director.plan<br/><small>claude -p picks a kind per beat</small>"]:::llm
+  PLAN --> FLOOR{"scenes ≥ half?"}:::cpu
+  FLOOR -->|no| CONV["convert weakest cards<br/><small>stock first, then generated</small>"]:::cpu
+  CONV --> RENDER
+  FLOOR -->|yes| RENDER
+
+  RENDER["render each slot"]:::cpu
+  RENDER --> R1["Remotion compositions<br/><small>flow · window · device · terminal<br/>comparison · cards</small>"]:::cpu
+  RENDER --> R2["stock_clip<br/><small>Pexels · seconds</small>"]:::net
+  RENDER --> R3["ai_scene<br/><small>MiniMax H3 · ~10 min · 21.7 GB</small>"]:::gpu
+
+  R1 --> AVATAR
+  R2 --> AVATAR
+  R3 --> AVATAR
+
+  AVATAR["avatar<br/><small>LatentSync lip-sync, or a held frame</small>"]:::gpu
+  AVATAR --> SPANS["span layout<br/><small>content · content_full · content_pip</small>"]:::cpu
+  SPANS --> CAPS["captions + master"]:::cpu
+  CAPS --> OUT["1080×1920 mp4 + thumbnail"]:::cpu
+
+  classDef net fill:#0E8F6618,stroke:#0E8F66,stroke-width:1.5px,color:#0E8F66
+  classDef llm fill:#2B6FD618,stroke:#2B6FD6,stroke-width:1.5px,color:#2B6FD6
+  classDef gpu fill:#B8317A18,stroke:#B8317A,stroke-width:1.5px,color:#B8317A
+  classDef cpu fill:#6B728018,stroke:#6B7280,stroke-width:1.5px,color:#6B7280
+</pre>
+  </div>
+
+  <div class="note">
+    <span class="tag">The one rule that matters</span>
+    <p>
+      <strong>Three services share one 24&nbsp;GB card and none of them owns
+      it.</strong> Generation needs 21.7&nbsp;GB, so it cannot coexist with the
+      voice model or Whisper. Every stage clears the others on the way in
+      <em>and</em> releases on the way out.
+    </p>
+    <p>
+      The reason this is stated as a rule rather than left to chance: the
+      failure never says “out of memory”. ComfyUI reports it as
+      <code>{"status_str": "error"}</code>, the director logs a warning, drops
+      the clip, and the video ships one shot short with nothing explaining why.
+      A second symptom was an HTTP&nbsp;500 whose real cause was visible only
+      inside another container’s log.
+    </p>
+    <p>
+      Note also that PyTorch keeps its allocator reservation after models
+      unload, so <code>nvidia-smi</code> still shows ~22&nbsp;GB held. Harmless
+      for the process that owns the pool; fatal for anything else.
+    </p>
+  </div>
+
+  <hr class="rule">
+
+  <h2>Modules</h2>
+  <p class="prose">
+    One responsibility each. The split that matters most is
+    <strong>decide</strong> versus <strong>make</strong> versus
+    <strong>assemble</strong>: the director chooses and produces payloads but
+    renders nothing itself, the generators know one medium each and nothing
+    about the story, and the assembler knows geometry and time but never
+    content.
+  </p>
+
+  <div class="tablewrap">
+  <table>
+    <thead>
+      <tr><th>module</th><th>owns</th><th>does not know</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>config.py</td><td>Every tunable, with the measurement that set it recorded beside it</td><td>Anything about a specific run</td></tr>
+      <tr><td>sources.py</td><td>Turning an input into source text + title + url</td><td>What a video is</td></tr>
+      <tr><td>pipeline.py</td><td>Script, voice, alignment, mastering</td><td>How b-roll is chosen or drawn</td></tr>
+      <tr><td>broll_director.py</td><td>Choosing a kind per beat and building its payload</td><td>How any kind renders</td></tr>
+      <tr><td>remotion_client.py</td><td>Kind → composition, prop validation, render</td><td>Why this kind was chosen</td></tr>
+      <tr><td>stock.py</td><td>One Pexels clip, conformed to the panel</td><td>The slate it belongs to</td></tr>
+      <tr><td>h3_client.py</td><td>One generated clip, and GPU hygiene</td><td>The story</td></tr>
+      <tr><td>sourcebrand.py</td><td>The subject’s mark and palette</td><td>Where they get drawn</td></tr>
+      <tr><td>branding.py</td><td>Channel constants: captions, thumbnail</td><td>The subject</td></tr>
+      <tr><td>stages.py</td><td>Span layout, compositing, captions, master</td><td>What the content means</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>The two branding layers, kept apart</h3>
+  <p class="prose">
+    <code>sourcebrand</code> borrows the <em>subject’s</em> identity so each
+    story looks like it came from that story. <code>branding</code> holds the
+    <em>channel’s</em> constants so a viewer recognises the video as yours.
+    Collapsing them is how a video about X ended up branded as TechCrunch.
+  </p>
+
+  <hr class="rule">
+
+  <h2>B-roll kinds</h2>
+  <p class="prose">
+    Two groups, and the distinction drives the scene floor: a
+    <strong>scene</strong> puts imagery or a shot on screen, a
+    <strong>card</strong> puts type on a rectangle. At least half of every
+    slate must be scenes, enforced in code because the rule stated in the
+    prompt alone was ignored.
+  </p>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>kind</th><th>use when</th><th>cost</th></tr></thead>
+    <tbody>
+      <tr><td>stock_clip</td><td>The subject is physically filmable — a place, an object, an activity</td><td>seconds</td></tr>
+      <tr><td>ai_scene</td><td>Atmosphere for a subject with nothing to film and nothing to diagram</td><td>~10 min GPU</td></tr>
+      <tr><td>terminal_scene</td><td>A repo, a file, a command — show the software as software</td><td>~5 s</td></tr>
+      <tr><td>device_scene</td><td>An app, feed or ranking — the surface a person actually sees</td><td>~5 s</td></tr>
+      <tr><td>window_scene</td><td>A document or diff, in a real window</td><td>~5 s</td></tr>
+      <tr><td>flow_scene</td><td>A process with ordered stages — drawn, not described</td><td>~5 s</td></tr>
+      <tr><td>comparison_scene</td><td>Bigger than · ahead of · more than — the shape of most money stories</td><td>~5 s</td></tr>
+      <tr><td><em>cards</em></td><td>Only when there is genuinely nothing concrete to show</td><td>~4 s</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Adding one</h3>
+  <p class="prose">
+    Four edits, always the same four — the seam is deliberate so a new kind
+    never touches the assembler:
+  </p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>file</th><th>edit</th></tr></thead>
+    <tbody>
+      <tr><td>Root.tsx</td><td>Register the composition</td></tr>
+      <tr><td>remotion_client.py</td><td>Map kind → composition + required props</td></tr>
+      <tr><td>broll_director.py</td><td>Catalogue entry, prop schema, normaliser, duration bounds</td></tr>
+      <tr><td>config.py</td><td>Add to <code>fullscreen_kinds</code> if it can own the frame</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <hr class="rule">
+
+  <h2>Layout</h2>
+  <p class="prose">
+    Three span modes, alternating so the edit never settles into one shape.
+    Full-frame graphics may take up to 55% of the running time.
+  </p>
+  <ul class="stages">
+    <li class="stage" style="--edge: var(--cpu)">
+      <h4>content</h4>
+      <p>Graphic in the upper panel, presenter in the lower half. The default.</p>
+    </li>
+    <li class="stage" style="--edge: var(--signal)">
+      <h4>content_full</h4>
+      <p>Graphic owns the whole frame; the presenter is absent for its duration.</p>
+    </li>
+    <li class="stage" style="--edge: var(--signal)">
+      <h4>content_pip</h4>
+      <p>Full-frame graphic with the presenter in a round corner PIP, alternating sides. Keeps a person on screen without giving up the frame.</p>
+    </li>
+  </ul>
+
+  <hr class="rule">
+
+  <h2>Invariants</h2>
+  <p class="prose">
+    Each of these exists because its absence shipped in a finished video.
+  </p>
+  <ul class="stages">
+    <li class="stage" style="--edge: var(--signal)">
+      <h4>legibility is a pair, not a colour</h4>
+      <p>Text colours are chosen by contrast ratio against their actual background. Absolute brightness once picked a subject’s background as its own accent — a headline rendered on itself.</p>
+    </li>
+    <li class="stage" style="--edge: var(--signal)">
+      <h4>a page that hides its text is not shown</h4>
+      <p>If fetching a page did not yield the article, a screenshot of it is not evidence — it is the paywall. A Bloomberg bot check once ran as b-roll.</p>
+    </li>
+    <li class="stage" style="--edge: var(--signal)">
+      <h4>fit, never assume</h4>
+      <p>Every text block is measured against the box that holds it. Estimated advance ratios put code off the panel edge and headlines through their own kicker.</p>
+    </li>
+    <li class="stage" style="--edge: var(--signal)">
+      <h4>the presenter is never full-frame</h4>
+      <p>A span with no panel content used to fall through to a full-frame avatar — silently, on seven spans of eleven.</p>
+    </li>
+    <li class="stage" style="--edge: var(--gpu)">
+      <h4>layout decides before the renderer</h4>
+      <p>Render size follows the span decision. Sizing from eligibility instead meant 1920-tall clips dropped into a 998 panel, cropped rather than fitted.</p>
+    </li>
+    <li class="stage" style="--edge: var(--llm)">
+      <h4>the subject, not the publisher</h4>
+      <p>Designed panels wear the subject’s mark. Quote beds keep the publisher’s, because they are quoting it.</p>
+    </li>
+  </ul>
+
+  <hr class="rule">
+
+  <h2>Running it</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>command</th><th>result</th></tr></thead>
+    <tbody>
+      <tr><td>/short &lt;url&gt;</td><td>Fetches, falls back to any prose pasted with it</td></tr>
+      <tr><td>/short &lt;topic&gt; --research</td><td>Searches the web first</td></tr>
+      <tr><td>/short … --avatar</td><td>Renders the lip-synced presenter (+~35 min)</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="prose" style="margin-top:1rem">
+    Without <code>--avatar</code> the lower half is a black hold. That is the
+    fast path — roughly 8–12 minutes instead of 40–50 — and it is the right
+    default while iterating on voice and b-roll.
+  </p>
+
+  <footer>
+    scripts/shorts · remotion/src · services/chatterbox — RTX 3090, 24 GB
+  </footer>
+</div>
