@@ -64,6 +64,7 @@ COMPOSITIONS: dict[str, tuple[str, tuple[str, ...]]] = {
     # Scenes rather than cards: a world with a camera moving through it.
     "terminal_scene": ("TerminalScene", ("lines",)),
     "device_scene": ("DeviceScene", ("items",)),
+    "comparison_scene": ("ComparisonScene", ("items",)),
     "source_pull": ("SourcePull", ("sentence",)),
     # The call to action, placed where it is spoken.
     "cta": ("CtaCard", ("action",)),

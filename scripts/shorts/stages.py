@@ -711,6 +711,7 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
     # graphics are a change of scale, not a replacement for the face.
     full_budget = dur * cfg.fullscreen_max_share
     full_used = 0.0
+    full_shown = 0
     for p in placed:
         add_gap(cursor, p["t"])
         as_full = bool(p.get("full")) and full_used + p["len"] <= full_budget
@@ -719,7 +720,19 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
                         "(%.1fs of %.1fs)", p["slug"], full_used, full_budget)
         if as_full:
             full_used += p["len"]
-        spans.append({"mode": "content_full" if as_full else "content",
+        # Alternate the two full-frame treatments rather than using one.
+        #
+        # Every full-frame graphic removing the presenter entirely meant the
+        # video swung between exactly two compositions — presenter-in-the-
+        # lower-half, and no presenter at all — which reads as a template
+        # being filled in. Alternating in a round PIP keeps a person on screen
+        # over the graphic and gives the edit a third shape.
+        if as_full:
+            mode = "content_full" if full_shown % 2 == 0 else "content_pip"
+            full_shown += 1
+        else:
+            mode = "content"
+        spans.append({"mode": mode,
                       "start": p["t"], "end": p["t"] + p["len"],
                       "content": p["path"]})
         cursor = p["t"] + p["len"]
@@ -1051,6 +1064,60 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
                              f"crop={cfg.width}:{cfg.height}"),
                      "-r", str(cfg.fps), "-c:v", "libx264", "-crf", "17",
                      "-pix_fmt", "yuv420p", out)
+        elif sp["mode"] == "content_pip":
+            # Full-frame graphic with the presenter as a round picture-in-
+            # picture in a corner.
+            #
+            # Between the two existing modes there was nothing: either the
+            # presenter took the lower half of every frame, or they vanished
+            # entirely for the length of a full-frame graphic. Both are true
+            # of the whole span, so the video alternated between two fixed
+            # compositions and read as a template. The PIP keeps the presence
+            # of a person on screen while giving the graphic the whole frame,
+            # and it is the shape short-form viewers already read as "someone
+            # is talking you through this".
+            #
+            # The corner alternates by span index so consecutive PIPs do not
+            # sit in the same place, and it hugs the side rather than the
+            # centre because the captions live along the bottom middle.
+            d = int(cfg.width * 0.30)                 # PIP diameter
+            m = int(cfg.width * 0.045)                # margin from the edges
+            left = (i % 2 == 0)
+            x = m if left else cfg.width - d - m
+            y = int(cfg.height * 0.60)
+            circle = os.path.join(span_dir, f"pip_{i:02d}.png")
+            self._sh("ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+                     "-i", f"color=black@0:s={d}x{d},format=rgba",
+                     "-vf", (f"geq=r=0:g=0:b=0:a='if(lte(hypot(X-{d/2},"
+                             f"Y-{d/2}),{d/2}),255,0)'"),
+                     "-frames:v", "1", circle)
+            bg = os.path.join(span_dir, f"cf_{i:02d}.mp4")
+            self._sh("ffmpeg", "-v", "error", "-y", "-stream_loop", "-1",
+                     "-i", sp["content"], "-t", f"{L:.3f}", "-an",
+                     "-vf", (f"scale={cfg.width}:{cfg.height}:"
+                             f"force_original_aspect_ratio=increase,"
+                             f"crop={cfg.width}:{cfg.height}"),
+                     "-r", str(cfg.fps), "-c:v", "libx264", "-crf", "17",
+                     "-pix_fmt", "yuv420p", bg)
+            self._sh(
+                "ffmpeg", "-v", "error", "-y", "-i", bg, "-i", seg,
+                "-i", circle,
+                "-filter_complex",
+                # Square-crop the presenter about the head and shoulders.
+                #
+                # Keyed off WIDTH, not height: the presenter frame is 1080x1920,
+                # so a square of 0.62*height is 1190px — wider than the source —
+                # and ffmpeg rejects the filter graph outright ("Failed to
+                # configure input pad"), taking the whole run with it. In a
+                # vertical frame the short side is the only safe basis for a
+                # square.
+                f"[1:v]crop=iw*0.78:iw*0.78:(iw-iw*0.78)/2:ih*0.06,"
+                f"scale={d}:{d}[p];"
+                f"[p][2:v]alphamerge[pa];"
+                f"[0:v][pa]overlay={x}:{y}:shortest=1[o]",
+                "-map", "[o]", "-t", f"{L:.3f}", "-an",
+                "-c:v", "libx264", "-crf", "17", "-pix_fmt", "yuv420p", out)
+
         elif sp["mode"] == "full":
             os.replace(seg, out)
         else:
@@ -1085,7 +1152,7 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
     # that owns the whole frame. Full-frame spans push their captions to the
     # lower third instead.
     full_spans = [(sp["start"], sp["end"]) for sp in spans
-                  if sp["mode"] == "content_full"]
+                  if sp["mode"] in ("content_full", "content_pip")]
 
     def caption_y(start: float, end: float) -> float:
         if any(not (end <= a or start >= z) for a, z in full_spans):

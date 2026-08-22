@@ -14,6 +14,7 @@ import {WindowScene, WindowSceneProps} from './compositions/WindowScene';
 import {FlowScene, FlowSceneProps} from './compositions/FlowScene';
 import {TerminalScene, TerminalSceneProps} from './compositions/TerminalScene';
 import {DeviceScene, DeviceSceneProps} from './compositions/DeviceScene';
+import {ComparisonScene, ComparisonSceneProps} from './compositions/ComparisonScene';
 
 /**
  * Canvas and duration come from input props, not from these defaults.
@@ -208,6 +209,28 @@ export const RemotionRoot: React.FC = () => {
                   '- core/grok-integration/', '+ LICENSE (Apache-2.0)'],
           step: 2,
           steps: 5,
+        } as any}
+      />
+      <Composition
+        id="ComparisonScene"
+        component={ComparisonScene as any}
+        durationInFrames={150}
+        fps={25}
+        width={1080}
+        height={1920}
+        calculateMetadata={sized}
+        defaultProps={{
+          ...common,
+          width: 1080,
+          height: 1920,
+          durationInSeconds: 6,
+          kicker: 'the number',
+          title: 'Record IPO size',
+          items: [
+            {label: 'SpaceX', value: 30, prefix: '$', suffix: 'B'},
+            {label: 'Anthropic target', value: 10, prefix: '$', suffix: 'B', lead: true},
+          ],
+          note: 'Anthropic expects to match or beat it',
         } as any}
       />
       <Composition

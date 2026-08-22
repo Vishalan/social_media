@@ -726,6 +726,21 @@ class ShortsPipeline:
 
         self._sh("docker", "cp", cfg.path("vo_16k.wav"),
                  f"commoncreed_latentsync:/app/output/{cfg.run_id}_16k.wav")
+        # Clear the GPU before Whisper asks for it.
+        #
+        # Three services share one 24 GB card and each used to assume it had
+        # the card to itself. Only the generation step ever released anything,
+        # so whichever stage ran after a heavy one failed on allocation — here
+        # Whisper died with "CUDA failed with error out of memory" and the run
+        # ended on an opaque HTTP 500, with the actual reason visible only in
+        # another container's log.
+        #
+        # Freeing is cheap and idempotent; contention is not.
+        try:
+            from .h3_client import free_gpu
+            free_gpu()
+        except Exception as exc:                   # noqa: BLE001 — best effort
+            logger.debug("pre-transcribe free failed: %s", str(exc)[:120])
         tr = self._post(f"{cfg.latentsync_endpoint}/transcribe", {
             "audio_path": f"/app/output/{cfg.run_id}_16k.wav",
             "model": cfg.whisper_model,

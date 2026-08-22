@@ -82,12 +82,41 @@ def available() -> bool:
     return True
 
 
-def _free_vram() -> None:
+def free_gpu() -> None:
+    """Clear the GPU for a render that needs almost all of it.
+
+    H3 needs 21.7 GB of the 3090's 24 GB, so it does not co-exist with anything
+    — including the OTHER services on this host. Freeing ComfyUI's own models
+    is not enough: Chatterbox loads lazily and then stays resident for the life
+    of its process, so its few idle gigabytes were still held during the b-roll
+    stage and pushed H3 over the limit.
+
+    The failure mode is what makes this worth doing carefully rather than
+    hoping: ComfyUI reports OOM as an opaque {"status_str": "error"}, the
+    director logs a warning, drops the clip and carries on. The video ships one
+    shot short and nothing says why — which is how generated footage vanished
+    from the output completely while every component still "worked".
+    """
     try:
         _post("/free", {"unload_models": True, "free_memory": True})
-        time.sleep(3)
     except Exception as exc:                        # noqa: BLE001 — best effort
-        logger.debug("free failed: %s", exc)
+        logger.debug("comfy free failed: %s", exc)
+    # Ask the TTS sidecar to let go too. It reloads in ~10s on the next call,
+    # which is cheap against losing the shot.
+    try:
+        import json as _json
+        import urllib.request as _u
+        from .config import ShortsConfig, resolve_endpoints
+        _cfg = ShortsConfig(run_id="_vram")
+        resolve_endpoints(_cfg)
+        req = _u.Request(f"{_cfg.chatterbox_endpoint}/unload", data=b"{}",
+                         headers={"Content-Type": "application/json"})
+        body = _json.loads(_u.urlopen(req, timeout=60).read())
+        if body.get("unloaded"):
+            logger.info("Released the TTS model to make room for generation")
+    except Exception as exc:                        # noqa: BLE001 — best effort
+        logger.debug("chatterbox unload failed: %s", str(exc)[:120])
+    time.sleep(4)
 
 
 def _graph(*, prompt: str, width: int, height: int, length: int, steps: int,
@@ -160,7 +189,7 @@ def render(*, scene: str, out_path: str, duration_s: float = 3.0,
     length = int(duration_s * 24) + 1
     prompt = f"{scene.strip()}. {NEGATIVE_HINT}"
 
-    _free_vram()
+    free_gpu()
     pid = _post("/prompt", {
         "prompt": _graph(prompt=prompt, width=gen_size, height=gen_size,
                          length=length, steps=steps, cfg=cfg, seed=seed,

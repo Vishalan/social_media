@@ -406,6 +406,34 @@ def tts_blend(req: BlendRequest):
             model.conds = None
         raise HTTPException(status_code=500, detail=f"blend failed: {exc}")
 
+@app.post("/unload")
+def unload():
+    """Drop the TTS model and release its VRAM.
+
+    The 3090 has 24 GB and MiniMax-H3 needs 21.7 GB of it. Chatterbox loads
+    lazily and then stays resident for the life of the process, so by the time
+    the b-roll stage runs its few GB are idle but still held, and the video
+    generation fails on an out-of-memory error that surfaces as an opaque
+    ComfyUI "status: error". The clip is simply dropped and the video ships
+    with one fewer shot, which is how generated footage quietly disappeared
+    from the output entirely.
+
+    The next /tts call reloads (~10s), which is a fair price for the shot.
+    """
+    global _model
+    had = _model is not None
+    _model = None
+    try:
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+    except Exception:                              # noqa: BLE001 — best effort
+        pass
+    logger.info("unload: model_was_loaded=%s", had)
+    return {"unloaded": had}
+
+
 if __name__ == "__main__":
     import uvicorn
 

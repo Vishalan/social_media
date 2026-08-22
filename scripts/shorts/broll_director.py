@@ -116,6 +116,16 @@ TYPE_CATALOG: dict[str, dict[str, str]] = {
                 "in under that. The workhorse for 'X is now Y': a licence, a "
                 "release, a rename. Use when the story turns on naming a thing."),
     },
+    "comparison_scene": {
+        "needs": "two or three quantities that can be set against each other",
+        "for": ("bars that GROW and numbers that COUNT UP, side by side. Use "
+                "it whenever the story is 'bigger than', 'ahead of', 'more "
+                "than' — which is the shape most business, money and policy "
+                "stories actually have. It is the visual answer for a story "
+                "with no software to point a camera at: the bar carries the "
+                "meaning, so a viewer who reads nothing still sees which one "
+                "is longer. Mark the story's subject with lead: true."),
+    },
     "terminal_scene": {
         "needs": "a repo, a file, a command, or any concrete developer action",
         "for": ("a REAL TERMINAL running the thing. Commands are typed at a "
@@ -288,6 +298,10 @@ Payload shapes, exactly:
 Reply with JSON only."""
 
 
+_SCENE_KINDS = frozenset({"ai_scene", "terminal_scene", "device_scene",
+                          "window_scene", "flow_scene",
+                          "comparison_scene"})
+
 class BrollDirector:
     """Plans and renders a varied b-roll slate for one short."""
 
@@ -339,7 +353,7 @@ class BrollDirector:
         # gave the planner a weaker option it kept choosing out of familiarity.
         types = ["stats_card", "headline_burst", "window_scene",
                  "split_screen", "cinematic_chart", "lockup", "flow_scene",
-                 "terminal_scene", "device_scene"]
+                 "terminal_scene", "device_scene", "comparison_scene"]
         # `highlight` — the phone mockup sweeping a sentence — is retired. It
         # rendered the source's own body copy at phone-screenshot scale inside a
         # bezel, so the actual words were small, the bezel ate frame, and the
@@ -399,6 +413,33 @@ class BrollDirector:
         return types
 
     # -- planning ---------------------------------------------------------
+    async def _scene_prompt_for(self, narration: str) -> str:
+        """A shot description for generated footage, from one beat's line.
+
+        Kept deliberately concrete and physical. Asked for "a scene about X"
+        the model returns abstractions — "innovation", "growth" — and the
+        generator renders those as coloured smear, which is how the earlier
+        LTX experiment failed. Naming a camera, a subject and a light source
+        is what produces something recognisable.
+        """
+        prompt = (
+            "Write ONE shot description for a 3-second cinematic b-roll clip "
+            "that could sit under this line of narration:\n\n"
+            f"  \"{narration}\"\n\n"
+            "Describe only what a CAMERA WOULD SEE: a physical subject, a "
+            "camera move, and the light. No abstractions, no concepts, no "
+            "text or logos or writing of any kind in the frame, no people's "
+            "faces. Under 40 words. Reply with the description alone."
+        )
+        try:
+            resp = await self.llm.messages.create(
+                model="claude-sonnet-4-5", max_tokens=200,
+                messages=[{"role": "user", "content": prompt}])
+            return " ".join((resp.content[0].text or "").split())[:300]
+        except Exception as exc:              # noqa: BLE001 — optional
+            logger.warning("scene prompt failed (%s)", str(exc)[:100])
+            return ""
+
     async def plan(self, beats: list[dict], *, max_slots: int = 5,
                    max_per_kind: int = 2) -> list[Slot]:
         """Choose a type and build its payload for every beat worth filling.
@@ -437,12 +478,20 @@ class BrollDirector:
             # card that fits any beat rather than the scene that fits this one.
             f"COMPOSITION RULES — these decide whether the video looks made or "
             f"generated:\n"
-            f"* SCENES BEFORE CARDS. terminal_scene, device_scene, "
-            f"window_scene, flow_scene are SCENES: a real terminal, a real "
-            f"phone, a real window, a real diagram, each shot with a moving "
-            f"camera. The rest are cards with words on them. At least HALF the "
-            f"slots must be scenes. A card is the right answer only when there "
-            f"is genuinely nothing concrete to show.\n"
+            f"* SCENES BEFORE CARDS. ai_scene, terminal_scene, device_scene, "
+            f"window_scene, flow_scene, comparison_scene are SCENES: generated footage, a real "
+            f"terminal, a real phone, a real window, a real diagram, each shot "
+            f"with a moving camera. The rest are cards with words on them. At "
+            f"least HALF the slots must be scenes. A card is the right answer "
+            f"only when there is genuinely nothing concrete to show.\n"
+            f"* USE ai_scene when it is offered. It is generated video — the "
+            f"only type that puts real moving imagery on screen rather than "
+            f"another rectangle of type — and it fits ANY story, including "
+            f"ones with no software or product to show: an abstract or "
+            f"atmospheric shot of the subject matter always exists. Stories "
+            f"about money, companies, policy or people have no terminal and no "
+            f"app, and those are exactly the videos that otherwise come out as "
+            f"nothing but text cards.\n"
             f"* AT MOST ONE headline_burst in the whole video. It is a title "
             f"card; a second one is a second title.\n"
             f"* If the story involves code, a repo, a file or a command, one "
@@ -508,6 +557,61 @@ class BrollDirector:
             slot.duration = max(readable_duration(kind, _props_for(slot)),
                                 self.MIN_DURATION.get(kind, 0.0))
             slots.append(slot)
+
+        # Generated footage is GUARANTEED, not hoped for.
+        #
+        # Naming ai_scene in the rules raises the odds; it does not make it
+        # certain, and a video with zero generated shots was the specific
+        # complaint. Every other type here is a rectangle with type in it, so
+        # ai_scene is the only thing on the menu that puts moving imagery on
+        # screen — leaving that to chance is what produced slate after slate of
+        # text cards on stories that had no software to show.
+        #
+        # The weakest CARD is converted, never a scene: the point is to reduce
+        # the number of typographic panels, so trading a card for footage is
+        # the whole move, and trading a scene for one would be a lateral step.
+        # Enforce the scene floor in CODE, not just in the prompt.
+        #
+        # The rules ask for at least half the slots to be scenes and the
+        # planner does not comply: on a story with no software to point a
+        # camera at, the only scene types that fit are ai_scene, flow_scene and
+        # comparison_scene, and it reaches for typographic cards instead. A
+        # measured slate came back 2 scenes out of 6 with the rule stated
+        # plainly in the prompt.
+        #
+        # Generated footage is the lever because it fits ANY subject — there is
+        # always an atmospheric shot of a company, a market or a decision —
+        # whereas a terminal or a phone requires the story to contain one. So
+        # surplus cards become ai_scene until the floor is met or the budget
+        # runs out. Cost is real (~10 min a clip), which is what the budget is
+        # for; a video that is nothing but text panels is the thing being paid
+        # to avoid.
+        want = (len(slots) + 1) // 2
+        used_h3 = sum(1 for x in slots if x.kind == "ai_scene")
+        have = sum(1 for x in slots if x.kind in _SCENE_KINDS)
+        cards = sorted((x for x in slots if x.kind not in _SCENE_KINDS),
+                       key=lambda x: -x.duration)
+        for victim in cards:
+            if have >= want or used_h3 >= self.h3_budget:
+                break
+            scene = await self._scene_prompt_for(victim.narration)
+            if not scene:
+                continue
+            logger.info("Scene floor: converting the %s at %.1fs into "
+                        "generated footage (%d/%d scenes)",
+                        victim.kind, victim.start, have + 1, want)
+            victim.kind = "ai_scene"
+            victim.payload = {"scene": scene}
+            victim.why = "scene floor: generated footage"
+            victim.duration = max(
+                readable_duration("ai_scene", _props_for(victim)),
+                self.MIN_DURATION.get("ai_scene", 0.0))
+            have += 1
+            used_h3 += 1
+        if have < want:
+            logger.info("Scene floor not met: %d/%d — the generation budget "
+                        "of %d is the binding constraint",
+                        have, want, self.h3_budget)
 
         if not slots:
             raise DirectorError("planner returned no usable slots")
@@ -915,6 +1019,7 @@ PAYLOAD_SPEC: dict[str, str] = {
     "annotate": '"phrase": one exact phrase present on the page',
     "macro": '"phrase": one small element visible on the page',
     "ai_video": '"scene": a described scene, never a concept',
+    "comparison_scene": '"kicker": 2-4 words. "title": 2-5 words. "items": 2-3 of {"label": UNDER 18 CHARS, "value": a NUMBER only, "prefix": e.g. "$", "suffix": e.g. "B", "lead": true for the story subject}. "note": under 45 chars',
     "terminal_scene": '"title": the repo or directory, "lines": 4-6 lines, each {"text": UNDER 26 CHARS, "kind": one of command|out|ok|warn}, "focus_line": index of the payoff line',
     "device_scene": '"title": 2-4 words, "app": the surface name e.g. "For You", "items": 3-4 {"text": UNDER 30 CHARS, "score": short number, "mark": up|down}',
     "flow_scene": '"title": 2-5 words. "input": what enters, 3-6 words. "stages": 3-5 stages, EACH UNDER 26 CHARACTERS. "result": what comes out, UNDER 22 CHARACTERS',
@@ -1008,6 +1113,29 @@ def _props_for(slot: "Slot") -> dict:
         if isinstance(fl, int) and 0 <= fl < len(lines):
             out["focusLine"] = fl
         return out
+
+    if k == "comparison_scene":
+        items = []
+        for it in (p.get("items") or [])[:3]:
+            if not isinstance(it, dict):
+                continue
+            lab = _clean(it.get("label"), 18)
+            try:
+                val = float(it.get("value"))
+            except (TypeError, ValueError):
+                continue
+            if not lab:
+                continue
+            items.append({"label": lab, "value": val,
+                          "prefix": _clean(it.get("prefix"), 3),
+                          "suffix": _clean(it.get("suffix"), 3),
+                          "lead": bool(it.get("lead"))})
+        return {
+            "kicker": _cap_words(_clean(p.get("kicker"), 30), 4),
+            "title": _cap_words(_clean(p.get("title"), 40), 5),
+            "items": items,
+            "note": _clean(p.get("note"), 45),
+        }
 
     if k == "device_scene":
         items = []
@@ -1134,6 +1262,7 @@ _DURATION_BOUNDS: dict[str, tuple] = {
     # A terminal needs time to type and be read; rushing it defeats it.
     "terminal_scene": (6.0, 8.0),
     "device_scene": (5.0, 7.0),
+    "comparison_scene": (5.0, 7.0),
 }
 
 # The most words a card may carry, per type. Enforced when building props.

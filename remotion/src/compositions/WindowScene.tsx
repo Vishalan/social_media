@@ -3,7 +3,7 @@ import {AbsoluteFill} from 'remotion';
 import {useClip, blink} from '../lib/timing';
 import {ramp, pop, settle, wipe} from '../lib/motion';
 import {FONT_CSS, SANS, MONO, typeScale, spacing, accentOf, accent2Of, Palette} from '../theme';
-import {fitBlock} from '../lib/fit';
+import {fitBlock, fitOneLine} from '../lib/fit';
 
 export type WindowSceneProps = {
   palette: Palette;
@@ -160,7 +160,18 @@ export const WindowScene: React.FC<WindowSceneProps> = ({
                   key={i}
                   style={{
                     fontFamily: MONO,
-                    fontSize: bodyFont,
+                    // Fitted to the window, not assumed to fit it. Diff
+                    // lines are model-written and arbitrarily long, and at a
+                    // fixed size they ran clean off the right edge mid-word:
+                    // "+ Filing: as soon as thi". A code line that is cut off
+                    // is worse than a smaller one, because the viewer cannot
+                    // tell whether the truncation is the content or a bug.
+                    // Fit each line individually: one long line should not
+                    // shrink the others, and the block already sizes to the
+                    // longest by a 0.66 advance ESTIMATE, which is what let
+                    // this overflow in the first place. fitOneLine measures.
+                    fontSize: fitOneLine(line, bodyFont,
+                                         innerW - bodyFont * 1.2, 500, '0em'),
                     lineHeight: 1.4,
                     color: add ? '#7EE787' : del ? '#FF7B72' : '#C9D1D9',
                     background: add ? '#2EA04326' : del ? '#F8514926' : 'transparent',
@@ -180,22 +191,12 @@ export const WindowScene: React.FC<WindowSceneProps> = ({
           </div>
         </div>
 
-        {/* Segmented progress rail — position in the sequence, for free. */}
-        <div style={{marginTop: 'auto', display: 'flex', gap: width * 0.008, width: '100%'}}>
-          {Array.from({length: Math.max(1, steps)}).map((_, i) => (
-            <div
-              key={i}
-              style={{
-                flex: 1,
-                height: height * 0.008,
-                borderRadius: 99,
-                background: i < step ? '#FFFFFF' : 'rgba(255,255,255,0.25)',
-                transform: i === step - 1 ? `scaleX(${ramp(t, 0.1, 0.9)})` : undefined,
-                transformOrigin: 'left center',
-              }}
-            />
-          ))}
-        </div>
+        {/* The segmented progress rail is gone. It showed this clip's index
+            within the b-roll slate — a sequence the viewer has no concept of
+            and cannot act on, so it read as chrome borrowed from some other
+            application. The owner's reaction on seeing it was to ask what it
+            was, which is the whole answer: a viewer spending attention
+            decoding an ornament is attention not spent on the content. */}
       </AbsoluteFill>
     </AbsoluteFill>
   );

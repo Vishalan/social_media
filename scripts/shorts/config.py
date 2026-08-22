@@ -64,7 +64,7 @@ class ShortsConfig:
     # it is the whole story on one screen. See stages.py for the reasoning.
     reader_page_min_chars: int = 1800
 
-    voice_blend_enabled: bool = True
+    voice_blend_enabled: bool = False
     voice_ref_b: str = "k_hm_psi.wav"
     voice_blend: float = 0.30
     voice_prompt_from: str = "b"
@@ -77,7 +77,7 @@ class ShortsConfig:
     # 0.15-0.35 on the real service moved the measured rate from 3.00 to 2.88
     # w/s — noise. Pace is handled by _conform_pace's measured time-stretch.
     # This value is kept for its effect on delivery character, not speed.
-    cfg_weight: float = 0.28
+    cfg_weight: float = 0.35
     # Baseline for body sentences. Hook and turn sentences get more — see
     # rhythm_* below. A single flat value across the whole script is what made
     # the delivery monotone: every sentence performed identically.
@@ -85,7 +85,7 @@ class ShortsConfig:
     # result is not monotonic — 0.80 was WORSE than 0.65 (5.9 st against 7.0),
     # so "more expressive" is not simply "turn it up". 0.65 recovered the
     # reference's full range; the roles below sit around it rather than above.
-    exaggeration: float = 0.55
+    exaggeration: float = 0.62
 
     # --- speech rhythm --------------------------------------------------
     # Short-form attention rhythm: the hook is performed, the body moves, and a
@@ -97,9 +97,9 @@ class ShortsConfig:
     # the gaps between them are set deliberately. The cost is ~15 TTS calls
     # instead of 4, which is seconds on this hardware.
     rhythm_enabled: bool = True
-    exaggeration_hook: float = 0.62      # first line: sell it
-    exaggeration_turn: float = 0.60     # "but here's the part that matters"
-    exaggeration_payoff: float = 0.58   # last line: land it
+    exaggeration_hook: float = 0.70      # first line: sell it
+    exaggeration_turn: float = 0.68     # "but here's the part that matters"
+    exaggeration_payoff: float = 0.66   # last line: land it
     pause_after_hook_s: float = 0.30    # let the hook breathe before the body
     pause_before_turn_s: float = 0.26   # the beat that makes a turn land
     pause_between_s: float = 0.10       # ordinary sentence gap, kept tight
@@ -138,17 +138,17 @@ class ShortsConfig:
     # nasality that was no longer there, under-boosted a presence deficit
     # twice as large, and put a +12 dB shelf at 120 Hz directly on top of a
     # 125 Hz fundamental, which booms. The shelf now sits BELOW the note.
-    voice_sub_db: float = 6.0
-    voice_sub_hz: int = 95
+    voice_sub_db: float = 12.0
+    voice_sub_hz: int = 120
     voice_body_db: float = 1.5
     voice_body_hz: int = 250
     voice_scoop_fill_db: float = 3.0
     voice_scoop_fill_hz: int = 600
-    voice_nasal_cut_db: float = -4.0
-    voice_nasal_hz: int = 1000
-    voice_presence_db: float = 6.0
-    voice_presence_hz: int = 3000
-    voice_air_db: float = 6.0
+    voice_nasal_cut_db: float = -10.0
+    voice_nasal_hz: int = 1150
+    voice_presence_db: float = 2.5
+    voice_presence_hz: int = 3600
+    voice_air_db: float = 5.0
     voice_air_hz: int = 7000
     # 2.0:1, down from 2.5:1. Compression is what makes a voice sound processed
     # rather than recorded, and "natural" was an explicit ask; the loudnorm pass
@@ -201,7 +201,7 @@ class ShortsConfig:
     # it is 90% of the wait for 0% of what is being judged. Hold turns the loop
     # from half an hour into about three minutes. Switch back to "render" for
     # anything that ships.
-    avatar_mode: str = "render"        # render | hold
+    avatar_mode: str = "hold"        # render | hold
 
     gesture_source: str = "/opt/commoncreed/assets/input_media/IMG_1774_3.mp4"
     gesture_manifest: str = "/opt/commoncreed/assets/gesture_clips/manifest.json"
@@ -325,9 +325,9 @@ class ShortsConfig:
     # excludes the EU, UK, South Korea and the USA from using or hosting the
     # weights or their outputs, and commercial use requires displaying
     # "MiniMax H3" prominently. Both are the operator's call to make.
-    h3_enabled: bool = False
+    h3_enabled: bool = True
     # One per video. The cap is the whole reason this is affordable.
-    h3_max_per_video: int = 1
+    h3_max_per_video: int = 3
     h3_duration_s: float = 3.0
     h3_gen_size: int = 640
     h3_steps: int = 20
@@ -346,10 +346,11 @@ class ShortsConfig:
     # a cut feel deliberate rather than mechanical. These three earn it: a
     # generated establishing shot, a window object, and the call to action.
     fullscreen_kinds: tuple = ("ai_scene", "window_scene", "flow_scene",
-                              "terminal_scene", "device_scene", "cta")
+                              "terminal_scene", "device_scene",
+                              "comparison_scene", "cta")
     # Never let full-frame graphics push the presenter below this share of the
     # video — the face is the channel.
-    fullscreen_max_share: float = 0.30
+    fullscreen_max_share: float = 0.55
     # Ceiling on designed clips per video. Each one costs a claude -p call plus
     # a render, so this bounds the per-video cost, not the aesthetics.
     # 14 designed clips is roughly 45s of rendering, against about 2.5 hours
@@ -358,7 +359,7 @@ class ShortsConfig:
     # sides: at 3-7s each, 9 clips covered 95% of the video and the presenter
     # effectively disappeared. This is a channel fronted by a person — the
     # graphics support the face, they do not replace it. 7 lands near 70%.
-    broll_max_designed: int = 7
+    broll_max_designed: int = 6
     # The real anti-repetition rule, replacing the old total cap: no single
     # graphic type more than twice per video. Page footage shown twice is
     # evidence; shown five times it becomes the subject.
