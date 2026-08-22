@@ -382,6 +382,30 @@ async def _direct_broll(self: ShortsPipeline, *, url: str,
     try:
         slots = await d.plan(beats, max_slots=cfg.broll_max_designed,
                              max_per_kind=cfg.broll_max_per_kind)
+
+        # Decide full-frame HERE, before anything renders.
+        #
+        # The budget used to be applied at assembly, long after the director
+        # had already rendered every eligible kind at 1080x1920. When the
+        # budget ran out the assembler logged "stays in the panel" and dropped
+        # a 1920-tall clip into a ~998 panel, which cropped the top 470px off —
+        # taking the title with it. The clip was flawless; it was measured for
+        # a frame it was never given.
+        #
+        # A render size is downstream of a layout decision, so the decision has
+        # to come first.
+        total = sum(s.duration for s in slots) or 1.0
+        budget = total * cfg.fullscreen_max_share
+        used = 0.0
+        for s in slots:
+            eligible = s.kind in set(cfg.fullscreen_kinds)
+            s.fullscreen = eligible and used + s.duration <= budget
+            if s.fullscreen:
+                used += s.duration
+            elif eligible:
+                logger.info("  %s renders at panel size — full-frame budget "
+                            "spent (%.1fs of %.1fs)", s.kind, used, budget)
+
         slots = await d.render_all(slots, concurrency=cfg.design_concurrency)
     except DirectorError as exc:
         logger.warning("director failed (%s) — falling back to page-roll", exc)
@@ -390,7 +414,7 @@ async def _direct_broll(self: ShortsPipeline, *, url: str,
 
     out = [{"path": s.path, "duration": s.duration, "kind": s.kind,
             "start": s.start, "why": s.why, "error": s.error,
-            "fullscreen": s.kind in set(cfg.fullscreen_kinds)}
+            "fullscreen": bool(getattr(s, "fullscreen", False))}
            for s in slots if s.path]
     self._save("broll.json", out)
     logger.info("Director b-roll: %d clips — %s", len(out),

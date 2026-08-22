@@ -212,6 +212,9 @@ class Slot:
     why: str = ""
     path: str = ""
     error: str = ""
+    # Whether this clip takes the whole frame. Decided before rendering,
+    # because the render size depends on it.
+    fullscreen: bool = False
 
 
 _PLAN_SCHEMA = {
@@ -516,9 +519,16 @@ class BrollDirector:
         return slots
 
     # -- rendering --------------------------------------------------------
-    def target_size(self, kind: str) -> tuple:
-        """Canvas for a kind: the content panel, or the whole frame."""
-        if kind in self.fullscreen_kinds:
+    def target_size(self, kind: str, fullscreen: Optional[bool] = None) -> tuple:
+        """Canvas for a slot: the content panel, or the whole frame.
+
+        Takes the SLOT's decision when it has one. Sizing from the kind alone
+        meant every eligible clip rendered 1920 tall, including the ones the
+        full-frame budget then denied — and a 1920-tall clip in a 998 panel is
+        cropped, not fitted, so it lost its title off the top edge.
+        """
+        full = (kind in self.fullscreen_kinds) if fullscreen is None else fullscreen
+        if full:
             return self.width, self.frame_height
         return self.width, self.height
 
@@ -658,7 +668,7 @@ class BrollDirector:
         """
         from . import remotion_client
 
-        w, h = self.target_size(slot.kind)
+        w, h = self.target_size(slot.kind, getattr(slot, 'fullscreen', None))
         props = _props_for(slot)
         # Which mark a panel wears depends on what the panel is SAYING.
         #

@@ -55,7 +55,12 @@ export const DeviceScene: React.FC<DeviceSceneProps> = ({
 
   // Phone geometry: tall enough to read as a phone, small enough that the
   // camera has somewhere to push from.
-  const phoneW = Math.min(width * 0.60, height * 0.34);
+  // The height coefficient was tuned against the full 1920 frame, so in a
+  // ~998 panel it produced a phone barely a third of the frame wide and rows
+  // too small to read at arm's length. Readability is the whole reason this
+  // composition exists, so the phone claims as much width as it can while
+  // still leaving room for its own rows.
+  const phoneW = Math.min(width * 0.62, height * 0.46);
   const bezel = phoneW * 0.035;
   const cx = width / 2;
   // Centre the whole block — title plus phone — not the phone alone.
