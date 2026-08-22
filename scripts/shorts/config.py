@@ -60,6 +60,10 @@ class ShortsConfig:
     # Chosen by the owner from a measured listening set: Psi's delivery with
     # 30% of Psi's identity, so it reads as the owner, calmer and clearer.
     # See docs/voices.md and services/chatterbox/README.md.
+    # Below this many characters of source, the reader page is not a page —
+    # it is the whole story on one screen. See stages.py for the reasoning.
+    reader_page_min_chars: int = 1800
+
     voice_blend_enabled: bool = True
     voice_ref_b: str = "k_hm_psi.wav"
     voice_blend: float = 0.30

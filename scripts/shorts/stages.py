@@ -741,13 +741,25 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
     # branch, so on a resumed run — where the capture already exists — the name
     # was never bound and the reader page below died on an unbound local.
     source_url = ""
+    # Whether the page may be SHOWN. If fetching it did not yield the article's
+    # text, a picture of that same page is not evidence either — it is whatever
+    # blocked the fetch. Bloomberg returned a "PRESS & HOLD / SUBSCRIBE NOW"
+    # bot check, and that interstitial went into a finished video as b-roll
+    # while the narration talked about an IPO.
+    page_is_usable = True
     meta_path = cfg.path("source_meta.json")
     if os.path.exists(meta_path):
         try:
-            source_url = json.loads(Path(meta_path).read_text()).get("url", "")
+            _meta = json.loads(Path(meta_path).read_text())
+            source_url = _meta.get("url", "")
+            page_is_usable = bool(_meta.get("fetched", True))
         except (json.JSONDecodeError, OSError):
             source_url = ""
-    if (cfg.fill_gaps_with_pageroll and not os.path.exists(page_png)
+    if not page_is_usable:
+        logger.info("The source page did not yield its own text, so it will "
+                    "not be shown either — no page capture, no page panel")
+    if (cfg.fill_gaps_with_pageroll and page_is_usable
+            and not os.path.exists(page_png)
             and source_url):
         try:
             from .pageroll import capture_page
@@ -770,7 +782,24 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
     # and each crops tightly onto a located phrase so furniture never enters
     # frame. This bed only has to be relevant, on-brand and legible.
     page_panel_src = ""
-    if cfg.fill_gaps_with_pageroll:
+    # The reader page needs an ARTICLE behind it. Its whole premise is that the
+    # camera drifts over a long page and settles on one region, which only
+    # reads as "here is the part that matters" when there is a page to pick a
+    # part OUT of. Given a 400-character newsletter blurb it renders the entire
+    # source at once — four sentences of body copy filling the panel, which is
+    # precisely the wall of small text this project has spent its whole life
+    # removing. Below the floor the pull-quote bed handles the gaps instead:
+    # one sentence, large, which is the right treatment for a short source.
+    src_chars = 0
+    try:
+        src_chars = len(Path(cfg.path("source.txt")).read_text())
+    except OSError:
+        pass
+    if cfg.fill_gaps_with_pageroll and src_chars < cfg.reader_page_min_chars:
+        logger.info("Source is %d chars (floor %d) — skipping the reader page; "
+                    "gaps get pull-quote beds instead",
+                    src_chars, cfg.reader_page_min_chars)
+    elif cfg.fill_gaps_with_pageroll:
         reader_png = os.path.join(cfg.broll_dir, "reader.png")
         if not os.path.exists(reader_png):
             src_txt = cfg.path("source.txt")
@@ -789,7 +818,7 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
                                "raw page capture", str(exc)[:140])
         if os.path.exists(reader_png):
             page_panel_src = reader_png
-        elif os.path.exists(page_png):
+        elif page_is_usable and os.path.exists(page_png):
             page_panel_src = page_png
 
     # Paragraph rectangles for framing. Only available for the reader page —
@@ -803,7 +832,7 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
                     len(reader_paras))
     para_cursor = 0
 
-    if cfg.fill_gaps_with_pageroll and os.path.exists(page_png):
+    if cfg.fill_gaps_with_pageroll and page_is_usable and os.path.exists(page_png):
         still_panel = os.path.join(span_dir, "panel_still.png")
         ph = cfg.content_height if cfg.layout == "half_stacked" else cfg.height
         try:
@@ -839,6 +868,23 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
             attribution = brand["domain"] or "source"
             icon_uri = icon_data_uri(brand.get("icon"))
             pulls = pull_sentences(clean, n_presenter)
+            # A short source yields fewer pull-quotes than there are presenter
+            # spans, and the surplus spans then had no panel content at all —
+            # so they fell through to a FULL-FRAME avatar, which this layout
+            # explicitly does not do. A 400-character blurb has four sentences
+            # and can easily face six spans, so this is the normal case for
+            # pasted input rather than an edge one.
+            #
+            # Cycling the pulls is the lesser evil: the treatment rotates
+            # (quote / marked / statement) so a repeated sentence is at least
+            # differently dressed, whereas breaking the layout rule is visible
+            # instantly and looks like the panel failed to render.
+            n_spans = len([x for x in spans if x["mode"] == "presenter"])
+            if pulls and len(pulls) < n_spans:
+                logger.info("Only %d pull-quote(s) for %d presenter span(s) — "
+                            "cycling them so no span goes full-frame",
+                            len(pulls), n_spans)
+                pulls = [pulls[i % len(pulls)] for i in range(n_spans)]
             # Cycle the treatment: the bed appears once per presenter span, so a
             # single template repeated eight times reads as wallpaper.
             variants = ("quote", "marked", "statement")

@@ -37,6 +37,14 @@ class Source:
     title: str
     text: str
     url: str = ""
+    # Did the BODY come from fetching `url`, or from text supplied alongside it?
+    #
+    # This decides whether the page may be shown on screen. If the fetch could
+    # not yield the article's text, a screenshot of that same page is not
+    # evidence of anything either — it is a paywall wall, a bot check, or a
+    # cookie banner. Bloomberg returned exactly that: a "PRESS & HOLD /
+    # SUBSCRIBE NOW" interstitial, which went into a video as b-roll.
+    fetched: bool = True
 
     def summary(self) -> str:
         return self.text
@@ -90,6 +98,28 @@ def _fetch(url: str) -> str:
 
 
 _URL_RE = re.compile(r"https?://\S+")
+
+
+def _headline_of(prose: str) -> str:
+    """The headline sitting at the top of pasted prose.
+
+    A newsletter blurb leads with its headline, so when the page itself cannot
+    be fetched that line is the only title available — and the title is not
+    cosmetic here: it feeds the thumbnail, the kicker and the brand card.
+    Falling back to "untitled" threw away something that was right there.
+    """
+    for raw in prose.splitlines():
+        line = raw.strip()
+        if len(line) < 12 or len(line) > 160:
+            continue
+        # Newsletters tack a reading time onto the headline.
+        line = re.sub(r"\s*\(\s*\d+\s*minute read\s*\)\s*$", "", line,
+                      flags=re.I).strip()
+        # A headline is a fragment; a body sentence ends in a full stop.
+        if line.endswith(".") and len(line.split()) > 12:
+            continue
+        return line
+    return ""
 
 
 def split_spec(spec: str) -> tuple[str, str]:
@@ -165,18 +195,22 @@ def load_source(spec: str, *, kind: SourceKind | None = None,
                 logger.info("Fetched only %d chars from %s; using the supplied "
                             "text as the body and keeping the URL for "
                             "attribution", len(src.text), url)
-                return Source(kind=src.kind, title=src.title or title or "untitled",
-                              text=prose, url=url)
+                return Source(
+                    kind=src.kind,
+                    title=src.title or title or _headline_of(prose) or "untitled",
+                    text=prose, url=url, fetched=False)
             return src
         except SourceError as exc:
             logger.info("Could not fetch %s (%s) — using the supplied text, "
                         "still crediting the source", url, str(exc)[:90])
-            return Source(kind="article", title=title or "untitled",
-                          text=prose, url=url)
+            return Source(kind="article",
+                          title=title or _headline_of(prose) or "untitled",
+                          text=prose, url=url, fetched=False)
 
     if kind == "text" or (kind is None and not s.startswith("http")
                           and "/" not in s.split("\n")[0][:60]):
-        return Source(kind="text", title=title or "untitled", text=s)
+        return Source(kind="text", title=title or "untitled", text=s,
+                      fetched=False)
 
     if kind == "github_repo" or "github.com/" in s or (
             kind is None and re.fullmatch(r"[\w.-]+/[\w.-]+", s)):

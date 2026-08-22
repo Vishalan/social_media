@@ -217,7 +217,10 @@ class ShortsPipeline:
         # without re-fetching (and without a publisher blocking the retry).
         Path(self.cfg.path("source.txt")).write_text(source.text)
         Path(self.cfg.path("source_meta.json")).write_text(json.dumps(
-            {"kind": source.kind, "title": source.title, "url": source.url},
+            {"kind": source.kind, "title": source.title, "url": source.url,
+             # Persisted so a RESUMED run knows this too — otherwise the second
+             # pass happily screenshots a page the first pass rejected.
+             "fetched": getattr(source, "fetched", True)},
             indent=2))
         logger.info("Writing script from %s source %r", source.kind, source.title)
         resp = await self.llm.messages.create(
