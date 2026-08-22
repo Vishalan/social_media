@@ -58,7 +58,8 @@ export const DeviceScene: React.FC<DeviceSceneProps> = ({
   const phoneW = Math.min(width * 0.60, height * 0.34);
   const bezel = phoneW * 0.035;
   const cx = width / 2;
-  const cy = height / 2 + (title ? height * 0.03 : 0);
+  // Centre the whole block — title plus phone — not the phone alone.
+  const cy = height / 2;
 
   const body = Math.min(ty.body * 0.62, phoneW / 16);
   const cardPad = phoneW * 0.055;
@@ -76,7 +77,13 @@ export const DeviceScene: React.FC<DeviceSceneProps> = ({
   // How many rows FIT, rather than how many were supplied. Clamping the phone
   // height instead cut the last card in half, and half a card reads as a
   // rendering fault; three whole rows say the same thing and look deliberate.
-  const room = height * 0.62 - statusH - cardPad * 2;
+  // The title shares the column with the phone, so the phone's budget is what
+  // is left AFTER it. Sizing the phone against the full frame and then adding
+  // a title on top pushed the title clean off the panel's upper edge — the
+  // same overflow that `safe center` fixed in Frame, which this composition
+  // does not use because it draws its own world.
+  const titleBlockH = title ? ty.label * 1.5 + phoneW * 0.09 : 0;
+  const room = height * 0.62 - titleBlockH - statusH - cardPad * 2;
   const fitRows = Math.max(1, Math.floor((room + gap) / (rowH + gap)));
   const rowCount = Math.min(items.length, 4, fitRows);
   const phoneH = statusH + cardPad * 2 + rowH * rowCount + gap * (rowCount - 1);
