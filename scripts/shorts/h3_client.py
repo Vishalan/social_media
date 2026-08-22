@@ -232,4 +232,14 @@ def render(*, scene: str, out_path: str, duration_s: float = 3.0,
     if r.returncode != 0:
         raise H3Error(f"conform failed: {r.stderr[-300:]}")
     logger.info("H3 clip in %.0fs -> %s", time.time() - t0, Path(out_path).name)
+    # Hand the card back immediately.
+    #
+    # Freeing only on the way IN left 21.7 GB of weights resident after the
+    # last clip of a run, so the NEXT run's very first TTS call died on
+    # allocation before it wrote a word. A stage that needs the whole GPU must
+    # release it when it is finished, not merely take it when it starts.
+    try:
+        _post("/free", {"unload_models": True, "free_memory": True})
+    except Exception as exc:                        # noqa: BLE001 — best effort
+        logger.debug("post-render free failed: %s", exc)
     return out_path

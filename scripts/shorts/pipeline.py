@@ -352,7 +352,22 @@ class ShortsPipeline:
             chunks.append(cur)
         return chunks
 
+    def _clear_gpu(self) -> None:
+        """Release other services' GPU memory before a stage that needs it.
+
+        Three processes share one 24 GB card. Each stage now clears the others
+        on the way in, because whoever ran last is not guaranteed to have
+        cleaned up — and the symptom is never "out of memory", it is an opaque
+        HTTP 500 from a container whose log nobody is reading.
+        """
+        try:
+            from .h3_client import free_gpu
+            free_gpu()
+        except Exception as exc:                    # noqa: BLE001 — best effort
+            logger.debug("gpu clear failed: %s", str(exc)[:120])
+
     def generate_voice(self, script: str, *, force: bool = False) -> str:
+        self._clear_gpu()
         cfg = self.cfg
         master = cfg.path("vo_master.wav")
         if os.path.exists(master) and not force:
