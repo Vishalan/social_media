@@ -1,7 +1,7 @@
 import React from 'react';
 import {AbsoluteFill, useCurrentFrame, useVideoConfig} from 'remotion';
 import {FONT_CSS, SANS, MONO, bgOf, inkOf, accentOf, accent2Of, spacing, typeScale, Palette} from '../theme';
-import {useClip, drift, at, blink} from './timing';
+import {useClip, drift, vignette, at, blink} from './timing';
 import {EXPO, pop, settle, ramp, wipe, focusIn, rand} from './motion';
 import {Aurora, jitter} from './atmosphere';
 
@@ -102,6 +102,17 @@ export const Frame: React.FC<{palette: Palette; children: React.ReactNode}> = ({
       >
         {children}
       </AbsoluteFill>
+      {/* The vignette deepens with the push. Without it the push is a scale
+          change; with it the frame closes in, which is the part that reads as
+          pressure rather than as zoom. */}
+      <AbsoluteFill
+        style={{
+          pointerEvents: 'none',
+          background:
+            `radial-gradient(120% 78% at 50% 46%, transparent 42%, #000 128%)`,
+          opacity: vignette(t),
+        }}
+      />
     </AbsoluteFill>
   );
 };

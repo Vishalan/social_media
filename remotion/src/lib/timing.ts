@@ -67,7 +67,23 @@ export const stagger = (t: number, i: number, count: number, opts?: {from?: numb
  * The continuous push that keeps a settled frame from reading as a freeze.
  * ~2.5% over the clip: below conscious notice, above a still image.
  */
-export const drift = (t: number, amount = 0.025) => 1 + amount * t;
+/**
+ * The slow push every panel sits under.
+ *
+ * Was `1 + 0.025 * t` — linear, and 2.5%. shotcraft's slow-push-in card names
+ * both of those as the ways this move fails: a constant-rate push reads as an
+ * ordinary zoom rather than as pressure (the ACCELERATION is the technique),
+ * and the amplitude has to reach roughly 1.14 before a viewer feels it at all.
+ * At 2.5% linear the panels were technically moving and visibly static.
+ *
+ * Quadratic ease-in means the first second is almost imperceptible. Per the
+ * same card that is the design and not a defect: the move must arrive without
+ * the viewer noticing it begin, or there is nothing to release.
+ */
+export const drift = (t: number, amount = 0.11) => 1 + amount * t * t;
+
+/** Vignette depth for the same push, on the same curve. */
+export const vignette = (t: number, max = 0.42) => max * t * t;
 
 /** A cursor that blinks for the whole clip — motion of last resort. */
 export const blink = (frame: number, fps: number) =>
