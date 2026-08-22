@@ -61,6 +61,9 @@ COMPOSITIONS: dict[str, tuple[str, tuple[str, ...]]] = {
     "window_scene": ("WindowScene", ("title", "lines")),
     # A real diagram: nodes, drawn connectors, a token travelling the path.
     "flow_scene": ("FlowScene", ("stages",)),
+    # Scenes rather than cards: a world with a camera moving through it.
+    "terminal_scene": ("TerminalScene", ("lines",)),
+    "device_scene": ("DeviceScene", ("items",)),
     "source_pull": ("SourcePull", ("sentence",)),
     # The call to action, placed where it is spoken.
     "cta": ("CtaCard", ("action",)),

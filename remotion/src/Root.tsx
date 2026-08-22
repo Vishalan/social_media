@@ -12,6 +12,8 @@ import {SourcePull, SourcePullProps} from './compositions/SourcePull';
 import {CtaCard, CtaCardProps} from './compositions/CtaCard';
 import {WindowScene, WindowSceneProps} from './compositions/WindowScene';
 import {FlowScene, FlowSceneProps} from './compositions/FlowScene';
+import {TerminalScene, TerminalSceneProps} from './compositions/TerminalScene';
+import {DeviceScene, DeviceSceneProps} from './compositions/DeviceScene';
 
 /**
  * Canvas and duration come from input props, not from these defaults.
@@ -206,6 +208,54 @@ export const RemotionRoot: React.FC = () => {
                   '- core/grok-integration/', '+ LICENSE (Apache-2.0)'],
           step: 2,
           steps: 5,
+        } as any}
+      />
+      <Composition
+        id="DeviceScene"
+        component={DeviceScene as any}
+        durationInFrames={150}
+        fps={25}
+        width={1080}
+        height={1920}
+        calculateMetadata={sized}
+        defaultProps={{
+          ...common,
+          width: 1080,
+          height: 1920,
+          durationInSeconds: 6,
+          title: 'what the score does',
+          app: 'For You',
+          items: [
+            {text: 'Replies you might answer', score: '+13.5', mark: 'up'},
+            {text: 'A post you would report', score: '-369', mark: 'down'},
+            {text: 'From an account you blocked', score: '-1000', mark: 'down'},
+            {text: 'Video you watch to the end', score: '+10.0', mark: 'up'},
+          ],
+        } as any}
+      />
+      <Composition
+        id="TerminalScene"
+        component={TerminalScene as any}
+        durationInFrames={175}
+        fps={25}
+        width={1080}
+        height={1920}
+        calculateMetadata={sized}
+        defaultProps={{
+          ...common,
+          width: 1080,
+          height: 1920,
+          durationInSeconds: 7,
+          title: 'x/the-algorithm',
+          lines: [
+            {text: 'git clone x/the-algorithm', kind: 'command'},
+            {text: 'Cloning into the-algorithm...', kind: 'out'},
+            {text: 'Receiving objects: 100%', kind: 'out'},
+            {text: 'cat home-mixer/weights.json', kind: 'command'},
+            {text: '"reply_engagement": 13.5', kind: 'ok'},
+            {text: '"author_is_blocked": -1000', kind: 'warn'},
+          ],
+          focusLine: 5,
         } as any}
       />
       <Composition

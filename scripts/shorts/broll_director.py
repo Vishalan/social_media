@@ -116,6 +116,25 @@ TYPE_CATALOG: dict[str, dict[str, str]] = {
                 "in under that. The workhorse for 'X is now Y': a licence, a "
                 "release, a rename. Use when the story turns on naming a thing."),
     },
+    "terminal_scene": {
+        "needs": "a repo, a file, a command, or any concrete developer action",
+        "for": ("a REAL TERMINAL running the thing. Commands are typed at a "
+                "prompt and output appears under them, shot with a camera that "
+                "pushes in and punches onto the line that matters. For a story "
+                "about code this is the strongest possible image, because it "
+                "shows the software instead of describing it. Write commands "
+                "someone would actually run and output they would actually "
+                "see — invented output reads as fake to the audience that "
+                "cares most."),
+    },
+    "device_scene": {
+        "needs": "an app, feed, ranking, recommendation or user-visible surface",
+        "for": ("a PHONE running the product, with real posts/rows in it and "
+                "the score or verdict attached to each. Use it for what the "
+                "system DOES to what a person sees, where terminal_scene is "
+                "for the code itself. The viewer already knows this surface, "
+                "so it needs no explaining."),
+    },
     "flow_scene": {
         "needs": "a process with 3-5 ordered stages that something passes through",
         "for": ("an actual DIAGRAM — numbered nodes down a spine, connectors "
@@ -316,7 +335,8 @@ class BrollDirector:
         # rather than a bordered pane on a dark card. Leaving both on offer just
         # gave the planner a weaker option it kept choosing out of familiarity.
         types = ["stats_card", "headline_burst", "window_scene",
-                 "split_screen", "cinematic_chart", "lockup", "flow_scene"]
+                 "split_screen", "cinematic_chart", "lockup", "flow_scene",
+                 "terminal_scene", "device_scene"]
         # `highlight` — the phone mockup sweeping a sentence — is retired. It
         # rendered the source's own body copy at phone-screenshot scale inside a
         # bezel, so the actual words were small, the bezel ate frame, and the
@@ -404,7 +424,29 @@ class BrollDirector:
             f"for each beat, chosen for what that beat is actually about. "
             f"Fewer slots is fine if a beat is genuinely better left on the "
             f"presenter, but a beat with something concrete to show should get "
-            f"a graphic: a held shot lasting more than ~4s reads as a stall."
+            f"a graphic: a held shot lasting more than ~4s reads as a stall.\n\n"
+            # Measured, not guessed. Over five planning runs on the same script
+            # the slate came back 63% text cards, headline_burst alone took
+            # 25.7% and appeared up to three times in one video, terminal_scene
+            # was chosen once and device_scene never — on a story about a feed
+            # and a ranking, which is precisely what device_scene is for.
+            # Offered a menu with no weighting, the planner reaches for the
+            # card that fits any beat rather than the scene that fits this one.
+            f"COMPOSITION RULES — these decide whether the video looks made or "
+            f"generated:\n"
+            f"* SCENES BEFORE CARDS. terminal_scene, device_scene, "
+            f"window_scene, flow_scene are SCENES: a real terminal, a real "
+            f"phone, a real window, a real diagram, each shot with a moving "
+            f"camera. The rest are cards with words on them. At least HALF the "
+            f"slots must be scenes. A card is the right answer only when there "
+            f"is genuinely nothing concrete to show.\n"
+            f"* AT MOST ONE headline_burst in the whole video. It is a title "
+            f"card; a second one is a second title.\n"
+            f"* If the story involves code, a repo, a file or a command, one "
+            f"slot MUST be terminal_scene. If it involves an app, a feed, a "
+            f"ranking or anything a user sees on a phone, one slot MUST be "
+            f"device_scene. Both, when both are true.\n"
+            f"* Do not describe a thing in text when you can show the thing."
         )
         try:
             resp = await self.llm.messages.create(
@@ -863,6 +905,8 @@ PAYLOAD_SPEC: dict[str, str] = {
     "annotate": '"phrase": one exact phrase present on the page',
     "macro": '"phrase": one small element visible on the page',
     "ai_video": '"scene": a described scene, never a concept',
+    "terminal_scene": '"title": the repo or directory, "lines": 4-6 lines, each {"text": UNDER 26 CHARS, "kind": one of command|out|ok|warn}, "focus_line": index of the payoff line',
+    "device_scene": '"title": 2-4 words, "app": the surface name e.g. "For You", "items": 3-4 {"text": UNDER 30 CHARS, "score": short number, "mark": up|down}',
     "flow_scene": '"title": 2-5 words. "input": what enters, 3-6 words. "stages": 3-5 stages, EACH UNDER 26 CHARACTERS. "result": what comes out, UNDER 22 CHARACTERS',
     "window_scene": '"title": 1-4 words, editorial. "windowTitle": the file or repo label. "lines": UP TO 6 short lines, prefix "+ " or "- " for a diff',
     "ai_scene": '"scene": a described physical place and camera move, 12-30 words, no text or logos in it',
@@ -934,6 +978,45 @@ def _props_for(slot: "Slot") -> dict:
             "kicker": _clean(p.get("kicker") or p.get("title"), 28),
             "left": side("left_title", "left_lines", "left_value", "Before"),
             "right": side("right_title", "right_lines", "right_value", "After"),
+        }
+
+    if k == "terminal_scene":
+        raw = p.get("lines") or []
+        lines = []
+        for item in raw[:6]:
+            if isinstance(item, str):
+                item = {"text": item, "kind": "out"}
+            txt = _clean(item.get("text"), 26)
+            if not txt:
+                continue
+            kind = str(item.get("kind") or "out").lower()
+            if kind not in ("command", "out", "ok", "warn"):
+                kind = "out"
+            lines.append({"text": txt, "kind": kind})
+        out = {"title": _clean(p.get("title"), 30), "lines": lines}
+        fl = p.get("focus_line", p.get("focusLine"))
+        if isinstance(fl, int) and 0 <= fl < len(lines):
+            out["focusLine"] = fl
+        return out
+
+    if k == "device_scene":
+        items = []
+        for item in (p.get("items") or [])[:4]:
+            if isinstance(item, str):
+                item = {"text": item}
+            txt = _clean(item.get("text"), 30)
+            if not txt:
+                continue
+            mark = str(item.get("mark") or "").lower()
+            items.append({
+                "text": txt,
+                "score": _clean(item.get("score"), 8),
+                "mark": mark if mark in ("up", "down") else None,
+            })
+        return {
+            "title": _cap_words(_clean(p.get("title"), 40), 4),
+            "app": _clean(p.get("app"), 18),
+            "items": items,
         }
 
     if k == "flow_scene":
@@ -1038,6 +1121,9 @@ _DURATION_BOUNDS: dict[str, tuple] = {
     "ai_scene": (3.0, 4.0),
     "window_scene": (4.5, 7.0),
     "flow_scene": (5.5, 7.5),
+    # A terminal needs time to type and be read; rushing it defeats it.
+    "terminal_scene": (6.0, 8.0),
+    "device_scene": (5.0, 7.0),
 }
 
 # The most words a card may carry, per type. Enforced when building props.
