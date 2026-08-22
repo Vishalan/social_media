@@ -92,6 +92,33 @@ SCRIPT RULES
 - Write for the ear. Short sentences. No markdown, no emoji, no stage
   directions.
 
+- WRITE FOR THE SYNTHESISER, not just for a reader. The voice is generated,
+  and it takes its phrasing from your punctuation and word choice — there is
+  no second pass where a human fixes a line that reads badly. These are not
+  style preferences; each one is a construction that has come out wrong:
+
+  * ONE punctuation mark per sentence, at most. Every comma is a breath. A
+    sentence carrying three of them is delivered in four pieces and sounds
+    like a list being read out.
+  * NO em-dashes, colons or semicolons. They are normalised to commas before
+    synthesis, so a dash you meant as a hard cut arrives as a soft breath —
+    write two sentences instead and get the cut you wanted.
+  * NO parentheses and no quotation marks around fragments. The voice does
+    not change register for them, so the aside is delivered flat and the
+    sentence loses its shape.
+  * Avoid a common word used in an UNCOMMON grammatical role — "that's not a
+    maybe", "the ask is", "a big if". The model has heard "maybe" as an
+    adverb far more often than as a noun and phrases it accordingly, which
+    puts the stress and the breath in the wrong place. Say "that is not a
+    possibility" or "that is confirmed".
+  * SPELL OUT anything that is not a plain word: numbers, symbols, currency
+    and units. "ten billion dollars", not "$10B". "fifteen percent", not
+    "15%". Write "to" for a range, never a dash.
+  * Hyphenated compounds are read as two words with a pause between them, so
+    prefer the unhyphenated form where one exists.
+  * End every sentence with a full stop. A sentence ending without one runs
+    into the next with no breath at all.
+
 RHYTHM — this is what makes narration land, and it is written IN, not added by
 the voice later:
 - Vary sentence length hard. A long sentence, then a three-word one. The short
@@ -640,7 +667,39 @@ class ShortsPipeline:
             if i + 1 == len(sentences) - 1:
                 gap = max(gap, cfg.pause_before_payoff_s)
             plan.append((sent, ex, gap))
-        return plan
+
+        # Merge neighbours that share a setting AND have no pause between them.
+        #
+        # Every take is a separate synthesis call, so every take boundary is a
+        # fresh start: the model re-enters sentence-initial prosody, pitch
+        # resets, and the join reads as a hesitation even when silence
+        # detection measures none. Fourteen sentences meant fourteen of these,
+        # and the result is heard as "weird pauses" — the owner pointed at one
+        # where the audio contains no gap at all, only a seam.
+        #
+        # Sentences that were going to be spoken at the same exaggeration with
+        # no deliberate pause between them can share one call, which lets the
+        # model carry its own intonation across the boundary. The rhythm design
+        # survives intact: a hook, a turn or a payoff still gets its own take,
+        # because those are exactly the places where the setting changes or a
+        # pause was wanted.
+        merged: list[tuple[str, float, float]] = []
+        for sent, ex, gap in plan:
+            if merged:
+                p_text, p_ex, p_gap = merged[-1]
+                joinable = (
+                    p_ex == ex
+                    and p_gap <= 0.11                      # no intended pause
+                    and len(p_text) + len(sent) + 1 <= self.cfg.tts_merge_max_chars
+                )
+                if joinable:
+                    merged[-1] = (f"{p_text} {sent}", ex, gap)
+                    continue
+            merged.append((sent, ex, gap))
+        if len(merged) < len(plan):
+            logger.info("Rhythm: %d sentences merged into %d take(s) — fewer "
+                        "joins, less chopped delivery", len(plan), len(merged))
+        return merged
 
     def _silence(self, seconds: float, path: str) -> str:
         """A mono silence file at the TTS sample rate, for use between takes."""

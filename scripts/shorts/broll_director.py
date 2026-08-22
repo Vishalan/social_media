@@ -347,6 +347,7 @@ class BrollDirector:
         self.h3_first_frame = ""
         self.subject_icon = ""
         self.fullscreen_kinds = frozenset(fullscreen_kinds)
+        self.max_card_share = 0.20
         self.frame_height = frame_height
 
     # -- capability gating ------------------------------------------------
@@ -445,15 +446,26 @@ class BrollDirector:
         # given 40 words of cinematography returns nothing, so the brief has to
         # be a subject a library would be indexed by, with the camera implied.
         prompt = (
-            "Name ONE filmable shot that could sit under this line of "
-            "narration:\n\n"
+            "Name ONE stock shot to sit under this line of narration:\n\n"
             f"  \"{narration}\"\n\n"
-            "It must be a physical, concrete subject someone could point a "
-            "camera at — a place, an object, an activity. No abstractions "
-            "('growth', 'innovation'), no text or logos in frame, no "
-            "recognisable faces. Answer in 3-6 words, as a noun phrase, the "
-            "way you would type it into a stock footage search. Reply with "
-            "the phrase alone."
+            "REGISTER — this is the part that goes wrong. Stock libraries are "
+            "full of lifestyle imagery, and a literal keyword lands in it: "
+            "'private rocket ride' returned a child with a toy rocket for a "
+            "story about a space company's share sale. Name a shot from "
+            "BUSINESS AND NEWS photography — trading floors, glass office "
+            "towers, server racks, boardrooms, printed documents, city "
+            "skylines, data centres, financial districts. Never homes, "
+            "families, children, hobbies, celebrations, food, or anyone "
+            "smiling at a camera.\n\n"
+            "Prefer the shot's SETTING over its subject. A story about a "
+            "company filing is not 'business people shaking hands'; it is "
+            "'glass office tower at dusk' or 'stack of legal documents'. "
+            "Settings are photographed well and generically; actions are "
+            "photographed as stock cliche.\n\n"
+            "It must be physical and filmable — no abstractions ('growth', "
+            "'innovation'), no text or logos in frame, no recognisable faces. "
+            "Answer in 3 to 6 words as a noun phrase, the way a picture editor "
+            "would search. Reply with the phrase alone."
         )
         try:
             resp = await self.llm.messages.create(
@@ -507,8 +519,11 @@ class BrollDirector:
             f"are SCENES: generated footage, a real "
             f"terminal, a real phone, a real window, a real diagram, each shot "
             f"with a moving camera. The rest are cards with words on them. At "
-            f"least HALF the slots must be scenes. A card is the right answer "
-            f"only when there is genuinely nothing concrete to show.\n"
+            f"AT MOST ONE IN FIVE slots may be a card. Everything else must "
+            f"be a scene. stock_clip in particular fits almost any beat — it "
+            f"falls through to an animated photograph when no footage exists, "
+            f"so 'there is no video of this' is not a reason to reach for "
+            f"type.\n"
             f"* USE ai_scene when it is offered. It is generated video — the "
             f"only type that puts real moving imagery on screen rather than "
             f"another rectangle of type — and it fits ANY story, including "
@@ -611,7 +626,11 @@ class BrollDirector:
         # runs out. Cost is real (~10 min a clip), which is what the budget is
         # for; a video that is nothing but text panels is the thing being paid
         # to avoid.
-        want = (len(slots) + 1) // 2
+        # At most a fifth of the slate may be typographic. Expressed as a
+        # floor on scenes so one number governs, and computed with ceil so a
+        # five-slot slate allows one card rather than rounding to two.
+        import math as _math
+        want = len(slots) - _math.floor(len(slots) * self.max_card_share)
         used_h3 = sum(1 for x in slots if x.kind == "ai_scene")
         have = sum(1 for x in slots if x.kind in _SCENE_KINDS)
         cards = sorted((x for x in slots if x.kind not in _SCENE_KINDS),
@@ -739,8 +758,12 @@ class BrollDirector:
             if not q:
                 raise DirectorError("stock_clip needs a query")
             w, h = self.target_size(k, getattr(slot, "fullscreen", None))
+            # Footage when it exists, an animated photograph when it
+            # does not. Video coverage is absent for most specific
+            # subjects, and that is precisely when a card would
+            # otherwise take the slot.
             return await asyncio.to_thread(
-                stock.fetch, q, out, duration_s=slot.duration,
+                stock.fetch_any, q, out, duration_s=slot.duration,
                 width=w, height=h, fps=self.fps)
 
         if k == "ai_scene":
@@ -1074,7 +1097,7 @@ PAYLOAD_SPEC: dict[str, str] = {
     "annotate": '"phrase": one exact phrase present on the page',
     "macro": '"phrase": one small element visible on the page',
     "ai_video": '"scene": a described scene, never a concept',
-    "stock_clip": '"query": 2-5 words naming a filmable SHOT, e.g. "stock exchange trading floor" or "city skyline at dusk". No abstractions.',
+    "stock_clip": '"query": 3-6 words naming a filmable SHOT from BUSINESS or NEWS photography, e.g. "stock exchange trading floor", "glass office tower dusk", "server racks data centre". Name the SETTING, not the action. Never lifestyle: no homes, families, children, hobbies, or people smiling at camera. No abstractions.',
     "comparison_scene": '"kicker": 2-4 words. "title": 2-5 words. "items": 2-3 of {"label": UNDER 18 CHARS, "value": a NUMBER only, "prefix": e.g. "$", "suffix": e.g. "B", "lead": true for the story subject}. "note": under 45 chars',
     "terminal_scene": '"title": the repo or directory, "lines": 4-6 lines, each {"text": UNDER 26 CHARS, "kind": one of command|out|ok|warn}, "focus_line": index of the payoff line',
     "device_scene": '"title": 2-4 words, "app": the surface name e.g. "For You", "items": 3-4 {"text": UNDER 30 CHARS, "score": short number, "mark": up|down}',

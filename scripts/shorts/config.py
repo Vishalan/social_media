@@ -108,6 +108,10 @@ class ShortsConfig:
     # chatterbox/tts.py:249 hardcodes max_new_tokens=1000 == ~40s of audio.
     # Anything longer is silently truncated mid-sentence unless chunked.
     tts_max_chars_per_chunk: int = 380
+    # Ceiling for merging adjacent sentences into one synthesis call. Held well
+    # under the ~40s token cap: a merged take that hits the cap is truncated
+    # mid-word, which is far worse than the seam the merge exists to remove.
+    tts_merge_max_chars: int = 260
 
     # --- audio mastering ------------------------------------------------
     lufs_target: float = -14.0      # YouTube's published figure; TikTok/IG publish none
@@ -351,6 +355,12 @@ class ShortsConfig:
     # Never let full-frame graphics push the presenter below this share of the
     # video — the face is the channel.
     fullscreen_max_share: float = 0.55
+    # Ceiling on typographic cards as a share of the slate.
+    #
+    # Only became achievable once stock could fall through from footage to an
+    # animated photograph: a video-only search fails on most specific subjects,
+    # and those failures are exactly where a card used to take the slot.
+    max_card_share: float = 0.20
     # Ceiling on designed clips per video. Each one costs a claude -p call plus
     # a render, so this bounds the per-video cost, not the aesthetics.
     # 14 designed clips is roughly 45s of rendering, against about 2.5 hours

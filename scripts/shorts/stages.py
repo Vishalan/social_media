@@ -345,6 +345,7 @@ async def _direct_broll(self: ShortsPipeline, *, url: str,
         fullscreen_kinds=cfg.fullscreen_kinds,
         frame_height=cfg.height)
 
+    d.max_card_share = cfg.max_card_share
     d.h3_gen_size = cfg.h3_gen_size
     d.h3_steps = cfg.h3_steps
 
