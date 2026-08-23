@@ -268,7 +268,7 @@ def pick(mood: str) -> Optional[Path]:
 
 
 def mix(voice_wav: str, out_wav: str, *, mood: str = DEFAULT_MOOD,
-        bed_lufs: float = -32.0, voice_lufs: float = -14.0,
+        bed_lufs: float = -26.0, voice_lufs: float = -14.0,
         intro_s: float = 0.0) -> str:
     """Lay a ducked bed under the narration.
 
@@ -298,13 +298,27 @@ def mix(voice_wav: str, out_wav: str, *, mood: str = DEFAULT_MOOD,
     # `sidechaincompress` takes the voice as its trigger. attack is short so
     # the duck lands before the first syllable is masked; release is long so
     # the bed does not pump up between words inside a sentence.
+    # RELEASE is the parameter that decides whether a bed exists at all.
+    #
+    # At 650ms it was longer than the gaps it was supposed to fill — measured
+    # sentence gaps here run 158-332ms — so the compressor never finished
+    # recovering before the next sentence pushed it down again. The bed stayed
+    # ducked for the whole video, sitting 32 dB under the speech at -47 dB,
+    # which is inaudible on a phone. The result reads as two separate faults:
+    # "there is no music" and "there is a void after every sentence". Both are
+    # this one number.
+    #
+    # 200ms recovers inside the shortest real gap while still being slow enough
+    # not to pump between words inside a sentence. The ratio is gentler too:
+    # a hard 12:1 on a bed already normalised low is what drove it into the
+    # floor rather than merely out of the way.
     chain = (
         f"[1:a]aloop=loop=-1:size=2e9,atrim=0:{dur:.3f},"
-        f"loudnorm=I={bed_lufs}:TP=-2:LRA=11,"
+        f"loudnorm=I={bed_lufs}:TP=-2:LRA=7,"
         f"afade=t=in:st=0:d=1.2,afade=t=out:st={max(0.0, dur - 1.8):.3f}:d=1.8[bed];"
         f"[0:a]asplit=2[v1][vkey];"
         f"[bed][vkey]sidechaincompress="
-        f"threshold=0.02:ratio=12:attack=25:release=650:makeup=1:knee=4[duck];"
+        f"threshold=0.03:ratio=4:attack=20:release=200:makeup=1:knee=6[duck];"
         f"[v1][duck]amix=inputs=2:duration=first:dropout_transition=0:"
         f"weights=1 1:normalize=0,"
         f"loudnorm=I={voice_lufs}:TP=-1.5:LRA=9,alimiter=limit=0.94[out]"
