@@ -123,6 +123,10 @@ SCRIPT RULES
     adverb far more often than as a noun and phrases it accordingly, which
     puts the stress and the breath in the wrong place. Say "that is not a
     possibility" or "that is confirmed".
+  * NEVER write a whole word in CAPITALS. Capitals are how a word looks on
+    a card, not how it is said, and the voice reads a run of capitals as an
+    initialism — a call-to-action keyword came out spelled letter by letter.
+    Write the keyword normally; the card capitalises it.
   * SPELL OUT anything that is not a plain word: numbers, symbols, currency
     and units. "ten billion dollars", not "$10B". "fifteen percent", not
     "15%". Write "to" for a range, never a dash.
@@ -559,6 +563,11 @@ class ShortsPipeline:
     # hyphen from "10-15x" leaves "10 15x", which is read as two separate
     # figures. This runs BEFORE the general rule so the range is claimed first.
     _NUMERIC_RANGE = re.compile(r"(\d)\s*[-‑–—]\s*(?=\d)")
+    # A run of capitals that is long enough to be a WORD rather than an
+    # initialism. Five is the cut: it keeps GPU, API, IPO, JSON and HTTP
+    # spelled out — which is correct for those — while catching SKILLS,
+    # DETAILS, COMMENT and every other call-to-action keyword.
+    _SHOUTED_WORD = re.compile(r"\b([A-Z]{5,})\b")
 
     def _tts_text(self, text: str) -> str:
         """Rewrite a line into what Chatterbox narrates correctly.
@@ -575,6 +584,16 @@ class ShortsPipeline:
         out = self._NUMERIC_RANGE.sub(r"\1 to ", text)
         out = self._PARENTHETICAL_DASH.sub(", ", out)
         out = self._INTRAWORD_HYPHEN.sub(" ", out)
+        # An ALL-CAPS word is read as an initialism. The call-to-action
+        # keyword is written in capitals because that is how it appears on the
+        # card, and the narration came out as "Comment skill S and I will send
+        # you the repository" — the model spelling the trailing letter.
+        #
+        # It does this only SOMETIMES, which makes it worse than a consistent
+        # fault: a single test render can pass and the next can ship broken.
+        # Capitals are a visual decision and belong to the card, so the spoken
+        # copy carries none of them.
+        out = self._SHOUTED_WORD.sub(lambda m: m.group(1).capitalize(), out)
         return " ".join(out.split())
 
     # Chatterbox sometimes LOOPS — it generates the utterance, then generates it
