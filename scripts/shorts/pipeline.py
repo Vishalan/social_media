@@ -55,9 +55,15 @@ _SCRIPT_SCHEMA: dict[str, Any] = {
             "required": ["palette", "typography", "motifs", "rationale"],
         },
         "broll_queries": {"type": "array", "items": {"type": "string"}},
+        # The score's register. Asked for here rather than in a separate call:
+        # the model has just written the script and knows its tone, and a
+        # second round-trip to ask "how did that feel" would be answering from
+        # less context than it already had.
+        "mood": {"type": "string",
+                 "enum": ["tense", "driving", "reflective", "bright"]},
     },
     "required": ["title", "hook", "script", "description",
-                 "visual_identity", "broll_queries"],
+                 "visual_identity", "broll_queries", "mood"],
 }
 
 
@@ -88,6 +94,12 @@ SCRIPT RULES
 - Leave room to BREATHE. Vary sentence length deliberately: a long sentence
   then a very short one. A three-word sentence after a long one is a beat of
   silence, and that is where a hook lands.
+
+- Set "mood" for the background score, from the STORY's register and not
+  the subject matter: tense (a risk, a threat, something hidden), driving
+  (momentum, a race, a launch), reflective (a consequence, a shift, a
+  reckoning), bright (a win, a release, something opening up). It plays far
+  under the voice, so it colours the piece rather than announcing it.
 
 - Write for the ear. Short sentences. No markdown, no emoji, no stage
   directions.
@@ -264,6 +276,7 @@ class ShortsPipeline:
         # 2.7 w/s is the measured pace at the current voice settings; the old
         # 3.3 estimate is what made a 207-word script look like a 63s piece
         # when it was really 56s of rushed delivery.
+        self._mood = str(data.get("mood") or "driving")
         logger.info("Script: %d words (~%.1fs at 2.7 w/s) — %r",
                     wc, wc / 2.7, data["title"])
         if wc > self.cfg.target_words_max * 1.1:
@@ -456,6 +469,19 @@ class ShortsPipeline:
                  f"measured_thresh={m['input_thresh']}:offset={m['target_offset']}:"
                  f"linear=true,alimiter=limit=0.94",
                  "-ac", "1", "-ar", "48000", master)
+        # The bed goes on AFTER mastering, so it is ducked against the voice
+        # at its final level rather than a pre-master one — and before the
+        # 16k copy is cut, because that copy feeds alignment and must stay
+        # dry. Whisper transcribing a mix would time words against music.
+        if cfg.music_enabled:
+            from .music import mix as _music_mix
+            scored = _music_mix(master, cfg.path("vo_scored.wav"),
+                                mood=getattr(self, "_mood", "driving"),
+                                bed_lufs=cfg.music_bed_lufs,
+                                voice_lufs=cfg.lufs_target)
+            if scored != master:
+                self._sh("ffmpeg", "-v", "error", "-y", "-i", scored,
+                         "-ac", "1", "-ar", "48000", master)
         self._sh("ffmpeg", "-v", "error", "-y", "-i", master,
                  "-ac", "1", "-ar", "16000", cfg.path("vo_16k.wav"))
         logger.info("Voice: %.2fs mastered to %.1f LUFS", self._dur(master), cfg.lufs_target)

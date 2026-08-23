@@ -361,6 +361,13 @@ class ShortsConfig:
     # animated photograph: a video-only search fails on most specific subjects,
     # and those failures are exactly where a card used to take the slot.
     max_card_share: float = 0.20
+
+    # --- score ------------------------------------------------------------
+    music_enabled: bool = True
+    # Broadcast practice puts a bed at -30 to -35 LUFS under narration at -14.
+    # It is then ducked FURTHER by the voice, so this is the level it recovers
+    # to in the gaps, not the level it sits at while someone is speaking.
+    music_bed_lufs: float = -32.0
     # Ceiling on designed clips per video. Each one costs a claude -p call plus
     # a render, so this bounds the per-video cost, not the aesthetics.
     # 14 designed clips is roughly 45s of rendering, against about 2.5 hours
