@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+#
+# ccshort — build one vertical short, entirely on this machine.
+#
+# The pipeline used to be driven from a laptop over SSH, which made the
+# operator's machine part of the system: a closed lid or a dropped connection
+# killed a forty-minute render. This is the whole entrypoint, and it lives on
+# the box that owns the GPU, the models and the assets. Anywhere with SSH can
+# start a job; nothing anywhere needs to stay connected for it to finish.
+#
+#   ccshort https://example.com/article
+#   ccshort --research "why compute costs are falling"
+#   ccshort --avatar --wait < input.txt
+#   ssh server ccshort --wait "$(pbpaste)"      # from any machine
+#
+set -euo pipefail
+
+PIPE=/home/vishalan/pipe/scripts
+RUNS=/home/vishalan/shorts
+LOGS=/home/vishalan/shorts/_logs
+KIND=""
+AVATAR="hold"
+WAIT=0
+ID=""
+
+usage() {
+  sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
+  exit "${1:-0}"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --research)  KIND="research"; shift ;;
+    --avatar)    AVATAR="render"; shift ;;
+    --wait)      WAIT=1; shift ;;
+    --id)        ID="${2:-}"; shift 2 ;;
+    -h|--help)   usage 0 ;;
+    --)          shift; break ;;
+    -*)          echo "unknown flag: $1" >&2; usage 1 ;;
+    *)           break ;;
+  esac
+done
+
+# Input from the remaining arguments, or from stdin when there are none. Stdin
+# is what makes this pasteable: a link with a summary under it keeps its
+# newlines, which shell arguments do not.
+INPUT="$*"
+if [[ -z "${INPUT// }" ]]; then
+  if [[ -t 0 ]]; then
+    echo "no input given" >&2; usage 1
+  fi
+  INPUT="$(cat)"
+fi
+if [[ -z "${INPUT// }" ]]; then
+  echo "empty input" >&2; exit 1
+fi
+
+# A readable id derived from the input, so run directories are identifiable
+# months later without opening them.
+if [[ -z "$ID" ]]; then
+  # Prose first, then the URL's own path. Stripping the URL and stopping
+  # there named every link-only run "short-<date>", which is exactly the case
+  # this is used for most.
+  SLUG=$(printf '%s' "$INPUT" \
+    | tr 'A-Z' 'a-z' \
+    | sed -E 's#https?://[^ ]*##g; s/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' \
+    | cut -c1-28)
+  if [[ -z "$SLUG" ]]; then
+    SLUG=$(printf '%s' "$INPUT" \
+      | grep -oE 'https?://[^ ]+' | head -1 \
+      | sed -E 's#\?.*##; s#.*/##' \
+      | tr 'A-Z' 'a-z' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' \
+      | cut -c1-28)
+  fi
+  [[ -z "$SLUG" ]] && SLUG=short
+  ID="${SLUG}-$(date +%m%d-%H%M)"
+fi
+
+mkdir -p "$LOGS"
+IN="$RUNS/$ID.input.txt"
+LOG="$LOGS/$ID.log"
+mkdir -p "$RUNS"
+printf '%s\n' "$INPUT" > "$IN"
+
+ARGS=(--source-file "$IN" --id "$ID" --layout half_stacked --avatar "$AVATAR")
+[[ -n "$KIND" ]] && ARGS+=(--kind "$KIND")
+
+# setsid detaches the job from this SSH session's process group, so closing the
+# connection — or losing it — does not deliver SIGHUP to a render in progress.
+cd "$PIPE"
+setsid nohup python3 -m shorts "${ARGS[@]}" > "$LOG" 2>&1 < /dev/null &
+PID=$!
+
+echo "run    $ID"
+echo "log    $LOG"
+echo "out    $RUNS/$ID/$ID.mp4"
+[[ "$AVATAR" == "render" ]] \
+  && echo "note   avatar rendering — expect 40-50 min" \
+  || echo "note   avatar held — expect 8-15 min"
+
+if [[ "$WAIT" -eq 0 ]]; then
+  echo
+  echo "watch  ccstatus $ID"
+  exit 0
+fi
+
+echo
+while kill -0 "$PID" 2>/dev/null; do
+  sleep 20
+done
+if [[ -f "$RUNS/$ID/$ID.mp4" ]]; then
+  echo "DONE   $RUNS/$ID/$ID.mp4"
+  exit 0
+fi
+echo "FAILED — last lines:" >&2
+tail -12 "$LOG" >&2
+exit 1

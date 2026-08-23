@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#
+# ccstatus — where a run got to, and what it decided.
+#
+# Reports the two things worth knowing without opening the video: whether it
+# is still going, and what the b-roll slate came out as. The card share is the
+# number that has needed watching most.
+#
+set -euo pipefail
+RUNS=/home/vishalan/shorts
+LOGS=/home/vishalan/shorts/_logs
+
+if [[ $# -eq 0 ]]; then
+  echo "recent runs:"
+  ls -1t "$RUNS" 2>/dev/null | grep -v '^_' | grep -v '\.input\.txt$' | head -10 \
+    | while read -r r; do
+        [[ -f "$RUNS/$r/$r.mp4" ]] && s="done" || s="incomplete"
+        printf "  %-34s %s\n" "$r" "$s"
+      done
+  exit 0
+fi
+
+ID="$1"
+LOG="$LOGS/$ID.log"
+MP4="$RUNS/$ID/$ID.mp4"
+
+if pgrep -f "shorts --source-file .*$ID" >/dev/null 2>&1; then
+  echo "status  running"
+else
+  [[ -f "$MP4" ]] && echo "status  done" || echo "status  stopped (no mp4)"
+fi
+[[ -f "$LOG" ]] && echo "stage   $(grep -oE '(Writing script|TTS:|Voice:|Director b-roll|Bed:|AVATAR|FINAL)[^\n]{0,60}' "$LOG" | tail -1)"
+
+if [[ -f "$RUNS/$ID/broll.json" ]]; then
+  python3 - "$RUNS/$ID/broll.json" <<'PY'
+import json, sys
+cl = json.load(open(sys.argv[1]))
+cl = cl if isinstance(cl, list) else cl.get("clips", [])
+SCENES = {"ai_scene","stock_clip","terminal_scene","device_scene",
+          "flow_scene","window_scene","comparison_scene"}
+cards = sum(1 for c in cl if c.get("kind") not in SCENES)
+print("slate   " + "  ".join(c.get("kind","?") for c in cl))
+if cl:
+    print(f"cards   {cards}/{len(cl)} = {100*cards//len(cl)}%  (ceiling 20%)")
+PY
+fi
+[[ -f "$MP4" ]] && echo "out     $MP4  ($(du -h "$MP4" | cut -f1))"
+exit 0
