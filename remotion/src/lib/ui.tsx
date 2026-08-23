@@ -1,6 +1,6 @@
 import React from 'react';
 import {AbsoluteFill, useCurrentFrame, useVideoConfig} from 'remotion';
-import {FONT_CSS, SANS, MONO, bgOf, inkOf, accentOf, accent2Of, spacing, typeScale, Palette, contrastRatio, onColor} from '../theme';
+import {FONT_CSS, SANS, MONO, bgOf, inkOf, accentOf, accent2Of, spacing, typeScale, Palette, DISPLAY, contrastRatio, onColor} from '../theme';
 import {useClip, drift, vignette, at, blink} from './timing';
 import {EXPO, pop, settle, ramp, wipe, focusIn, rand} from './motion';
 import {Aurora, jitter} from './atmosphere';
@@ -180,6 +180,10 @@ export const Words: React.FC<{
                 : undefined,
               WebkitBackgroundClip: grad ? 'text' : undefined,
               backgroundClip: grad ? ('text' as const) : undefined,
+              // Headline runs take the display face. Body and support copy
+              // stay on Inter, which handles small sizes and dense text far
+              // better than any single heavy display weight.
+              fontFamily: DISPLAY,
               display: 'inline-block',
               clipPath: wipe(p),
               // Blur-to-sharp on entry, plus a couple of pixels of noise

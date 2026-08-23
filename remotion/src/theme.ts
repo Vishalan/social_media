@@ -194,15 +194,34 @@ export const spacing = (height: number) => ({
   radius: height * 0.022,
 });
 
+// Every face the compositions name is declared HERE and shipped in public/.
+//
+// Two of the three were silently absent. MONO named JetBrains Mono with no
+// @font-face anywhere, and the scene titles asked for Georgia — which does not
+// exist on Linux. Both fell through to DejaVu, the render host's default, so
+// every terminal, code window and editorial title had been drawing in a
+// typeface nobody chose. A font fallback never errors; it just quietly ships.
 export const FONT_CSS = `
 @font-face{font-family:'Inter';src:url('/fonts/Inter-Regular.ttf') format('truetype');font-weight:400;font-display:block}
 @font-face{font-family:'Inter';src:url('/fonts/Inter-SemiBold.ttf') format('truetype');font-weight:600;font-display:block}
 @font-face{font-family:'Inter';src:url('/fonts/Inter-Bold.ttf') format('truetype');font-weight:700;font-display:block}
 @font-face{font-family:'Inter';src:url('/fonts/Inter-Black.ttf') format('truetype');font-weight:900;font-display:block}
+@font-face{font-family:'Archivo Black';src:url('/fonts/ArchivoBlack.ttf') format('truetype');font-weight:400;font-display:block}
+@font-face{font-family:'Anton';src:url('/fonts/Anton.ttf') format('truetype');font-display:block}
+@font-face{font-family:'JetBrains Mono';src:url('/fonts/JetBrainsMono.ttf') format('truetype');font-display:block}
+@font-face{font-family:'Fraunces';src:url('/fonts/Fraunces.ttf') format('truetype');font-display:block}
 `;
 
+// The display face for headlines and big claims. Inter is an excellent UI
+// typeface and is on roughly nine in ten design-tool mockups, which is exactly
+// why it reads as the default rather than as a decision. Archivo Black is a
+// single heavy weight with real lowercase — the register news graphics use to
+// carry a claim at thumbnail size, without the all-caps shout of Anton.
+export const DISPLAY = "'Archivo Black', 'Inter', system-ui, sans-serif";
 export const SANS = "'Inter', system-ui, -apple-system, sans-serif";
 export const MONO = "'JetBrains Mono', 'SFMono-Regular', Menlo, monospace";
+// A real editorial serif, shipped rather than hoped for.
+export const SERIF = "'Fraunces', Georgia, 'Times New Roman', serif";
 
 /**
  * Shrink a display size until the string actually fits the canvas width.

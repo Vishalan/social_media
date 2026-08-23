@@ -2,7 +2,7 @@ import React from 'react';
 import {AbsoluteFill} from 'remotion';
 import {useClip, blink} from '../lib/timing';
 import {ramp, pop, settle, wipe} from '../lib/motion';
-import {FONT_CSS, SANS, MONO, typeScale, spacing, accentOf, accent2Of, Palette} from '../theme';
+import {FONT_CSS, SANS, MONO, SERIF, typeScale, spacing, accentOf, accent2Of, Palette} from '../theme';
 import {fitBlock, fitOneLine} from '../lib/fit';
 
 export type WindowSceneProps = {
@@ -93,7 +93,7 @@ export const WindowScene: React.FC<WindowSceneProps> = ({
         {/* Editorial serif title, as in the reference scenes. */}
         <div
           style={{
-            fontFamily: 'Georgia, "Times New Roman", serif',
+            fontFamily: SERIF,
             fontStyle: 'italic',
             fontWeight: 700,
             fontSize: titleSize,
@@ -170,8 +170,10 @@ export const WindowScene: React.FC<WindowSceneProps> = ({
                     // shrink the others, and the block already sizes to the
                     // longest by a 0.66 advance ESTIMATE, which is what let
                     // this overflow in the first place. fitOneLine measures.
+                    // Measured in MONO, which is what it is drawn in.
                     fontSize: fitOneLine(line, bodyFont,
-                                         innerW - bodyFont * 1.2, 500, '0em'),
+                                         innerW - bodyFont * 1.2, 500, '0em',
+                                         MONO),
                     lineHeight: 1.4,
                     color: add ? '#7EE787' : del ? '#FF7B72' : '#C9D1D9',
                     background: add ? '#2EA04326' : del ? '#F8514926' : 'transparent',

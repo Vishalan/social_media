@@ -264,6 +264,45 @@ _JUNK_IN = (
 )
 
 
+_MD_PATTERNS = (
+    (re.compile(r"<[^>]{1,200}>"), " "),               # html tags
+    (re.compile(r"!\[[^\]]*\]\([^)]*\)"), " "),         # images
+    (re.compile(r"\[([^\]]+)\]\([^)]*\)"), r"\1"),      # links -> their text
+    (re.compile(r"```[\s\S]*?```"), " "),              # fenced code
+    (re.compile(r"`([^`]*)`"), r"\1"),                  # inline code
+    (re.compile(r"^\s{0,3}#{1,6}\s*", re.M), ""),      # heading hashes
+    (re.compile(r"\*\*([^*]+)\*\*"), r"\1"),            # bold
+    (re.compile(r"(?<!\*)\*([^*\n]+)\*(?!\*)"), r"\1"),  # italic
+    (re.compile(r"^\s{0,3}[-*+]\s+", re.M), ""),       # bullets
+    (re.compile(r"^\s{0,3}>\s?", re.M), ""),           # block quotes
+    (re.compile(r"^\s*\|.*\|\s*$", re.M), " "),         # table rows
+    (re.compile(r"^\s*[-=]{3,}\s*$", re.M), " "),       # rules
+    (re.compile(r"https?://\S+"), " "),                # bare urls
+)
+
+
+def strip_markup(text: str) -> str:
+    """Plain prose from markdown or HTML.
+
+    The script generator copes with markup because a model reads through it.
+    Anything drawn ON SCREEN does not: the pull-quote bed renders source
+    sentences verbatim, so a GitHub README put `**[skills.sh](https://...)**`
+    and a raw `<details>` tag into a finished video, at a tiny size because the
+    fitter was shrinking to accommodate a URL nobody could read anyway.
+
+    Links keep their TEXT and lose their target, which is the only part that
+    was ever meant to be read aloud or seen.
+    """
+    out = text or ""
+    for pattern, repl in _MD_PATTERNS:
+        out = pattern.sub(repl, out)
+    # Collapse the whitespace the substitutions leave behind, but keep the
+    # paragraph breaks that sentence splitting depends on.
+    out = re.sub(r"[ \t]+", " ", out)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out.strip()
+
+
 def _article_body(text: str) -> str:
     """Cut the page's tail off before anything is ranked."""
     low = (text or "").lower()
@@ -291,6 +330,9 @@ def pull_sentences(text: str, count: int, *, min_words: int = 9,
 
     Returns [{"sentence", "emphasis"}, ...], at most ``count``.
     """
+    # Markup never reaches the screen. These sentences are drawn
+    # verbatim in the pull-quote bed, and a README is markdown.
+    text = strip_markup(text)
     import re
 
     body = _article_body(text)

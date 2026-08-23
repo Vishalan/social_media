@@ -23,12 +23,20 @@ export const fitOneLine = (
   availableWidth: number,
   fontWeight = 900,
   letterSpacing = '-0.03em',
+  // The family the text will actually be RENDERED in.
+  //
+  // This was hardcoded to the sans face while the caller drew in monospace,
+  // and a monospace glyph is far wider than the proportional average. So the
+  // measurement reported a size that fits in Inter, the line was drawn in
+  // JetBrains Mono, and it ran off the panel edge — the fit was computed for
+  // a different typeface than the one on screen.
+  fontFamily: string = FAMILY,
 ): number => {
   if (!text) return max;
   const {fontSize} = fitText({
     text,
     withinWidth: availableWidth,
-    fontFamily: FAMILY,
+    fontFamily,
     fontWeight: String(fontWeight),
     letterSpacing,
   });
@@ -45,13 +53,15 @@ export const fitWrapped = (
   availableWidth: number,
   fontWeight = 900,
   letterSpacing = '-0.02em',
+  fontFamily: string = FAMILY,
 ): number => {
   const longest = text
     .split(/\s+/)
     .filter(Boolean)
     .reduce((a, b) => (b.length > a.length ? b : a), '');
   if (!longest) return max;
-  return fitOneLine(longest, max, availableWidth, fontWeight, letterSpacing);
+  return fitOneLine(longest, max, availableWidth, fontWeight, letterSpacing,
+                    fontFamily);
 };
 
 /** Width of a string at a given size — used to lay out inline runs. */
