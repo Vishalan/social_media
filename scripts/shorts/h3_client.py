@@ -154,6 +154,19 @@ def _graph(*, prompt: str, width: int, height: int, length: int, steps: int,
 def stage_first_frame(image_path: str) -> str:
     """Copy an artifact into ComfyUI's input dir and return its bare name.
 
+    KNOWN ISSUE — the conditioning frame decides the composition.
+    ------------------------------------------------------------
+    Whatever this image looks like, the model continues it. A brand card with
+    a flat margin around its artwork therefore yields a clip with that margin
+    baked in, and one shipped in a finished video as coral bars across the top
+    and bottom of a rocket shot.
+
+    It cannot be corrected downstream: cropdetect keys on darkness, so a
+    coloured border is content as far as it is concerned, and the conform sees
+    a full frame. The fix belongs in the card — it has to be full-bleed
+    imagery at the output's aspect, not artwork inset on a field.
+    
+
     LoadImage resolves names against ComfyUI's own input directory, so an
     absolute path from our run dir does not work.
     """
