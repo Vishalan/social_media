@@ -15,6 +15,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from .branding import BRAND
 from .config import ShortsConfig
 from .pipeline import ShortsError, ShortsPipeline
 
@@ -52,13 +53,50 @@ def render_avatar(self: ShortsPipeline, *, force: bool = False) -> str:
         # this file's duration and geometry, so a stand-in has to match both or
         # the timeline it feeds is not the one that will ship.
         dur = self._dur(cfg.path("vo_master.wav"))
-        logger.warning("AVATAR ON HOLD — rendering %.2fs of black instead of "
-                       "running LatentSync. Set avatar_mode='render' to ship.",
-                       dur)
-        self._sh("ffmpeg", "-v", "error", "-y", "-f", "lavfi",
-                 "-i", f"color=c=black:s={cfg.width}x{cfg.height}:r={cfg.fps}",
-                 "-t", f"{dur:.3f}", "-c:v", "libx264", "-crf", "30",
-                 "-pix_fmt", "yuv420p", final)
+        logger.warning("AVATAR ON HOLD — %.2fs stand-in instead of LatentSync. "
+                       "Set avatar_mode='render' to ship.", dur)
+
+        # A LABELLED stand-in, not black.
+        #
+        # Black is indistinguishable from a failed render, and it is the state
+        # a reviewer sees most often — the hold path exists precisely so the
+        # rest of the video can be judged without paying 35 minutes for lip
+        # sync. Every frame the reviewer looks at should say what it is, and
+        # a moving progress bar also makes it obvious the timeline is running
+        # rather than stalled.
+        f = BRAND.font_black
+        bar_w = int(cfg.width * 0.62)
+        bar_x = (cfg.width - bar_w) // 2
+        bar_h = max(4, int(cfg.height * 0.006))
+        # REPEATED down the frame, because the stand-in is cropped before it
+        # is seen and this code does not know where. The presenter is composited
+        # into the lower panel from a 1080x1920 source, so a single centred
+        # label sat outside the visible region and the panel rendered as a flat
+        # colour — indistinguishable from the black it replaced. Three bands
+        # guarantee one lands in any crop.
+        bands = [int(cfg.height * f) for f in (0.22, 0.50, 0.78)]
+        self._sh(
+            "ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+            "-i", f"color=c=0x14171C:s={cfg.width}x{cfg.height}:r={cfg.fps}",
+            "-t", f"{dur:.3f}",
+            "-vf", ",".join(
+                [flt for by in bands for flt in (
+                    # The track, then the fill growing across the real duration.
+                    f"drawbox=x={bar_x}:y={by}:w={bar_w}:h={bar_h}"
+                    f":color=0x2A3038@1:t=fill",
+                    f"drawbox=x={bar_x}:y={by}:w='{bar_w}*t/{dur:.3f}':h={bar_h}"
+                    f":color=0x5C9BFF@1:t=fill",
+                    f"drawtext=fontfile={f}:text='PRESENTER — NOT RENDERED'"
+                    f":fontsize={int(cfg.height * 0.020)}:fontcolor=0x8A94A6"
+                    f":x=(w-text_w)/2:y={by - int(cfg.height * 0.048)}",
+                    # A running clock, so a frozen frame is distinguishable
+                    # from a frozen pipeline at a glance.
+                    f"drawtext=fontfile={f}:text='avatar_mode=hold  "
+                    f"%{{eif\\:t\\:d}}s/{dur:.0f}s'"
+                    f":fontsize={int(cfg.height * 0.014)}:fontcolor=0x5A6472"
+                    f":x=(w-text_w)/2:y={by + int(cfg.height * 0.024)}",
+                )]),
+            "-c:v", "libx264", "-crf", "28", "-pix_fmt", "yuv420p", final)
         return final
 
     from avatar_gen.gesture_library import (
@@ -360,6 +398,30 @@ async def _direct_broll(self: ShortsPipeline, *, url: str,
         d.subject_icon = icon_data_uri(subject.get("icon"))
         if subject.get("domain"):
             logger.info("Graphics will wear the %s mark", subject["domain"])
+
+        # Typography follows the subject too, not just colour.
+        #
+        # The real brand face is nearly always proprietary and cannot be
+        # embedded, so this matches its CATEGORY with a licensed one — a
+        # geometric sans for a geometric brand, a didone for an editorial
+        # one. The classification runs through the same model that writes the
+        # script, because a font NAME carries almost no signal on its own:
+        # "Anthropic Serif" is legible, "TwitterChirp" is not.
+        try:
+            from . import typeface as _tf
+
+            async def _ask_font(prompt: str) -> str:
+                r = await self.llm.messages.create(
+                    model=cfg.intelligence_model, max_tokens=40,
+                    messages=[{"role": "user", "content": prompt}])
+                return r.content[0].text
+
+            faces = await _tf.resolve(
+                script.get("subject_domains") or [], ask=_ask_font)
+            _install_faces(faces)
+        except Exception as exc:                    # noqa: BLE001 — cosmetic
+            logger.info("typeface unresolved (%s) — staying on the house face",
+                        str(exc)[:100])
     except Exception as exc:                       # noqa: BLE001 — optional
         logger.info("no subject mark available: %s", str(exc)[:100])
     # A card built from the source's own mark, used as frame zero of any
@@ -1466,3 +1528,22 @@ def _story_accent(palette) -> Optional[str]:
         if sat > best_sat:
             best, best_sat = c, sat
     return best
+
+
+def _install_faces(faces: dict) -> None:
+    """Put the resolved faces where Remotion and ffmpeg will find them.
+
+    Remotion serves `/fonts/Sourced.ttf` under a stable @font-face name, so a
+    per-story face is a file copy rather than a rebuild. The caption styles
+    read the same paths directly.
+    """
+    import shutil
+    pub = Path("/home/vishalan/remotion-broll/public/fonts")
+    if not pub.is_dir():
+        return
+    for role, name in (("italic_bold", "Sourced.ttf"), ("bold", "SourcedText.ttf")):
+        src = faces.get(role) or faces.get("bold")
+        if src and Path(src).is_file():
+            shutil.copy(src, pub / name)
+    logger.info("Typography: %s (%s) installed for this story",
+                faces.get("family"), faces.get("category"))

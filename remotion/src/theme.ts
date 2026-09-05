@@ -210,6 +210,8 @@ export const FONT_CSS = `
 @font-face{font-family:'Anton';src:url('/fonts/Anton.ttf') format('truetype');font-display:block}
 @font-face{font-family:'JetBrains Mono';src:url('/fonts/JetBrainsMono.ttf') format('truetype');font-display:block}
 @font-face{font-family:'Fraunces';src:url('/fonts/Fraunces.ttf') format('truetype');font-display:block}
+@font-face{font-family:'Sourced';src:url('/fonts/Sourced.ttf') format('truetype');font-weight:400 900;font-display:block}
+@font-face{font-family:'SourcedText';src:url('/fonts/SourcedText.ttf') format('truetype');font-weight:400 900;font-display:block}
 `;
 
 // The display face for headlines and big claims. Inter is an excellent UI
@@ -218,7 +220,18 @@ export const FONT_CSS = `
 // single heavy weight with real lowercase — the register news graphics use to
 // carry a claim at thumbnail size, without the all-caps shout of Anton.
 export const DISPLAY = "'Archivo Black', 'Inter', system-ui, sans-serif";
-export const SANS = "'Inter', system-ui, -apple-system, sans-serif";
+/**
+ * The body face. `SourcedText` is written per-story from the SUBJECT's own
+ * typographic category — matched, never copied: the real brand faces are
+ * proprietary (Anthropic Sans, Build Week Digital, TwitterChirp) and cannot
+ * be embedded in a monetised video. Inter carries every frame where nothing
+ * was resolved, which is why it stays first in the fallback chain rather
+ * than last.
+ */
+export const SANS = "'SourcedText', 'Inter', system-ui, -apple-system, sans-serif";
+
+/** The display face for this story, from the same source. */
+export const SOURCED = "'Sourced', 'Fraunces', Georgia, serif";
 export const MONO = "'JetBrains Mono', 'SFMono-Regular', Menlo, monospace";
 // A real editorial serif, shipped rather than hoped for.
 export const SERIF = "'Fraunces', Georgia, 'Times New Roman', serif";
