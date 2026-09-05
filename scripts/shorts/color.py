@@ -55,3 +55,36 @@ def readable_on(bg: tuple[int, int, int],
                 ) -> tuple[int, int, int]:
     """Whichever of ink or paper reads on `bg`."""
     return light if contrast_ratio(light, bg) >= contrast_ratio(dark, bg) else dark
+
+
+def to_hex(rgb: tuple[int, int, int]) -> str:
+    return "#%02X%02X%02X" % rgb
+
+
+def vivid(hexstr: str, *, lo: float = 0.16, hi: float = 0.42,
+          min_sat: float = 0.55) -> str:
+    """A version of a colour that reads on BOTH a light and a dark backdrop.
+
+    Display captions sit over moving footage, so there is no single background
+    to measure against — the sky behind a word at one frame is a rocket at the
+    next. `contrast_ratio` answers the question for a known pair and cannot
+    answer this one.
+
+    What survives both is a colour held in a middle luminance band and pushed
+    to high saturation: dark enough to read on cream, bright enough to read on
+    near-black, and saturated enough that it is unmistakably an accent rather
+    than grey. The reference's coral is exactly that. A story palette often
+    is not — the accent picked for the Anthropic story rendered near-white
+    over a bright sky and vanished.
+    """
+    import colorsys
+    r, g, b = (c / 255 for c in to_rgb(hexstr))
+    h, l, sat = colorsys.rgb_to_hls(r, g, b)
+    sat = max(sat, min_sat)
+    if rel_luminance(to_rgb(hexstr)) > hi:
+        l = min(l, 0.56)
+    if rel_luminance(to_rgb(hexstr)) < lo:
+        l = max(l, 0.44)
+    l = min(max(l, 0.42), 0.58)
+    rr, gg, bb = colorsys.hls_to_rgb(h, l, sat)
+    return to_hex((int(rr * 255), int(gg * 255), int(bb * 255)))

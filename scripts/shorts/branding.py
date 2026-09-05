@@ -68,15 +68,23 @@ class CaptionStyle:
     competing with it splits attention.
     """
 
-    font: str = BRAND.font_bold
-    # ~3.5% of a 1920-tall frame, matching the references. Was 58.
-    size: int = 44
+    # BLACK, not Bold. One word alone on screen has no neighbours to give it
+    # presence, so it has to carry weight by itself — at Bold it read as a
+    # subtitle sitting on the video rather than as part of the design.
+    font: str = BRAND.font_black
+    # Up from 44. That number was set when a cue carried three words and had
+    # to fit a line; a single word has the width to spare, and the reference's
+    # single-word captions are proportionally larger than ours were.
+    size: int = 56
     color: str = "white"
     box: bool = True
     # Slightly lighter than before: the reference pill reads as a scrim, not a
     # solid block punched through the footage.
-    box_color: str = "0x0B0D11@0.70"
-    box_pad: int = 18
+    # Tighter and more opaque. A loose translucent pill reads as a caption
+    # burned in by a tool; a snug near-solid one reads as a designed element,
+    # which is the difference the reference lands.
+    box_color: str = "0x0B0D11@0.82"
+    box_pad: int = 14
     y_frac: float = 0.615
     shadow_color: str = "black@0.35"
     shadow_x: int = 0
@@ -339,39 +347,79 @@ class DisplayCaption:
     or none of it does, and the call to action is exactly the moment that
     cannot be a subtitle.
 
-    Playfair Display Italic is a high-contrast didone, the class of face the
-    reference uses. SIL Open Font License, so it carries no attribution
-    obligation into a monetised video.
+    Playfair Display, pinned at weight 900. The variable font renders at its
+    DEFAULT instance under freetype, which is Regular — so the first build
+    came out thin at every size, and no amount of scaling fixed it because
+    the problem was weight, not scale. The instance is pinned at build time
+    with fontTools rather than shipped as a second file.
+
+    SIL Open Font License, so it carries no attribution obligation into a
+    monetised video.
     """
 
-    font: str = f"{FONTS}/PlayfairDisplay-Italic.ttf"
-    # Share of frame HEIGHT for the leading line. The reference sets its
-    # display type at roughly 7% of frame height with the emphasised line
-    # larger again.
-    size_frac: float = 0.062
-    accent_size_frac: float = 0.076
+    font: str = f"{FONTS}/PlayfairDisplay-BlackItalic.ttf"
+    # Share of frame HEIGHT. Larger than the first pass: display type that is
+    # merely bigger than the captions still reads as a caption. The reference
+    # sets its CTA at roughly a tenth of the frame height.
+    size_frac: float = 0.072
+    accent_size_frac: float = 0.098
     color: str = "white"
-    shadow_color: str = "black@0.5"
-    shadow_y: int = 3
-    # Words per line, and lines before the stack clears. Three of each is
-    # what the reference holds; more turns a stack into a paragraph.
+
+    # Legibility over MOVING footage, where there is no fixed background to
+    # measure against. A shadow alone was not enough — white type over a
+    # bright sky washed out completely in a shipped frame. A thin dark border
+    # gives every letterform an edge without putting a visible box on screen,
+    # which is how a broadcast lower-third survives arbitrary video.
+    border_w: int = 3
+    border_color: str = "black@0.42"
+    shadow_color: str = "black@0.58"
+    shadow_y: int = 5
+
+    # Type never runs to the frame edge. The reference always leaves a
+    # margin, and a line that touches both edges reads as overflow whatever
+    # it says.
+    max_width_frac: float = 0.86
+
     words_per_line: int = 2
     max_lines: int = 3
-    # Where the BLOCK sits. Chosen to clear a speaker's mouth and eyes: the
-    # reference always sets its display type across the chest.
-    block_y_frac: float = 0.58
+    block_y_frac: float = 0.56
+
+    def _fit_width(self, text: str, want: int, max_w: float) -> int:
+        """The largest size at or under `want` that fits `max_w`."""
+        try:
+            from PIL import ImageFont
+            size = want
+            while size > 24:
+                f = ImageFont.truetype(self.font, size)
+                if f.getbbox(text)[2] - f.getbbox(text)[0] <= max_w:
+                    return size
+                size -= 4
+            return size
+        except Exception:                          # noqa: BLE001 — cosmetic
+            # Without PIL, fall back to an advance-ratio estimate. Worse, but
+            # it degrades to slightly-small rather than overflowing.
+            est = max_w / max(1, len(text)) / 0.52
+            return int(min(want, est))
 
     def stack(self, cues: list, frame_w: int, frame_h: int,
               accent: str = "#FF6B4A") -> list[str]:
         """drawtext filters for one run of cues, as an accumulating stack.
 
         Each line appears when its first word is spoken and STAYS until the
-        block ends, so the viewer reads a growing sentence rather than a
-        word replacing a word. That accumulation is what makes the treatment
-        read as authored rather than auto-captioned.
+        block ends, so the viewer reads a growing sentence rather than a word
+        replacing a word. That accumulation is what makes the treatment read
+        as authored rather than auto-captioned.
         """
         if not cues:
             return []
+        from .color import vivid
+
+        # The story's accent, forced into a band that reads on anything.
+        # Taking the palette accent as-is put near-white type over a bright
+        # sky in a shipped frame — the contrast rule this project already
+        # owns, simply never applied to display text.
+        acc = vivid(accent)
+
         lines: list[tuple[float, float, str]] = []
         for i in range(0, len(cues), self.words_per_line):
             grp = cues[i:i + self.words_per_line]
@@ -382,33 +430,46 @@ class DisplayCaption:
         for b in range(0, len(lines), self.max_lines):
             block = lines[b:b + self.max_lines]
             block_end = block[-1][1]
-            size = int(frame_h * self.size_frac)
-            lead = int(size * 1.16)
-            # The final line of a block is the payoff, so it takes the accent
-            # and the larger size — the reference emphasises the word that
-            # carries the ask, never the whole block.
-            top = frame_h * self.block_y_frac - (len(block) - 1) * lead / 2
+            # Lay the block out from its REAL line heights, so a stack whose
+            # last line is half again as tall still sits centred.
+            # MEASURE, then set. drawtext cannot report how wide a string will
+            # be, so an unfitted size overflows on a long line: the first build
+            # put "Anthropic wants" edge to edge with no margin at all. PIL
+            # measures the same TrueType file freetype will render, so the
+            # number is real rather than an advance-width estimate.
+            max_w = frame_w * self.max_width_frac
+            sizes = []
+            for j, (_st, _en, text) in enumerate(block):
+                last = (j == len(block) - 1) and len(block) > 1
+                want = int(frame_h * (self.accent_size_frac if last
+                                      else self.size_frac))
+                sizes.append(self._fit_width(text, want, max_w))
+            leads = [int(sz * 1.12) for sz in sizes]
+            total = sum(leads)
+            top = frame_h * self.block_y_frac - total / 2
+
+            y = top
             for j, (st, _en, text) in enumerate(block):
                 last = (j == len(block) - 1) and len(block) > 1
-                fs = int(frame_h * (self.accent_size_frac if last
-                                    else self.size_frac))
-                col = accent if last else self.color
+                col = acc if last else self.color
                 esc = (text.replace("\\", "\\\\").replace(":", "\\:")
                            .replace("'", "\u2019").replace("%", "\\%"))
                 out.append(":".join([
                     f"drawtext=fontfile={self.font}",
                     f"text='{esc}'",
-                    f"fontsize={fs}",
+                    f"fontsize={sizes[j]}",
                     f"fontcolor={col}",
                     "x=(w-text_w)/2",
-                    f"y={top + j * lead:.0f}",
+                    f"y={y:.0f}",
+                    f"borderw={self.border_w}",
+                    f"bordercolor={self.border_color}",
                     f"shadowcolor={self.shadow_color}",
                     "shadowx=0",
                     f"shadowy={self.shadow_y}",
                     f"enable='between(t,{st:.3f},{block_end:.3f})'",
                 ]))
+                y += leads[j]
         return out
 
 
 DISPLAY = DisplayCaption()
-
