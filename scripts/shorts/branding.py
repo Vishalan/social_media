@@ -85,8 +85,15 @@ class CaptionStyle:
     # it forced "and core" / "on GitHub" fragments because there was no budget
     # left to reach a natural phrase end. 3 words at 24 chars allows a phrase
     # while still fitting one line at 44px.
-    max_chars: int = 24
-    words_per_cue: int = 3
+    # ONE word per cue.
+    #
+    # The reference changes its caption roughly every 0.4s, one word at a
+    # time — sampling it every 0.5s showed a different single word in every
+    # frame. Three words at a time changes about once a second, and the
+    # difference is not readability (a phrase is easier to read) but MOTION:
+    # something on screen is always changing, which is what holds a thumb.
+    max_chars: int = 16
+    words_per_cue: int = 1
 
     def drawtext(self, text: str, start: float, end: float, *,
                  y_frac: Optional[float] = None) -> str:
@@ -313,3 +320,95 @@ def extract_best_frame(video: str, out_png: str, *, at_s: float = 2.0) -> str:
     if r.returncode != 0 or not Path(out_png).exists():
         raise RuntimeError(f"could not extract thumbnail frame: {r.stderr[-300:]}")
     return out_png
+
+# ------------------------------------------------------- display captions
+@dataclass(frozen=True)
+class DisplayCaption:
+    """Big editorial type for the beats that have to land.
+
+    The second of two caption tiers, taken from a reference short that
+    performs. Its ordinary narration runs as one small word in a dark pill,
+    but its hook and its call to action are set LARGE in a high-contrast
+    serif italic, no pill, stacked line over line, with the single word that
+    carries the ask in the accent colour.
+
+    The split is doing real work. A pill is legible and forgettable — right
+    for the twenty seconds a viewer spends being informed. Display type is
+    the opposite trade: it costs frame space and reading time, and buys
+    emphasis. Using one style throughout means either the whole video shouts
+    or none of it does, and the call to action is exactly the moment that
+    cannot be a subtitle.
+
+    Playfair Display Italic is a high-contrast didone, the class of face the
+    reference uses. SIL Open Font License, so it carries no attribution
+    obligation into a monetised video.
+    """
+
+    font: str = f"{FONTS}/PlayfairDisplay-Italic.ttf"
+    # Share of frame HEIGHT for the leading line. The reference sets its
+    # display type at roughly 7% of frame height with the emphasised line
+    # larger again.
+    size_frac: float = 0.062
+    accent_size_frac: float = 0.076
+    color: str = "white"
+    shadow_color: str = "black@0.5"
+    shadow_y: int = 3
+    # Words per line, and lines before the stack clears. Three of each is
+    # what the reference holds; more turns a stack into a paragraph.
+    words_per_line: int = 2
+    max_lines: int = 3
+    # Where the BLOCK sits. Chosen to clear a speaker's mouth and eyes: the
+    # reference always sets its display type across the chest.
+    block_y_frac: float = 0.58
+
+    def stack(self, cues: list, frame_w: int, frame_h: int,
+              accent: str = "#FF6B4A") -> list[str]:
+        """drawtext filters for one run of cues, as an accumulating stack.
+
+        Each line appears when its first word is spoken and STAYS until the
+        block ends, so the viewer reads a growing sentence rather than a
+        word replacing a word. That accumulation is what makes the treatment
+        read as authored rather than auto-captioned.
+        """
+        if not cues:
+            return []
+        lines: list[tuple[float, float, str]] = []
+        for i in range(0, len(cues), self.words_per_line):
+            grp = cues[i:i + self.words_per_line]
+            lines.append((grp[0][0], grp[-1][1],
+                          " ".join(c[2] for c in grp)))
+
+        out: list[str] = []
+        for b in range(0, len(lines), self.max_lines):
+            block = lines[b:b + self.max_lines]
+            block_end = block[-1][1]
+            size = int(frame_h * self.size_frac)
+            lead = int(size * 1.16)
+            # The final line of a block is the payoff, so it takes the accent
+            # and the larger size — the reference emphasises the word that
+            # carries the ask, never the whole block.
+            top = frame_h * self.block_y_frac - (len(block) - 1) * lead / 2
+            for j, (st, _en, text) in enumerate(block):
+                last = (j == len(block) - 1) and len(block) > 1
+                fs = int(frame_h * (self.accent_size_frac if last
+                                    else self.size_frac))
+                col = accent if last else self.color
+                esc = (text.replace("\\", "\\\\").replace(":", "\\:")
+                           .replace("'", "\u2019").replace("%", "\\%"))
+                out.append(":".join([
+                    f"drawtext=fontfile={self.font}",
+                    f"text='{esc}'",
+                    f"fontsize={fs}",
+                    f"fontcolor={col}",
+                    "x=(w-text_w)/2",
+                    f"y={top + j * lead:.0f}",
+                    f"shadowcolor={self.shadow_color}",
+                    "shadowx=0",
+                    f"shadowy={self.shadow_y}",
+                    f"enable='between(t,{st:.3f},{block_end:.3f})'",
+                ]))
+        return out
+
+
+DISPLAY = DisplayCaption()
+

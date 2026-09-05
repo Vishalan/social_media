@@ -1322,30 +1322,41 @@ _TAIL_S = 0.7
 # Per type: (minimum, maximum) seconds. The maximum matters as much as the
 # minimum — a mechanism with four steps computes past 8s, which is a sixth of
 # the whole video on one graphic.
+# Ceilings measured against a reference short rather than chosen.
+#
+# It cuts 40 times in 57 seconds and holds nothing longer than 3.84s. These
+# were letting a single graphic sit for 7.5-8s, which is twice its longest
+# shot and the reason this pipeline measured a 5.00s average against its
+# 1.43s. Every composition here scales its own animation to the duration it
+# is given — they animate on normalised time — so a shorter slot makes the
+# build faster and more urgent rather than truncating it.
+#
+# The floors matter as much as the ceilings: a terminal still needs long
+# enough to be recognised as a terminal.
 _DURATION_BOUNDS: dict[str, tuple] = {
-    "stats_card": (3.0, 5.0),
-    "headline_burst": (2.8, 5.0),
-    "lockup": (3.5, 6.5),
-    "mechanism": (5.0, 7.5),
-    "split_screen": (4.0, 6.5),
-    "tweet_reveal": (4.0, 7.0),
-    "code_walkthrough": (4.5, 7.0),
-    "cinematic_chart": (4.0, 6.0),
-    "annotate": (3.0, 5.0),
-    "macro": (2.6, 4.5),
-    "pageroll": (2.6, 4.0),
-    "ai_video": (3.0, 5.0),
+    "stats_card": (2.2, 3.2),
+    "headline_burst": (2.2, 3.2),
+    "lockup": (2.6, 3.6),
+    "mechanism": (3.0, 4.2),
+    "split_screen": (2.8, 3.8),
+    "tweet_reveal": (3.0, 4.2),
+    "code_walkthrough": (3.0, 4.2),
+    "cinematic_chart": (2.8, 3.8),
+    "annotate": (2.4, 3.4),
+    "macro": (2.0, 3.0),
+    "pageroll": (2.2, 3.2),
+    "ai_video": (2.6, 3.6),
     # Capped at 4s deliberately. Generation time scales with frame count, and
     # at ~2 min per second of output the difference between a 4s and a 6s clip
     # is four minutes of GPU on the single most expensive item in the build.
-    "ai_scene": (3.0, 4.0),
-    "window_scene": (4.5, 7.0),
-    "flow_scene": (5.5, 7.5),
+    "ai_scene": (2.8, 4.0),
+    "window_scene": (3.0, 4.2),
+    "flow_scene": (3.4, 4.5),
     # A terminal needs time to type and be read; rushing it defeats it.
-    "terminal_scene": (6.0, 8.0),
-    "device_scene": (5.0, 7.0),
-    "comparison_scene": (5.0, 7.0),
-    "stock_clip": (3.0, 5.0),
+    "terminal_scene": (3.4, 4.5),
+    "device_scene": (3.0, 4.2),
+    "comparison_scene": (3.0, 4.2),
+    "stock_clip": (2.0, 3.2),
 }
 
 # The most words a card may carry, per type. Enforced when building props.

@@ -2,7 +2,7 @@ import React from 'react';
 import {AbsoluteFill} from 'remotion';
 import {useClip} from '../lib/timing';
 import {World, slowPush, crashZoom, At} from '../lib/stage';
-import {typeScale, spacing, accentOf, accent2Of, Palette} from '../theme';
+import {typeScale, spacing, accentOf, accent2Of, Palette, groundOf, objectShadow} from '../theme';
 import {MONO, SANS, FONT_CSS} from '../theme';
 import {fitOneLine} from '../lib/fit';
 
@@ -55,7 +55,10 @@ export const TerminalScene: React.FC<TerminalSceneProps> = ({
 
   // The window fills most of the world; the world is frame-sized so world
   // pixels and frame pixels agree at z=1 and the type stays legible.
-  const winW = width - s.pad * 2;
+  // Room around the object. The reference never runs its window to the
+  // frame edge — the margin is what makes it read as a thing on a surface
+  // rather than a panel that happens to have a border.
+  const winW = width - s.pad * 3.2;
   // Lines are capped short by the director precisely so this can be large:
   // a terminal's readability is set by characters-per-line, and 24 is the most
   // that leaves the type comparable in size to the burned-in captions.
@@ -109,7 +112,7 @@ export const TerminalScene: React.FC<TerminalSceneProps> = ({
     kind === 'ok' ? acc2 : kind === 'warn' ? '#F5A524' : kind === 'command' ? '#E8EDF4' : '#93A4B8';
 
   return (
-    <AbsoluteFill style={{background: '#07090C', fontFamily: SANS}}>
+    <AbsoluteFill style={{background: groundOf(palette), fontFamily: SANS}}>
       <style>{FONT_CSS}</style>
       {/* A faint wash so the window is lit rather than pasted on black. */}
       <AbsoluteFill
@@ -126,7 +129,7 @@ export const TerminalScene: React.FC<TerminalSceneProps> = ({
               borderRadius: s.radius,
               background: 'linear-gradient(180deg, #0E1319, #0A0D12)',
               border: '1px solid #1E2733',
-              boxShadow: `0 ${height * 0.03}px ${height * 0.09}px #000A, 0 0 ${height * 0.06}px ${acc}22`,
+              boxShadow: objectShadow(height, palette),
               overflow: 'hidden',
             }}
           >

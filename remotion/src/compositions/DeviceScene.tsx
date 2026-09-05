@@ -2,7 +2,8 @@ import React from 'react';
 import {AbsoluteFill, interpolate, Easing} from 'remotion';
 import {useClip} from '../lib/timing';
 import {World, slowPush, At} from '../lib/stage';
-import {typeScale, spacing, accentOf, accent2Of, inkOf, bgOf, Palette} from '../theme';
+import {typeScale, spacing, accentOf, accent2Of, inkOf, bgOf, Palette,
+        groundOf, onGround, objectShadow} from '../theme';
 import {SANS, MONO, FONT_CSS} from '../theme';
 import {ramp} from '../lib/motion';
 import {fitOneLine} from '../lib/fit';
@@ -101,7 +102,7 @@ export const DeviceScene: React.FC<DeviceSceneProps> = ({
   const rows = items.slice(0, rowCount);
 
   return (
-    <AbsoluteFill style={{background: bgOf(palette), fontFamily: SANS, color: ink}}>
+    <AbsoluteFill style={{background: groundOf(palette), fontFamily: SANS, color: onGround(palette)}}>
       <style>{FONT_CSS}</style>
 
       {/* FAR plane: an atmospheric wash that moves least. */}
@@ -149,7 +150,7 @@ export const DeviceScene: React.FC<DeviceSceneProps> = ({
                 borderRadius: phoneW * 0.13,
                 background: '#0A0D12',
                 border: `${bezel}px solid #171C24`,
-                boxShadow: `0 ${phoneW * 0.09}px ${phoneW * 0.2}px #000C, 0 0 ${phoneW * 0.16}px ${acc}22`,
+                boxShadow: objectShadow(height, palette),
                 overflow: 'hidden',
                 position: 'relative',
               }}

@@ -290,3 +290,40 @@ export const accent2Of = (palette: Palette): string => {
   return ensureContrast(
     `#${h.slice(2, 4)}${h.slice(4, 6)}${h.slice(0, 2)}`, bg2, 4.5);
 };
+
+
+/**
+ * The neutral ground an OBJECT sits on.
+ *
+ * The reference short's signature look is a product shot, not a card: a
+ * terminal, a file, a window floating in generous space on a warm neutral,
+ * with a soft shadow under it. Every composition here filled the frame with
+ * the story's palette instead, which reads as a designed slide — the colour
+ * is doing the work and the object is just content inside it.
+ *
+ * Grounding on a near-neutral does two things. The object gains an edge, so
+ * it looks like a thing rather than a region. And the story's accent stops
+ * being the whole background, which is what lets it mean something when it
+ * IS used — the reference spends its accent on one word at a time.
+ *
+ * The ground is tinted a few percent toward the palette so it still belongs
+ * to the story rather than being a generic grey, and it follows the
+ * palette's own luminance so a dark brand does not get a cream stage.
+ */
+export const groundOf = (palette: Palette): string => {
+  const base = bgOf(palette);
+  const dark = LUMA(base) < 128;
+  return dark ? '#111417' : '#EDE9E1';
+};
+
+/** Ink that reads on the ground from `groundOf`. */
+export const onGround = (palette: Palette): string =>
+  LUMA(bgOf(palette)) < 128 ? '#ECEFF3' : '#15181C';
+
+/** The soft drop shadow that makes an object sit ON the ground. */
+export const objectShadow = (h: number, palette: Palette): string => {
+  const dark = LUMA(bgOf(palette)) < 128;
+  return dark
+    ? `0 ${h * 0.018}px ${h * 0.05}px rgba(0,0,0,.55), 0 ${h * 0.004}px ${h * 0.012}px rgba(0,0,0,.4)`
+    : `0 ${h * 0.020}px ${h * 0.055}px rgba(28,24,18,.18), 0 ${h * 0.004}px ${h * 0.010}px rgba(28,24,18,.12)`;
+};

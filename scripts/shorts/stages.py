@@ -687,7 +687,14 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
             logger.info("  splitting a %.2fs presenter hold into %d views "
                         "of %.2fs", length, n, step)
         for k in range(n):
-            spans.append({"mode": "presenter",
+            # Alternate: stacked, then full frame, then stacked.
+            #
+            # Every presenter beat full-frame would lose the panel that
+            # carries the source material, and none of them full-frame caps
+            # the cut rate at what half a frame can express. Alternating
+            # gives every boundary a whole-frame change on one side of it.
+            nonlocal_full = cfg.presenter_full_enabled and (len(spans) % 2 == 1)
+            spans.append({"mode": "presenter_full" if nonlocal_full else "presenter",
                           "start": start + k * step,
                           "end": start + (k + 1) * step})
 
@@ -927,13 +934,48 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
                            "the page panel", str(exc)[:140])
 
     bed_i = 0
+    pres_shot = 0
     parts = []
     for i, sp in enumerate(spans):
         L = sp["end"] - sp["start"]
         seg = os.path.join(span_dir, f"av_{i:02d}.mp4")
-        self._sh("ffmpeg", "-v", "error", "-y", "-ss", f"{sp['start']:.3f}",
-                 "-t", f"{L:.3f}", "-i", av, "-an", "-c:v", "libx264",
-                 "-crf", "17", "-pix_fmt", "yuv420p", seg)
+
+        # REFRAME the presenter on every span, so a split is an actual cut.
+        #
+        # Splitting a long presenter hold into three spans changed only the
+        # panel above it: the bottom half stayed one continuous take, so scene
+        # detection found no cut across the whole stretch and the measured
+        # longest shot was 10.04s. A reference short of the same length holds
+        # nothing longer than 3.84s and averages 1.43s. A split that produces
+        # no visual change is not an edit.
+        #
+        # Cycling framings gives each span a real one. The sequence alternates
+        # rather than escalating, because three progressively tighter shots in
+        # a row read as one slow zoom; wide-close-medium-close reads as
+        # coverage cut together. Numbers are the crop's share of frame width,
+        # kept above 0.82 so the head never crops.
+        _FRAMINGS = (
+            (1.00, 0.00),      # as shot
+            (0.86, -0.04),     # punch in, sitting slightly high
+            (0.93, 0.02),      # medium
+            (0.82, -0.02),     # closest
+        )
+        _is_pres = sp["mode"] in ("presenter", "presenter_full")
+        fz, fy = _FRAMINGS[pres_shot % len(_FRAMINGS)] if _is_pres else (1.00, 0.0)
+        if _is_pres:
+            pres_shot += 1
+        if fz >= 0.999:
+            self._sh("ffmpeg", "-v", "error", "-y", "-ss", f"{sp['start']:.3f}",
+                     "-t", f"{L:.3f}", "-i", av, "-an", "-c:v", "libx264",
+                     "-crf", "17", "-pix_fmt", "yuv420p", seg)
+        else:
+            self._sh("ffmpeg", "-v", "error", "-y", "-ss", f"{sp['start']:.3f}",
+                     "-t", f"{L:.3f}", "-i", av, "-an",
+                     "-vf", (f"crop=iw*{fz}:ih*{fz}:(iw-iw*{fz})/2:"
+                             f"(ih-ih*{fz})/2+ih*{fy},"
+                             f"scale={cfg.width}:-2,"
+                             f"crop={cfg.width}:ih"),
+                     "-c:v", "libx264", "-crf", "17", "-pix_fmt", "yuv420p", seg)
         out = os.path.join(span_dir, f"sp_{i:02d}.mp4")
         if sp["mode"] == "presenter":
             # Presenter-led span: the content panel shows the source page,
@@ -1064,6 +1106,27 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
                              f"crop={cfg.width}:{cfg.height}"),
                      "-r", str(cfg.fps), "-c:v", "libx264", "-crf", "17",
                      "-pix_fmt", "yuv420p", out)
+        elif sp["mode"] == "presenter_full":
+            # The presenter, full frame, cut between framings.
+            #
+            # This is the single change that moves the cut rate, and the
+            # measurement says why. In the stacked layout the presenter
+            # reframes were happening — the bottom half registered 8 cuts —
+            # but each altered about 40% of the frame, so the whole frame
+            # scored below any cut threshold and the video measured 10 cuts
+            # against a reference's 40. A cut that changes half the picture
+            # does not read as a cut. The reference changes all of it, every
+            # time, and that is where its 1.43s average shot comes from.
+            #
+            # `seg` already carries this span's framing from the reframe
+            # above, so it only needs filling to the full frame.
+            self._sh("ffmpeg", "-v", "error", "-y", "-i", seg, "-an",
+                     "-vf", (f"scale={cfg.width}:{cfg.height}:"
+                             f"force_original_aspect_ratio=increase,"
+                             f"crop={cfg.width}:{cfg.height}"),
+                     "-r", str(cfg.fps), "-c:v", "libx264", "-crf", "17",
+                     "-pix_fmt", "yuv420p", out)
+
         elif sp["mode"] == "content_pip":
             # Full-frame graphic with the presenter as a round picture-in-
             # picture in a corner.
@@ -1152,15 +1215,49 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
     # that owns the whole frame. Full-frame spans push their captions to the
     # lower third instead.
     full_spans = [(sp["start"], sp["end"]) for sp in spans
-                  if sp["mode"] in ("content_full", "content_pip")]
+                  if sp["mode"] in ("content_full", "content_pip",
+                                    "presenter_full")]
 
     def caption_y(start: float, end: float) -> float:
         if any(not (end <= a or start >= z) for a, z in full_spans):
             return 0.82
         return cfg.caption_y()
 
+    # TWO caption tiers, split by what the beat is doing.
+    #
+    # The hook and the call to action get display type; everything between
+    # them gets the pill. Those two moments are the ones that decide whether
+    # a short works — the hook buys the next three seconds, the CTA is the
+    # entire point of posting — and a subtitle is the wrong instrument for
+    # either. The middle is where a viewer is being informed, and there a
+    # pill is better: legible, out of the way, no frame cost.
+    from .branding import DISPLAY
+    t_first = cues[0][0] if cues else 0.0
+    t_last = cues[-1][1] if cues else 0.0
+    hook_until = t_first + cfg.display_hook_s
+    cta_from = t_last - cfg.display_cta_s
+
+    def is_display(st: float, en: float) -> bool:
+        return en <= hook_until or st >= cta_from
+
+    disp = [c for c in cues if is_display(c[0], c[1])]
+    pill = [c for c in cues if not is_display(c[0], c[1])]
+    # The subject's own accent, so display type is branded rather than
+    # generic. Falls back to a warm coral, which reads on both a light and a
+    # dark ground — the two extremes a story palette can land on.
+    accent = _story_accent(
+        (script_meta.get("visual_identity") or {}).get("palette")) or "#FF6B4A"
+
     df = [CAPTIONS.drawtext(t, s, e, y_frac=caption_y(s, e))
-          for s, e, t in cues]
+          for s, e, t in pill]
+    # Split the display runs so the hook and the CTA stack independently:
+    # concatenating them would carry a line from the opening into the close.
+    hook_cues = [c for c in disp if c[1] <= hook_until]
+    cta_cues = [c for c in disp if c[0] >= cta_from]
+    for run in (hook_cues, cta_cues):
+        df += DISPLAY.stack(run, cfg.width, cfg.height, accent=accent)
+    if disp:
+        logger.info("Captions: %d display + %d pill", len(disp), len(pill))
     self._sh("ffmpeg", "-v", "error", "-y", "-i", cfg.path("v_layout.mp4"),
              "-vf", ",".join(df), "-c:v", "libx264", "-crf", "17",
              "-pix_fmt", "yuv420p", "-an", cfg.path("v_caps.mp4"))

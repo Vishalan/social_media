@@ -2,7 +2,8 @@ import React from 'react';
 import {AbsoluteFill} from 'remotion';
 import {useClip, blink} from '../lib/timing';
 import {ramp, pop, settle, wipe} from '../lib/motion';
-import {FONT_CSS, SANS, MONO, SERIF, typeScale, spacing, accentOf, accent2Of, Palette} from '../theme';
+import {FONT_CSS, SANS, MONO, SERIF, typeScale, spacing, accentOf,
+        accent2Of, Palette, groundOf, onGround, objectShadow} from '../theme';
 import {fitBlock, fitOneLine} from '../lib/fit';
 
 export type WindowSceneProps = {
@@ -76,17 +77,19 @@ export const WindowScene: React.FC<WindowSceneProps> = ({
     {lineHeight: 1.05, fontWeight: 700, letterSpacing: '-0.01em'});
 
   return (
-    <AbsoluteFill style={{fontFamily: SANS, background: acc}}>
+    <AbsoluteFill style={{fontFamily: SANS, background: groundOf(palette)}}>
       <style>{FONT_CSS}</style>
 
-      {/* Full-bleed brand field with a soft vertical falloff. */}
+      {/* A WASH of the brand colour, not a field of it.
+          The full-bleed gradient that used to sit here painted over the
+          ground entirely, which is the habit this change exists to break:
+          when the accent is the whole background it cannot also be the
+          emphasis. At a few percent it still tints the stage toward the
+          story without competing with the object standing on it. */}
       <AbsoluteFill
         style={{
-          background: `linear-gradient(170deg, ${acc} 0%, ${acc2}CC 120%)`,
+          background: `linear-gradient(170deg, ${acc}1F 0%, ${acc2}14 120%)`,
         }}
-      />
-      <AbsoluteFill
-        style={{background: 'radial-gradient(120% 80% at 50% 30%, #FFFFFF18, transparent 60%)'}}
       />
 
       <AbsoluteFill style={{padding: s.pad, display: 'flex', flexDirection: 'column'}}>
@@ -98,7 +101,13 @@ export const WindowScene: React.FC<WindowSceneProps> = ({
             fontWeight: 700,
             fontSize: titleSize,
             lineHeight: 1.05,
-            color: '#FFFFFF',
+            // Follows the GROUND, not the window. It was hardcoded white,
+            // which was right while the background was a saturated brand
+            // field and became white-on-cream the moment the stage turned
+            // neutral. Text inside the window below stays light because the
+            // window is still dark — the rule is that every colour comes
+            // from the surface behind it, not from the composition.
+            color: onGround(palette),
             textShadow: `0 ${height * 0.006}px ${height * 0.03}px rgba(0,0,0,0.35)`,
             clipPath: wipe(pTitle),
             transform: `translateY(${(1 - spTitle) * 22}px)`,

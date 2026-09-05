@@ -306,7 +306,7 @@ class ShortsConfig:
     # every 3.2s would queue up far more graphic than the video has room for.
     # Cadence and duration have to agree, and READABILITY wins: fewer graphics
     # that can actually be read beats more that cannot.
-    broll_cadence_s: float = 6.5
+    broll_cadence_s: float = 4.5
     # Generated cinematic footage is OFF, on measured quality rather than on
     # principle. LTX-Video 2B installs and runs on this 3090 — 80-98s for a 3s
     # clip at 1080x998, which would be affordable — but the output is unusable:
@@ -380,7 +380,7 @@ class ShortsConfig:
     # sides: at 3-7s each, 9 clips covered 95% of the video and the presenter
     # effectively disappeared. This is a channel fronted by a person — the
     # graphics support the face, they do not replace it. 7 lands near 70%.
-    broll_max_designed: int = 6
+    broll_max_designed: int = 9
     # The real anti-repetition rule, replacing the old total cap: no single
     # graphic type more than twice per video. Page footage shown twice is
     # evidence; shown five times it becomes the subject.
@@ -403,7 +403,27 @@ class ShortsConfig:
     # differ enough, and two dense-text views sometimes do not. Splitting more
     # finely gives each view a better chance of landing on visibly different
     # material, and 3.5s is still above the ~2.5s cadence of both references.
-    max_static_hold_s: float = 3.5
+    # Measured against a reference short that performed: 40 cuts in 57s, a
+    # 1.43s average shot, 1.28s median, and nothing held longer than 3.84s.
+    # This pipeline was averaging 5.00s with a 10.04s longest shot — roughly
+    # a quarter of the cut rate. On short-form a held shot is where the scroll
+    # happens, so the ceiling comes down to sit under the reference's own
+    # longest rather than near it.
+    # How much of each end gets display type rather than a pill caption.
+    # The hook has to stop a thumb; the CTA has to convert one.
+    # Let some presenter beats take the whole frame.
+    #
+    # Measured: with the presenter locked to the lower half, reframing it
+    # produced 8 cuts in that half and 10 in the whole frame, because a
+    # change confined to 40% of the picture scores below any cut threshold.
+    # The reference short this was measured against cuts 40 times in 57s and
+    # every one of those changes the entire frame.
+    presenter_full_enabled: bool = True
+
+    display_hook_s: float = 3.5
+    display_cta_s: float = 6.0
+
+    max_static_hold_s: float = 2.2
 
     @property
     def work_dir(self) -> str:
