@@ -48,10 +48,10 @@ def render_avatar(self: ShortsPipeline, *, force: bool = False) -> str:
         return final
 
     if cfg.avatar_mode == "hold":
-        # A black panel of exactly the narration's length. Everything
-        # downstream — spans, layout, captions, thumbnail frame — works off
-        # this file's duration and geometry, so a stand-in has to match both or
-        # the timeline it feeds is not the one that will ship.
+        # A stand-in of exactly the narration's length. Everything downstream
+        # — spans, layout, captions, thumbnail frame — works off this file's
+        # duration and geometry, so it has to match both or the timeline it
+        # feeds is not the one that will ship.
         dur = self._dur(cfg.path("vo_master.wav"))
         logger.warning("AVATAR ON HOLD — %.2fs stand-in instead of LatentSync. "
                        "Set avatar_mode='render' to ship.", dur)
@@ -64,39 +64,11 @@ def render_avatar(self: ShortsPipeline, *, force: bool = False) -> str:
         # sync. Every frame the reviewer looks at should say what it is, and
         # a moving progress bar also makes it obvious the timeline is running
         # rather than stalled.
-        f = BRAND.font_black
-        bar_w = int(cfg.width * 0.62)
-        bar_x = (cfg.width - bar_w) // 2
-        bar_h = max(4, int(cfg.height * 0.006))
-        # REPEATED down the frame, because the stand-in is cropped before it
-        # is seen and this code does not know where. The presenter is composited
-        # into the lower panel from a 1080x1920 source, so a single centred
-        # label sat outside the visible region and the panel rendered as a flat
-        # colour — indistinguishable from the black it replaced. Three bands
-        # guarantee one lands in any crop.
-        bands = [int(cfg.height * f) for f in (0.22, 0.50, 0.78)]
-        self._sh(
-            "ffmpeg", "-v", "error", "-y", "-f", "lavfi",
-            "-i", f"color=c=0x14171C:s={cfg.width}x{cfg.height}:r={cfg.fps}",
-            "-t", f"{dur:.3f}",
-            "-vf", ",".join(
-                [flt for by in bands for flt in (
-                    # The track, then the fill growing across the real duration.
-                    f"drawbox=x={bar_x}:y={by}:w={bar_w}:h={bar_h}"
-                    f":color=0x2A3038@1:t=fill",
-                    f"drawbox=x={bar_x}:y={by}:w='{bar_w}*t/{dur:.3f}':h={bar_h}"
-                    f":color=0x5C9BFF@1:t=fill",
-                    f"drawtext=fontfile={f}:text='PRESENTER — NOT RENDERED'"
-                    f":fontsize={int(cfg.height * 0.020)}:fontcolor=0x8A94A6"
-                    f":x=(w-text_w)/2:y={by - int(cfg.height * 0.048)}",
-                    # A running clock, so a frozen frame is distinguishable
-                    # from a frozen pipeline at a glance.
-                    f"drawtext=fontfile={f}:text='avatar_mode=hold  "
-                    f"%{{eif\\:t\\:d}}s/{dur:.0f}s'"
-                    f":fontsize={int(cfg.height * 0.014)}:fontcolor=0x5A6472"
-                    f":x=(w-text_w)/2:y={by + int(cfg.height * 0.024)}",
-                )]),
-            "-c:v", "libx264", "-crf", "28", "-pix_fmt", "yuv420p", final)
+        from .placeholder import card
+        card(final, width=cfg.width, height=cfg.height, fps=cfg.fps,
+             duration_s=dur, label="PRESENTER — NOT RENDERED",
+             detail="LatentSync lip sync over the gesture library",
+             cost="avatar_mode=hold  ~22s compute per second")
         return final
 
     from avatar_gen.gesture_library import (
@@ -384,6 +356,7 @@ async def _direct_broll(self: ShortsPipeline, *, url: str,
         frame_height=cfg.height)
 
     d.max_card_share = cfg.max_card_share
+    d.h3_placeholder = cfg.placeholder_slow_stages
     d.h3_gen_size = cfg.h3_gen_size
     d.h3_steps = cfg.h3_steps
 
@@ -662,6 +635,13 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
                           if q["t"] + q["len"] <= c_start or q["t"] >= c_start + c_len]
                 placed.append({"t": max(0.0, c_start - 0.15), "len": c_len,
                                "path": cta_path, "slug": "cta"})
+                # The CTA card SPEAKS. It sets the ask in its own typography —
+                # "Comment astra and I will send you the full safety report" —
+                # so a caption over it repeats the same words in a second
+                # typeface, and the display tier repeats them larger still. A
+                # frame carrying one sentence twice reads as a mistake, and it
+                # lands on the one shot that has to convert.
+                design_paths.add(cta_path)
                 logger.info("CTA card at %.2fs (+%.2fs): %s", c_start, c_len,
                             cta_text[:60])
             except Exception as exc:              # noqa: BLE001 — optional
@@ -1299,7 +1279,24 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
     hook_until = t_first + cfg.display_hook_s
     cta_from = t_last - cfg.display_cta_s
 
+    # Anything that sets its OWN large type. A pull-quote bed is a sentence at
+    # display size; a designed graphic is a headline. Display captions over
+    # either put two large texts on one frame, often saying the same thing —
+    # the CTA card reads "Comment astra and I will send you the full safety
+    # report" and the caption repeated "send you the full safety report"
+    # across it, larger. The pill tier is fine there because it is small and
+    # subordinate by construction; the display tier is not.
+    typed_spans = list(dspans)
+    for i2, sp2 in enumerate(spans):
+        if sp2["mode"] in ("content", "content_full", "content_pip"):
+            typed_spans.append((sp2["start"], sp2["end"]))
+
+    def _over_typography(st: float, en: float) -> bool:
+        return any(not (en <= a or st >= z) for a, z in typed_spans)
+
     def is_display(st: float, en: float) -> bool:
+        if _over_typography(st, en):
+            return False
         return en <= hook_until or st >= cta_from
 
     disp = [c for c in cues if is_display(c[0], c[1])]

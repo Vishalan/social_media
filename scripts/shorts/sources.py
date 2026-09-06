@@ -314,8 +314,8 @@ def _article_body(text: str) -> str:
     return (text or "")[:cut]
 
 
-def pull_sentences(text: str, count: int, *, min_words: int = 9,
-                   max_words: int = 26) -> list:
+def pull_sentences(text: str, count: int, *, min_words: int = 6,
+                   max_words: int = 14) -> list:
     """Pick sentences worth putting on screen, with a phrase to emphasise.
 
     The presenter-span bed used to render whole PARAGRAPHS of the source at body
@@ -327,6 +327,14 @@ def pull_sentences(text: str, count: int, *, min_words: int = 9,
     Ranking prefers sentences that carry something concrete — a figure, a
     quoted term, a named thing — because those are the ones that reward being
     read in the two seconds a bed gets.
+
+    The word ceiling used to be 26, which was survivable when a bed held the
+    screen for six seconds and is not now that shots are capped near two. A
+    26-word sentence rendered as eight lines of body copy that nobody can read
+    at that length — and because the type auto-fits, more words silently buys
+    smaller type, so the failure is a wall of small text rather than an
+    overflow anything would catch. Fourteen words is roughly what a viewer can
+    take from a glance while also listening to a different sentence.
 
     Returns [{"sentence", "emphasis"}, ...], at most ``count``.
     """

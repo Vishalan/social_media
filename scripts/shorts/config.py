@@ -418,6 +418,14 @@ class ShortsConfig:
     # change confined to 40% of the picture scores below any cut threshold.
     # The reference short this was measured against cuts 40 times in 57s and
     # every one of those changes the entire frame.
+    # Stand in for the slow stages instead of running them.
+    #
+    # Lip sync and generated footage together turn a four-minute build into
+    # forty, and neither changes a decision being made while the graphics are
+    # being worked on. Both are replaced by a card stating what would have
+    # been generated, so the timeline is real and the frame is honest.
+    placeholder_slow_stages: bool = True
+
     presenter_full_enabled: bool = True
 
     display_hook_s: float = 3.5

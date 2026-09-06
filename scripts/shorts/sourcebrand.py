@@ -50,6 +50,19 @@ def fetch_brand(url: str, out_dir: str) -> dict:
     knowing whether the site served an .ico, an .svg or a 180px apple-touch-icon.
     """
     domain = urllib.parse.urlparse(url).netloc.replace("www.", "")
+    # Show the BRAND, not the hostname.
+    #
+    # "deploymentsafety.openai.com" is 27 characters and rendered as
+    # "DEPLOYMENTSAFETY.OPENAI.C" — truncated mid-word in a kicker sized for a
+    # publisher name. The subdomain is infrastructure detail no viewer needs;
+    # the registrable domain is the part that means anything. Two labels are
+    # kept so a genuine second-level domain like co.uk survives.
+    parts = [x for x in domain.split(".") if x]
+    if len(parts) > 2:
+        tail = parts[-2:]
+        if tail[0] in ("co", "com", "org", "net", "ac", "gov") and len(parts) > 3:
+            tail = parts[-3:]
+        domain = ".".join(tail)
     out = {"icon": None, "theme": None, "domain": domain}
     if not url:
         return out

@@ -348,6 +348,7 @@ class BrollDirector:
         self.subject_icon = ""
         self.fullscreen_kinds = frozenset(fullscreen_kinds)
         self.max_card_share = 0.20
+        self.h3_placeholder = False
         self.frame_height = frame_height
 
     # -- capability gating ------------------------------------------------
@@ -405,7 +406,15 @@ class BrollDirector:
         # the service is up, and this video has not already spent its one clip:
         # at ~6.5 min each, a planner free to choose three would quadruple the
         # build time of the whole short.
-        if self.h3_budget > 0:
+        # Generated footage is not offered while it is being stubbed.
+        #
+        # A placeholder is the right trade for build time and the wrong thing
+        # to fill a frame with when the point of the build is reviewing
+        # graphics: ai_scene takes the whole frame, so choosing it spends a
+        # full-frame slot on a card that says a render did not happen. Stock
+        # is real imagery, arrives in seconds, and fits the same beats — so
+        # with generation stubbed the slate should reach for it instead.
+        if self.h3_budget > 0 and not self.h3_placeholder:
             try:
                 from .h3_client import available as _h3_ok
                 if _h3_ok():
@@ -657,7 +666,7 @@ class BrollDirector:
             # the ones it cannot.
             if can_stock:
                 kind, payload = "stock_clip", {"query": desc}
-            elif used_h3 < self.h3_budget:
+            elif used_h3 < self.h3_budget and not self.h3_placeholder:
                 kind, payload = "ai_scene", {"scene": desc}
                 used_h3 += 1
             else:
@@ -767,6 +776,23 @@ class BrollDirector:
                 width=w, height=h, fps=self.fps)
 
         if k == "ai_scene":
+            scene_txt = str(p.get("scene") or p.get("prompt") or "").strip()
+            if self.h3_placeholder:
+                # The other stage that does not belong in an iteration loop.
+                # Ten minutes of GPU per clip, and while the graphics are
+                # being worked on the only thing that matters about it is
+                # where it sits and how long it runs.
+                from .placeholder import card
+                w, h = self.target_size(k, getattr(slot, "fullscreen", None))
+                logger.info("ai_scene placeholder (~10 min saved): %s",
+                            scene_txt[:70])
+                return card(out, width=w, height=h, fps=self.fps,
+                            duration_s=slot.duration,
+                            label="GENERATED FOOTAGE — NOT RENDERED",
+                            detail=scene_txt,
+                            cost="MiniMax H3  ~10 min GPU",
+                            accent="0xF06BB0")
+
             from . import h3_client
             scene = str(p.get("scene") or p.get("prompt") or "").strip()
             if not scene:
