@@ -103,16 +103,33 @@ class CaptionStyle:
     max_chars: int = 16
     words_per_cue: int = 1
 
+    # The caption face ALTERNATES cue to cue.
+    #
+    # Both reference shorts do this and it is their most distinctive device:
+    # one cue is set in a serif italic in caps, the next in a bold sans in
+    # lowercase, turn and turn about — "LINKEDIN," then "you figure out" then
+    # "WHAT TO POST," then "when to post". A single face for every cue reads
+    # as a subtitle track; alternating reads as an edit, because the change
+    # itself marks the beat even when the words are ordinary.
+    #
+    # The serif is the display face already resolved for the story, so the
+    # alternation stays inside the story's typography rather than importing a
+    # second unrelated one.
+    alt_font: str = f"{FONTS}/PlayfairDisplay-BlackItalic.ttf"
+    alt_size: int = 62
+    alt_upper: bool = True
+
     def drawtext(self, text: str, start: float, end: float, *,
-                 y_frac: Optional[float] = None) -> str:
+                 y_frac: Optional[float] = None, alt: bool = False) -> str:
         """One drawtext filter for a single cue."""
-        esc = (text.replace("\\", "\\\\").replace(":", "\\:")
-                   .replace("'", "’").replace("%", "\\%"))
+        shown = text.upper() if (alt and self.alt_upper) else text
+        esc = (shown.replace("\\", "\\\\").replace(":", "\\:")
+                    .replace("'", "’").replace("%", "\\%"))
         yf = self.y_frac if y_frac is None else y_frac
         parts = [
-            f"drawtext=fontfile={self.font}",
+            f"drawtext=fontfile={self.alt_font if alt else self.font}",
             f"text='{esc}'",
-            f"fontsize={self.size}",
+            f"fontsize={self.alt_size if alt else self.size}",
             f"fontcolor={self.color}",
             f"x=(w-text_w)/2",
             f"y=h*{yf}",
@@ -121,9 +138,15 @@ class CaptionStyle:
             f"shadowy={self.shadow_y}",
             f"enable='between(t,{start:.3f},{end:.3f})'",
         ]
-        if self.box:
+        if self.box and not alt:
             parts += ["box=1", f"boxcolor={self.box_color}",
                       f"boxborderw={self.box_pad}"]
+        elif alt:
+            # The serif cue runs bare, so it needs its own edge over footage —
+            # the same border-and-shadow the display tier uses, at caption
+            # weight. A pill behind a serif italic fights the letterform.
+            parts += ["borderw=2", "bordercolor=black@0.40",
+                      "shadowcolor=black@0.55", "shadowx=0", "shadowy=3"]
         return ":".join(parts)
 
 

@@ -61,9 +61,13 @@ _SCRIPT_SCHEMA: dict[str, Any] = {
         # less context than it already had.
         "mood": {"type": "string",
                  "enum": ["tense", "driving", "reflective", "bright"]},
+        # The second line on the cover. Asked for explicitly because the
+        # fallback — borrowing the CTA — put "Comment astra and I will send
+        # you the" under a headline, which is an instruction, not a hook.
+        "cover_sub": {"type": "string"},
     },
     "required": ["title", "hook", "script", "description",
-                 "visual_identity", "broll_queries", "mood"],
+                 "visual_identity", "broll_queries", "mood", "cover_sub"],
 }
 
 
@@ -94,6 +98,11 @@ SCRIPT RULES
 - Leave room to BREATHE. Vary sentence length deliberately: a long sentence
   then a very short one. A three-word sentence after a long one is a beat of
   silence, and that is where a hook lands.
+
+- Write "cover_sub": the line that sits UNDER the title on the cover image,
+  3-6 words, lowercase. It must add the consequence or the catch, never
+  restate the title — the pattern is "PROFILE AUDIT / in 60 seconds",
+  "ISN'T BEHIND / they might be waiting". No call to action here.
 
 - Set "mood" for the background score, from the STORY's register and not
   the subject matter: tense (a risk, a threat, something hidden), driving

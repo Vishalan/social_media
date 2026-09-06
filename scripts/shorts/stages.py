@@ -1307,8 +1307,15 @@ def assemble(self: ShortsPipeline, *, force: bool = False) -> str:
     accent = _story_accent(
         (script_meta.get("visual_identity") or {}).get("palette")) or "#FF6B4A"
 
-    df = [CAPTIONS.drawtext(t, s, e, y_frac=caption_y(s, e))
-          for s, e, t in pill]
+    # Alternate the face cue by cue, and drop the pill on the serif ones.
+    #
+    # A pill behind a serif italic fights it — the reference sets its serif
+    # cues bare and pills only the sans ones, which is what makes the two read
+    # as deliberately different rather than as one style rendering wrong.
+    df = []
+    for j, (s0, e0, t0) in enumerate(pill):
+        df.append(CAPTIONS.drawtext(t0, s0, e0, y_frac=caption_y(s0, e0),
+                                    alt=(j % 2 == 1)))
     # Split the display runs so the hook and the CTA stack independently:
     # concatenating them would carry a line from the opening into the close.
     hook_cues = [c for c in disp if c[1] <= hook_until]
@@ -1378,9 +1385,24 @@ def make_thumbnail(self: ShortsPipeline, script: dict, *,
         except Exception as exc:                   # noqa: BLE001 — cosmetic
             logger.info("no source badge for the cover: %s", str(exc)[:100])
 
-    return _render(title=script["title"], kicker=kicker, avatar_frame=frame,
-                   out_path=out, accent=accent,
-                   source_icon=icon, source_domain=domain)
+    # Set in the feed's own grammar rather than the channel's old template.
+    #
+    # Measured against a grid of the owner's best posts: editorial serif in
+    # caps at the TOP with an italic line beneath, warm filmic grade, and the
+    # presenter pushed into the lower two-thirds so the type has room that is
+    # not someone's face. The previous cover set a bold sans across the
+    # bottom, which is the YouTube idiom and not this feed's.
+    from .cover import build as _cover
+    # Written by the script, not scavenged. Falling back to the CTA put
+    # "Comment astra and I will send you the" under the headline — an
+    # instruction where the grid always has a consequence. Better to ship no
+    # second line than the wrong one.
+    sub = (script.get("cover_sub") or "").strip()[:40]
+    return _cover(frame=frame, out_path=out, headline=script["title"],
+                  kicker=kicker, sub=sub,
+                  accent=accent or "#E8E2D4",
+                  width=cfg.width, height=cfg.height,
+                  icon=icon, domain=domain)
 
 
 # Attach as methods.
@@ -1474,7 +1496,24 @@ async def run(cfg: ShortsConfig, source_spec: str, *,
     await designs_task
 
     out = pipe.assemble()
-    pipe.make_thumbnail(script)
+    cover_path = pipe.make_thumbnail(script)
+    # Put the cover ON THE FRONT of the video.
+    #
+    # Instagram and TikTok choose a cover from the opening frames, so a
+    # designed cover that lives only as a sidecar JPG is a cover nobody sees —
+    # the platform picks whatever the camera happened to be doing at t=0
+    # instead. The hold is short by design: long enough to be selected and to
+    # read as a title card, short enough not to be a stall.
+    if cfg.prepend_cover and cover_path and os.path.exists(cover_path):
+        try:
+            from .cover import prepend as _prepend
+            with_cover = cfg.path(f"{cfg.run_id}_cover.mp4")
+            _prepend(out, cover_path, with_cover,
+                     hold_s=cfg.cover_hold_s, fps=cfg.fps)
+            os.replace(with_cover, out)
+        except Exception as exc:                   # noqa: BLE001 — optional
+            logger.warning("could not prepend the cover (%s) — the video "
+                           "ships without it", str(exc)[:140])
     return out
 
 

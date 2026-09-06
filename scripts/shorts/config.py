@@ -424,6 +424,12 @@ class ShortsConfig:
     # forty, and neither changes a decision being made while the graphics are
     # being worked on. Both are replaced by a card stating what would have
     # been generated, so the timeline is real and the frame is honest.
+    # Put the designed cover on the front of the video.
+    # Platforms pick a cover from the opening frames, so a cover that exists
+    # only as a sidecar file is one nobody sees.
+    prepend_cover: bool = True
+    cover_hold_s: float = 0.45
+
     placeholder_slow_stages: bool = True
 
     presenter_full_enabled: bool = True
