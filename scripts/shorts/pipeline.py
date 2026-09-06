@@ -65,9 +65,13 @@ _SCRIPT_SCHEMA: dict[str, Any] = {
         # fallback — borrowing the CTA — put "Comment astra and I will send
         # you the" under a headline, which is an instruction, not a hook.
         "cover_sub": {"type": "string"},
+        # What is PRINTED on the card the presenter presents. Two or three
+        # words naming the thing itself — a model, a repo, a product — not a
+        # description of it.
+        "artifact_label": {"type": "string"},
     },
     "required": ["title", "hook", "script", "description",
-                 "visual_identity", "broll_queries", "mood", "cover_sub"],
+                 "visual_identity", "broll_queries", "mood", "cover_sub", "artifact_label"],
 }
 
 
@@ -103,6 +107,10 @@ SCRIPT RULES
   3-6 words, lowercase. It must add the consequence or the catch, never
   restate the title — the pattern is "PROFILE AUDIT / in 60 seconds",
   "ISN'T BEHIND / they might be waiting". No call to action here.
+
+- Write "artifact_label": 2-3 words printed on the card in the cover image,
+  naming the THING the story is about — "GPT-6 Astra", "the-algorithm",
+  "Claude Skills". A name, never a sentence.
 
 - Set "mood" for the background score, from the STORY's register and not
   the subject matter: tense (a risk, a threat, something hidden), driving

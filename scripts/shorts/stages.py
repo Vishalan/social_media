@@ -1392,17 +1392,32 @@ def make_thumbnail(self: ShortsPipeline, script: dict, *,
     # presenter pushed into the lower two-thirds so the type has room that is
     # not someone's face. The previous cover set a bold sans across the
     # bottom, which is the YouTube idiom and not this feed's.
-    from .cover import build as _cover
+    from .cover_scene import build as _cover
     # Written by the script, not scavenged. Falling back to the CTA put
     # "Comment astra and I will send you the" under the headline — an
     # instruction where the grid always has a consequence. Better to ship no
     # second line than the wrong one.
     sub = (script.get("cover_sub") or "").strip()[:40]
+    # The artifact carries the SUBJECT's mark, not the publisher's — the same
+    # rule the graphics follow. A cover about a company that shows the
+    # reporting outlet's logo is a cover about the outlet.
+    subj_icon, subj_name = icon, ""
+    try:
+        from .sourcebrand import fetch_subject_brand
+        sb = fetch_subject_brand(script.get("subject_domains") or [],
+                                 cfg.broll_dir)
+        subj_icon = sb.get("icon") or icon
+        subj_name = (sb.get("domain") or "").split(".")[0].title()
+    except Exception:                              # noqa: BLE001 — cosmetic
+        pass
+    artifact = (script.get("artifact_label")
+                or " ".join(script["title"].split()[:3]))
+
     return _cover(frame=frame, out_path=out, headline=script["title"],
                   kicker=kicker, sub=sub,
-                  accent=accent or "#E8E2D4",
-                  width=cfg.width, height=cfg.height,
-                  icon=icon, domain=domain)
+                  artifact_text=artifact[:22], icon=subj_icon,
+                  accent=accent or "#C0A890",
+                  width=cfg.width, height=cfg.height, domain=domain)
 
 
 # Attach as methods.
