@@ -197,6 +197,115 @@ def _draw_artifact(img, x: int, y: int, w: int, h: int, *,
                font=f, fill=INK + (255,))
 
 
+def typeset(*, photo: str, out_path: str, headline: str, sub: str = "",
+            kicker: str = "", icon: Optional[str] = None, domain: str = "",
+            width: int = 1080, height: int = 1920) -> str:
+    """Set the cover type over a finished photograph.
+
+    The generated photo already contains the room, the person and the object
+    they are presenting — everything the composited path had to fake. What it
+    deliberately does NOT contain is a single readable word: the sheet in
+    frame is blank, and the prompt forbids text and logos, because diffusion
+    models still misspell display type and inventing a wrong brand mark on a
+    cover is worse than having none.
+
+    So the words are set here, with the stack that is already measured,
+    contrast-checked and width-fitted, over a photograph that was composed to
+    leave room for them.
+    """
+    from PIL import Image, ImageDraw, ImageFont, ImageFilter
+
+    img = Image.open(photo).convert("RGB")
+    if img.size != (width, height):
+        # Fill the cover's frame, cropping from the TOP. The generator places
+        # the subject low and centre, so height is taken off the ceiling
+        # rather than the face.
+        scale = max(width / img.width, height / img.height)
+        img = img.resize((int(img.width * scale), int(img.height * scale)),
+                         Image.LANCZOS)
+        left = (img.width - width) // 2
+        img = img.crop((left, 0, left + width, height))
+
+    # A scrim only where the type goes. The reference covers are lit so the
+    # headline sits on wall or ceiling, but a generated room varies, and cream
+    # type on a bright lamp is unreadable.
+    scrim = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(scrim)
+    band = int(height * 0.42)
+    for i in range(band):
+        sd.line([(0, i), (width, i)],
+                fill=(20, 14, 8, int(150 * (1 - i / band) ** 1.25)))
+    img = Image.alpha_composite(img.convert("RGBA"),
+                                scrim.filter(ImageFilter.GaussianBlur(2))
+                                ).convert("RGB")
+
+    d = ImageDraw.Draw(img, "RGBA")
+    pad = int(width * 0.062)
+    max_w = width * 0.80
+    y = int(height * 0.052)
+
+    if kicker:
+        kf = ImageFont.truetype(f"{FONTS}/Inter-Black.ttf", int(height * 0.0145))
+        d.text((pad, y), " ".join(kicker.upper()[:24]), font=kf, fill=MID + (255,))
+        y += int(height * 0.033)
+
+    words = headline.upper().split()
+    size = int(height * 0.080)
+    lines: list[str] = []
+    while size > 42:
+        f = ImageFont.truetype(DISPLAY, size)
+        lines, cur = [], ""
+        for w_ in words:
+            t = f"{cur} {w_}".strip()
+            if d.textlength(t, font=f) <= max_w or not cur:
+                cur = t
+            else:
+                lines.append(cur); cur = w_
+        if cur:
+            lines.append(cur)
+        if len(lines) <= 3:
+            break
+        size -= 5
+    f = ImageFont.truetype(DISPLAY, size)
+    # Leading is a fraction of the point size, which is the right tightness
+    # for display type. The BOTTOM of the block is not: a 0.92 advance sits
+    # well above the last line's descenders, so anything set from that y
+    # lands inside the headline. Track the real ink bottom for the handoff.
+    ink_bottom = y
+    for ln in lines:
+        for ox, oy in ((-2, 0), (2, 0), (0, -2), (0, 2)):
+            d.text((pad + ox, y + oy), ln, font=f, fill=(22, 15, 8, 105))
+        d.text((pad, y), ln, font=f, fill=CREAM + (255,))
+        ink_bottom = y + f.getbbox(ln)[3]
+        y += int(size * 0.92)
+
+    if sub:
+        sf = ImageFont.truetype(DISPLAY_IT, int(size * 0.42))
+        # getbbox()'s top is the ascent gap above the ink; subtract it so the
+        # gap below the headline is the gap you actually see.
+        y = ink_bottom + int(size * 0.20) - sf.getbbox(sub)[1]
+        d.text((pad + int(size * 0.04), y), sub, font=sf, fill=MID + (250,))
+
+    if domain:
+        df = ImageFont.truetype(f"{FONTS}/Inter-SemiBold.ttf", int(height * 0.0135))
+        by = height - int(height * 0.042)
+        bx = pad
+        if icon and Path(icon).is_file():
+            try:
+                side = int(height * 0.023)
+                ic = Image.open(icon).convert("RGBA").resize((side, side), Image.LANCZOS)
+                img.paste(ic, (bx, by - 4), ic)
+                bx += int(height * 0.031)
+            except Exception:                       # noqa: BLE001 — cosmetic
+                pass
+        d.text((bx, by), domain.upper(), font=df, fill=(206, 194, 176, 225))
+
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    img.save(out_path, quality=95)
+    logger.info("Typeset cover: %s (%d lines @ %dpx)", out_path, len(lines), size)
+    return out_path
+
+
 def build(*, frame: str, out_path: str, headline: str, sub: str = "",
           kicker: str = "", artifact_text: str = "", icon: Optional[str] = None,
           accent: str = "#C0A890", domain: str = "",
