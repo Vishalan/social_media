@@ -956,6 +956,39 @@ def _content_box(path: str, *, samples: int = 10) -> Optional[tuple]:
             max(b[2] for b in boxes), max(b[3] for b in boxes))
 
 
+def _probe_geometry(path: str) -> tuple[int, int, float]:
+    """Width, height and duration of a clip, addressed by key not by position.
+
+    The previous version asked for stream=width,height and format=duration in
+    one call, joined whatever came back, split it on commas and read positions
+    0, 1 and 2. That worked for stock footage and failed for every Remotion
+    render, because ffprobe emits a TRAILING COMMA on the stream row for those
+    files:
+
+        designed:  "1080,1920,\\n3.456000"   -> ['1080','1920','','3.456000']
+        stock:     "1080,1920\\n2.000000"    -> ['1080','1920','2.000000']
+
+    so the designed clips parsed their duration as the empty string, raised,
+    and were "left as-is" — which is to say every generated graphic silently
+    skipped the conforming step that exists to make the cut land on the beat.
+    The stock clips, being the ones that parsed, were the only ones conformed.
+
+    Asking for each field by name removes the positional assumption entirely.
+    """
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height:format=duration",
+         "-of", "default=noprint_wrappers=1", path],
+        capture_output=True, text=True).stdout
+    got: dict[str, str] = {}
+    for line in out.splitlines():
+        if "=" in line:
+            k, _, v = line.partition("=")
+            if v.strip() not in ("", "N/A"):
+                got.setdefault(k.strip(), v.strip())
+    return int(got["width"]), int(got["height"]), float(got["duration"])
+
+
 def _probe_duration(path: str) -> float:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -1000,15 +1033,8 @@ def _normalise_clip(path: str, want: float, fps: int,
       less of the page.
     """
     try:
-        probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=width,height",
-             "-show_entries", "format=duration", "-of", "csv=p=0", path],
-            capture_output=True, text=True).stdout.split()
-        vals = ",".join(probe).replace("\n", ",").split(",")
-        have_w, have_h = int(vals[0]), int(vals[1])
-        have_d = float(vals[2])
-    except (ValueError, IndexError, subprocess.SubprocessError) as exc:
+        have_w, have_h, have_d = _probe_geometry(path)
+    except (ValueError, IndexError, KeyError, subprocess.SubprocessError) as exc:
         logger.warning("cannot probe %s (%s) — leaving as-is",
                        Path(path).name, exc)
         return path
