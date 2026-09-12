@@ -472,6 +472,39 @@ def _require_free_vram(min_free_gb: float) -> None:
     logger.info("VRAM clear: %.1fGB free", free_gb)
 
 
+def _run(graph: dict, *, timeout_s: int) -> str:
+    """Submit a graph, wait for it, return the file it wrote.
+
+    Both passes need this and neither needs its own copy of the polling.
+    """
+    t0 = time.time()
+    res = _post("/prompt", {"prompt": graph, "client_id": uuid.uuid4().hex})
+    pid = res.get("prompt_id")
+    if not pid:
+        raise PortraitError(f"ComfyUI rejected the graph: {str(res)[:300]}")
+
+    while time.time() - t0 < timeout_s:
+        try:
+            with urllib.request.urlopen(f"{COMFY}/history/{pid}", timeout=30) as r:
+                hist = json.loads(r.read() or b"{}")
+        except Exception:                           # noqa: BLE001 — keep polling
+            time.sleep(4); continue
+        entry = hist.get(pid)
+        if entry:
+            status = (entry.get("status") or {})
+            if status.get("status_str") == "error" or (
+                    status.get("completed") is False and status.get("messages")):
+                raise PortraitError(f"generation failed: {json.dumps(status)[:400]}")
+            for out in (entry.get("outputs") or {}).values():
+                for im in out.get("images", []):
+                    cand = Path(COMFY_ROOT, "output", im.get("subfolder", ""),
+                                im["filename"])
+                    if cand.is_file():
+                        return str(cand)
+        time.sleep(4)
+    raise PortraitError(f"no image after {time.time() - t0:.0f}s")
+
+
 def _free_gpu() -> None:
     """H3 and this cannot both be resident; whoever runs asks for the card."""
     try:
@@ -530,37 +563,7 @@ def generate(*, scene: str, faces, out_path: str,
                    id_weight=id_weight, start_at=start_at, end_at=end_at)
 
     t0 = time.time()
-    res = _post("/prompt", {"prompt": graph, "client_id": uuid.uuid4().hex})
-    pid = res.get("prompt_id")
-    if not pid:
-        raise PortraitError(f"ComfyUI rejected the graph: {str(res)[:300]}")
-
-    produced = None
-    while time.time() - t0 < timeout_s:
-        try:
-            with urllib.request.urlopen(f"{COMFY}/history/{pid}", timeout=30) as r:
-                hist = json.loads(r.read() or b"{}")
-        except Exception:                           # noqa: BLE001 — keep polling
-            time.sleep(4); continue
-        entry = hist.get(pid)
-        if entry:
-            status = (entry.get("status") or {})
-            if status.get("status_str") == "error" or (
-                    status.get("completed") is False and status.get("messages")):
-                raise PortraitError(f"generation failed: {json.dumps(status)[:400]}")
-            for out in (entry.get("outputs") or {}).values():
-                for im in out.get("images", []):
-                    cand = Path(COMFY_ROOT, "output", im.get("subfolder", ""),
-                                im["filename"])
-                    if cand.is_file():
-                        produced = str(cand)
-                        break
-            if produced:
-                break
-        time.sleep(4)
-
-    if not produced:
-        raise PortraitError(f"no image after {time.time() - t0:.0f}s")
+    produced = _run(graph, timeout_s=timeout_s)
 
     from PIL import Image
     img = Image.open(produced).convert("RGB")
@@ -571,6 +574,153 @@ def generate(*, scene: str, faces, out_path: str,
     logger.info("Cover photo in %.0fs -> %s", time.time() - t0, Path(out_path).name)
     _free_gpu()
     return out_path
+
+
+def _refine_graph(*, prompt: str, face_images: list[str], patch_image: str,
+                  steps: int, guidance: float, seed: int, denoise: float,
+                  id_weight: float) -> dict:
+    """The face pass: the same PuLID-patched model, re-sampling one crop.
+
+    Deliberately the smaller half of the job. ComfyUI encodes, samples and
+    decodes; the crop and the paste-back happen in Python, where they can be
+    tested without a GPU and where a feather is a feather rather than four
+    more node types to get wrong.
+    """
+    face_nodes, face_ref = _face_batch(face_images)
+    return {**face_nodes,
+        "1": {"class_type": "UnetLoaderGGUF",
+              "inputs": {"unet_name": _resolve_unet() or UNET}},
+        "2": {"class_type": "DualCLIPLoader",
+              "inputs": {"clip_name1": T5, "clip_name2": CLIP_L,
+                         "type": "flux"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": VAE}},
+        "4": {"class_type": "PulidFluxModelLoader",
+              "inputs": {"pulid_file": PULID}},
+        "5": {"class_type": "PulidFluxEvaClipLoader", "inputs": {}},
+        "6": {"class_type": "PulidFluxInsightFaceLoader",
+              "inputs": {"provider": "CUDA"}},
+        "8": {"class_type": "ApplyPulidFlux",
+              "inputs": {"model": ["1", 0], "pulid_flux": ["4", 0],
+                         "eva_clip": ["5", 0], "face_analysis": ["6", 0],
+                         "image": face_ref, "weight": id_weight,
+                         "start_at": 0.0, "end_at": 1.0}},
+        "9": {"class_type": "CLIPTextEncode",
+              "inputs": {"clip": ["2", 0], "text": prompt}},
+        "10": {"class_type": "FluxGuidance",
+               "inputs": {"conditioning": ["9", 0], "guidance": guidance}},
+        "11": {"class_type": "ConditioningZeroOut",
+               "inputs": {"conditioning": ["9", 0]}},
+        "16": {"class_type": "LoadImage", "inputs": {"image": patch_image}},
+        "17": {"class_type": "VAEEncode",
+               "inputs": {"pixels": ["16", 0], "vae": ["3", 0]}},
+        "13": {"class_type": "KSampler",
+               "inputs": {"model": ["8", 0], "positive": ["10", 0],
+                          "negative": ["11", 0], "latent_image": ["17", 0],
+                          "seed": seed, "steps": steps, "cfg": 1.0,
+                          "sampler_name": "euler", "scheduler": "simple",
+                          "denoise": denoise}},
+        "14": {"class_type": "VAEDecode",
+               "inputs": {"samples": ["13", 0], "vae": ["3", 0]}},
+        "15": {"class_type": "SaveImage",
+               "inputs": {"images": ["14", 0], "filename_prefix": "coverface"}},
+    }
+
+
+def face_region(bbox, img_w: int, img_h: int, pad: float = 0.55) -> tuple:
+    """A square box around a face, with margin, inside the image.
+
+    Square because the patch is re-sampled at a square latent, and clamped by
+    SHIFTING rather than shrinking: a box pushed past the edge slides back in
+    at full size, so a face near the frame edge still gets a full-resolution
+    pass instead of a smaller one.
+    """
+    x1, y1, x2, y2 = (float(v) for v in bbox)
+    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    side = max(x2 - x1, y2 - y1) * (1.0 + 2.0 * pad)
+    side = min(side, float(min(img_w, img_h)))
+    left = min(max(0.0, cx - side / 2.0), img_w - side)
+    top = min(max(0.0, cy - side / 2.0), img_h - side)
+    return (int(left), int(top), int(left + side), int(top + side))
+
+
+def feather_mask(size: int, frac: float = 0.12):
+    """A soft-edged square mask for dropping the patch back in.
+
+    A hard edge shows as a seam wherever the pass shifts skin tone by even a
+    little, which it always does. The falloff is a blurred inset rectangle —
+    fully opaque in the middle where the new detail is, fading to nothing
+    before it reaches the original pixels.
+    """
+    from PIL import Image, ImageDraw, ImageFilter
+    inset = max(1, int(size * frac))
+    m = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(m).rectangle(
+        [inset, inset, size - inset - 1, size - inset - 1], fill=255)
+    return m.filter(ImageFilter.GaussianBlur(inset / 2.0))
+
+
+def paste_face(base_path: str, patch_path: str, box: tuple, out_path: str,
+               feather: float = 0.12) -> str:
+    """Composite a refined face patch back into the full frame."""
+    from PIL import Image
+    base = Image.open(base_path).convert("RGB")
+    w = box[2] - box[0]
+    patch = Image.open(patch_path).convert("RGB").resize((w, w), Image.LANCZOS)
+    base.paste(patch, (box[0], box[1]), feather_mask(w, feather))
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    base.save(out_path, quality=95)
+    return out_path
+
+
+def refine_face(*, image: str, faces, out_path: str, denoise: float = 0.40,
+                steps: int = 20, guidance: float = 3.5, id_weight: float = 1.05,
+                seed: int = 0, side: int = 768, pad: float = 0.55,
+                feather: float = 0.12, timeout_s: int = 600) -> str:
+    """Re-sample the face at full resolution and drop it back in.
+
+    The base render puts about 230 pixels of face in a 832px frame. PuLID
+    aligns identity to a 512px chip, so more than half the detail it is
+    conditioning on has nowhere to land — the sampler is being asked to draw
+    a likeness at a size that cannot hold one. That is a resolution ceiling,
+    and no id_weight setting lifts it.
+
+    So the face is cropped out, re-sampled on its own at 768, and composited
+    back. Low denoise: the pose, the lighting and the expression are already
+    right and the pass is only there to spend pixels on the identity.
+    """
+    import cv2
+    refs = [faces] if isinstance(faces, (str, Path)) else list(faces)
+    app = _analyser()
+    img = cv2.imread(image)
+    if img is None:
+        raise PortraitError(f"cannot read {image}")
+    got = app.get(img)
+    if not got:
+        raise PortraitError("no face in the base render to refine")
+    f = max(got, key=lambda x: x.bbox[2] - x.bbox[0])
+    H, W = img.shape[:2]
+    box = face_region(f.bbox, W, H, pad)
+    logger.info("Face pass: %dpx crop -> %dpx sample", box[2] - box[0], side)
+
+    from PIL import Image
+    crop_path = str(Path(out_path).with_name(f"{Path(out_path).stem}_crop.png"))
+    Image.open(image).convert("RGB").crop(box).resize(
+        (side, side), Image.LANCZOS).save(crop_path)
+
+    _free_gpu()
+    _require_free_vram(min_free_gb=15.0)
+    graph = _refine_graph(
+        prompt=("a close portrait of his face, natural skin texture, sharp "
+                "eyes, warm tungsten light, 85mm lens, photorealistic"),
+        face_images=[stage_face(r) for r in refs],
+        patch_image=stage_face(crop_path), steps=steps, guidance=guidance,
+        seed=seed or int(uuid.uuid4().int % 2**31), denoise=denoise,
+        id_weight=id_weight)
+    produced = _run(graph, timeout_s=timeout_s)
+    out = paste_face(image, produced, box, out_path, feather)
+    _free_gpu()
+    logger.info("Refined face -> %s", Path(out).name)
+    return out
 
 
 RESTART = "/home/vishalan/comfy_restart.sh"
