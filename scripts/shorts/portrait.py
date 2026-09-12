@@ -71,7 +71,10 @@ STYLE = (
 # none, which is most of why it read as "a similar man" rather than "him".
 #
 # PuLID will never supply these. They have to be said in words, so they are.
-TRAITS = ("wearing thin round metal-framed glasses, short dark hair, "
+# Shape is left out on purpose: the references show round frames in the
+# footage and rectangular ones in the portrait, so naming either would
+# contradict half the evidence. "Thin metal-rimmed" is what they share.
+TRAITS = ("wearing thin metal-rimmed glasses, short dark hair, "
           "moustache and light stubble")
 NEGATIVE = (
     "cartoon, illustration, 3d render, cgi, plastic skin, oversaturated, "
