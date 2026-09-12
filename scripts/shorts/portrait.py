@@ -222,17 +222,53 @@ def select_references(cands: list[dict], *, want: int = 4,
 def face_references(video: str, out_dir: str, *, want: int = 4,
                     samples: int = 24, pad: float = 0.9,
                     min_face_px: int = 150) -> list[str]:
-    """Cut a SET of face references from footage.
+    """The reference set from a single video. See gather_references."""
+    return gather_references([video], out_dir, want=want, samples=samples,
+                             pad=pad, min_face_px=min_face_px)
+
+
+VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi"}
+
+
+def _candidates(app, img, pad: float, min_face_px: int, src: str) -> list[dict]:
+    """Every usable face in one image, reduced to measurements."""
+    out = []
+    for f in app.get(img):
+        w = float(f.bbox[2] - f.bbox[0])
+        if w < min_face_px:
+            continue
+        patch = _crop(img, f.bbox, pad)
+        if patch is None:
+            continue
+        out.append({"patch": patch, "w": w, "det": float(f.det_score),
+                    "sharp": _sharpness(patch), "yaw": _yaw(f.kps),
+                    "emb": _norm(f.normed_embedding), "src": src})
+    return out
+
+
+def gather_references(sources: list[str], out_dir: str, *, want: int = 4,
+                      samples: int = 24, pad: float = 0.9,
+                      min_face_px: int = 150) -> list[str]:
+    """Build the reference set from any mix of stills and footage.
 
     One reference was the first mistake to fix and not the last. PuLID
     averages the identity embedding over however many images it is given, and
     a single frame carries that frame's accidents with it — the angle of the
-    head, the half-formed vowel on the mouth, whatever the autofocus was doing.
-    Averaging four frames taken at different moments cancels the accidents and
-    leaves what is constant, which is the face. This is the node's own
-    documented path to a closer likeness, and we were not using it.
+    head, the half-formed vowel on the mouth, whatever the autofocus was
+    doing. Averaging several frames cancels the accidents and leaves what is
+    constant, which is the face. This is the node's own documented path to a
+    closer likeness, and we were not using it.
 
-    Three filters decide which frames get in:
+    Stills and footage both get in, for opposite reasons. A still is posed and
+    usually the largest face available; a video frame is smaller but caught
+    mid-expression, and several across a clip is exactly the variety the
+    averaging wants. Measured on this channel's own material the stills were
+    the bigger faces (433px) and the video frames the sharper ones, so
+    choosing one source over the other gives up something either way. They
+    compete on the same measurements instead, and the set is picked on merit
+    rather than on which folder the file came from.
+
+    Three filters decide what gets in:
 
     size and sharpness, because the node aligns to a 512px chip and upscaling
     a small or motion-blurred face invents detail rather than supplying it;
@@ -241,8 +277,7 @@ def face_references(video: str, out_dir: str, *, want: int = 4,
     "biggest, most confident face" will happily average a stranger into the
     owner. The medoid embedding is taken as the owner and outliers dropped;
 
-    pose spread, because four frontal frames are nearly one frame. Candidates
-    are bucketed by yaw and picked round-robin so the average spans angles.
+    pose spread, because four frontal frames are nearly one frame.
 
     Each crop is then re-detected at the size it will be handed over. A
     reference PuLID cannot find is not an error there — it logs a warning and
@@ -253,39 +288,40 @@ def face_references(video: str, out_dir: str, *, want: int = 4,
     import subprocess
     import cv2
 
-    dur = _duration(video)
-    if dur <= 0:
-        raise PortraitError(f"cannot read a duration from {Path(video).name}")
     app = _analyser()
     tmp_dir = Path(out_dir, "_frames")
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
     cands: list[dict] = []
-    for i in range(samples):
-        t = dur * (0.04 + 0.92 * i / max(1, samples - 1))
-        tmp = tmp_dir / f"f{i:03d}.png"
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.2f}",
-                        "-i", video, "-frames:v", "1", str(tmp)],
-                       capture_output=True)
-        img = cv2.imread(str(tmp))
-        if img is None:
+    for src in sources:
+        p = Path(src)
+        if not p.is_file():
+            logger.info("Face refs: %s not found — skipped", src)
             continue
-        for f in app.get(img):
-            w = float(f.bbox[2] - f.bbox[0])
-            if w < min_face_px:
-                continue
-            patch = _crop(img, f.bbox, pad)
-            if patch is None:
-                continue
-            cands.append({"img": img, "bbox": f.bbox, "patch": patch,
-                          "w": w, "det": float(f.det_score),
-                          "sharp": _sharpness(patch), "yaw": _yaw(f.kps),
-                          "emb": _norm(f.normed_embedding), "t": t})
+        if p.suffix.lower() not in VIDEO_SUFFIXES:
+            img = cv2.imread(str(p))
+            if img is not None:
+                cands += _candidates(app, img, pad, min_face_px, p.name)
+            continue
+        dur = _duration(str(p))
+        if dur <= 0:
+            logger.info("Face refs: no duration for %s — skipped", p.name)
+            continue
+        for i in range(samples):
+            t = dur * (0.04 + 0.92 * i / max(1, samples - 1))
+            tmp = tmp_dir / f"{p.stem}_{i:03d}.png"
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.2f}",
+                            "-i", str(p), "-frames:v", "1", str(tmp)],
+                           capture_output=True)
+            img = cv2.imread(str(tmp))
+            if img is not None:
+                cands += _candidates(app, img, pad, min_face_px,
+                                     f"{p.name}@{t:.1f}s")
 
     if not cands:
         raise PortraitError(
-            f"no face at least {min_face_px}px found in {Path(video).name} — "
-            f"cannot condition identity")
+            f"no face at least {min_face_px}px found in {len(sources)} "
+            f"source(s) — cannot condition identity")
 
     picked, strangers = select_references(cands, want=want)
     if strangers:
@@ -295,15 +331,16 @@ def face_references(video: str, out_dir: str, *, want: int = 4,
     out: list[str] = []
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     for n, c in enumerate(picked):
-        p = Path(out_dir, f"face_{n}.png")
-        cv2.imwrite(str(p), c["patch"])
-        if not app.get(cv2.imread(str(p))):
-            logger.info("Face refs: %s did not survive the crop — dropped", p.name)
-            p.unlink(missing_ok=True)
+        dest = Path(out_dir, f"face_{n}.png")
+        cv2.imwrite(str(dest), c["patch"])
+        if not app.get(cv2.imread(str(dest))):
+            logger.info("Face refs: %s did not survive the crop — dropped",
+                        dest.name)
+            dest.unlink(missing_ok=True)
             continue
-        out.append(str(p))
-        logger.info("Face ref %d: t=%.1fs  %dpx  yaw %+.2f  sharp %.0f",
-                    n, c["t"], int(c["w"]), c["yaw"], c["sharp"])
+        out.append(str(dest))
+        logger.info("Face ref %d: %s  %dpx  yaw %+.2f  sharp %.0f",
+                    n, c["src"], int(c["w"]), c["yaw"], c["sharp"])
 
     if not out:
         raise PortraitError("every candidate reference failed re-detection")
