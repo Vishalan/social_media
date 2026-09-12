@@ -496,15 +496,8 @@ def _graph(*, prompt: str, face_images: list[str], width: int, height: int,
     }
 
 
-def _require_free_vram(min_free_gb: float) -> None:
-    """Refuse to load FLUX onto a card that is already occupied.
-
-    The advisory /free below asks ComfyUI to drop ITS models and says nothing
-    about the lip-sync and TTS services sharing this card. Twice a generation
-    began on a partly-occupied card and took the whole machine off the
-    network — no clean OOM, no dmesg trace, a hard lock. Failing here costs a
-    run; not checking costs a reboot.
-    """
+def _free_vram_gb() -> Optional[float]:
+    """Free VRAM in GB, or None if the card cannot be queried."""
     import subprocess
     try:
         out = subprocess.run(
@@ -514,13 +507,40 @@ def _require_free_vram(min_free_gb: float) -> None:
         used, total = (float(x) for x in out.split(",")[:2])
     except Exception as exc:                        # noqa: BLE001 — advisory
         logger.debug("vram check skipped: %s", str(exc)[:80])
-        return
-    free_gb = (total - used) / 1024
-    if free_gb < min_free_gb:
-        raise PortraitError(
-            f"only {free_gb:.1f}GB VRAM free, need {min_free_gb:.0f} — another "
-            f"model is resident; free it rather than risking the machine")
-    logger.info("VRAM clear: %.1fGB free", free_gb)
+        return None
+    return (total - used) / 1024
+
+
+def _require_free_vram(min_free_gb: float, *, wait_s: int = 90) -> None:
+    """Refuse to load FLUX onto a card that is already occupied.
+
+    The advisory /free below asks ComfyUI to drop ITS models and says nothing
+    about the lip-sync and TTS services sharing this card. Twice a generation
+    began on a partly-occupied card and took the whole machine off the
+    network — no clean OOM, no dmesg trace, a hard lock. Failing here costs a
+    run; not checking costs a reboot.
+
+    It waits rather than failing on the first reading, because the common case
+    for a busy card is now a restart that has only just happened: kill -9 on a
+    process holding twelve gigabytes does not return them by the time the
+    replacement answers its port, and the reclaim is not instant. Refusing
+    outright there would fail every sweep on its second trial.
+    """
+    deadline = time.time() + max(0, wait_s)
+    while True:
+        free_gb = _free_vram_gb()
+        if free_gb is None:
+            return
+        if free_gb >= min_free_gb:
+            logger.info("VRAM clear: %.1fGB free", free_gb)
+            return
+        if time.time() >= deadline:
+            raise PortraitError(
+                f"only {free_gb:.1f}GB VRAM free after {wait_s}s, need "
+                f"{min_free_gb:.0f} — another model is resident; free it "
+                f"rather than risking the machine")
+        logger.info("VRAM at %.1fGB free, waiting for the card…", free_gb)
+        time.sleep(5)
 
 
 def _run(graph: dict, *, timeout_s: int) -> str:
@@ -781,7 +801,7 @@ def refine_face(*, image: str, faces, out_path: str, denoise: float = 0.40,
 RESTART = "/home/vishalan/comfy_restart.sh"
 
 
-def restart_comfy(*, wait_s: int = 180) -> bool:
+def restart_comfy(*, wait_s: int = 180, min_free_gb: float = 20.0) -> bool:
     """Bounce ComfyUI and wait for it to answer again.
 
     A single generation on a cold card completes; a second one on the same
@@ -795,14 +815,35 @@ def restart_comfy(*, wait_s: int = 180) -> bool:
         logger.info("No %s — not restarting", RESTART)
         return False
     subprocess.run(["bash", RESTART], capture_output=True, timeout=60)
-    for _ in range(wait_s // 3):
+
+    deadline = time.time() + wait_s
+    up = False
+    while time.time() < deadline:
         time.sleep(3)
         try:
             with urllib.request.urlopen(f"{COMFY}/system_stats", timeout=5):
-                return True
+                up = True
+                break
         except Exception:                           # noqa: BLE001 — still booting
             continue
-    logger.warning("ComfyUI did not come back within %ds", wait_s)
+    if not up:
+        logger.warning("ComfyUI did not come back within %ds", wait_s)
+        return False
+
+    # The port answering is not the card being free. The replacement binds its
+    # socket in a second or two; the twelve gigabytes the killed process was
+    # holding come back on the driver's schedule, not ours. Returning here
+    # without waiting is how a chained run starts its second generation on a
+    # card that is still handing memory back — which is the one thing this
+    # whole restart dance exists to prevent.
+    while time.time() < deadline:
+        free_gb = _free_vram_gb()
+        if free_gb is None or free_gb >= min_free_gb:
+            if free_gb is not None:
+                logger.info("Restarted; %.1fGB free", free_gb)
+            return True
+        time.sleep(3)
+    logger.warning("ComfyUI restarted but the card is still occupied")
     return False
 
 

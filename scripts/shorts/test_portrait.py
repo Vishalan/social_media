@@ -220,6 +220,54 @@ def test_refine_pass_samples_the_crop_and_keeps_identity_separate():
     assert 0.0 < g["13"]["inputs"]["denoise"] < 1.0, "a face pass at full denoise"
 
 
+# --- waiting for the card ---------------------------------------------------
+
+def _with_vram(readings, fn):
+    """Run fn with _free_vram_gb returning each reading in turn, then the last."""
+    import shorts.portrait as P
+    seq = list(readings)
+    calls = []
+
+    def fake():
+        calls.append(1)
+        return seq.pop(0) if len(seq) > 1 else seq[0]
+
+    real_vram, real_sleep = P._free_vram_gb, P.time.sleep
+    P._free_vram_gb, P.time.sleep = fake, lambda _s: None
+    try:
+        return fn(), len(calls)
+    finally:
+        P._free_vram_gb, P.time.sleep = real_vram, real_sleep
+
+
+def test_vram_guard_waits_for_a_card_that_frees_up():
+    # A card mid-reclaim after kill -9: busy, busy, then free. Refusing on the
+    # first reading would fail every sweep on its second trial.
+    from shorts.portrait import _require_free_vram
+    _, calls = _with_vram([2.0, 8.0, 21.0],
+                          lambda: _require_free_vram(15.0, wait_s=60))
+    assert calls >= 3, f"gave up after {calls} reading(s)"
+
+
+def test_vram_guard_still_refuses_a_card_that_stays_busy():
+    from shorts.portrait import _require_free_vram, PortraitError
+    def go():
+        try:
+            _require_free_vram(15.0, wait_s=0)
+            return "allowed"
+        except PortraitError:
+            return "refused"
+    verdict, _ = _with_vram([3.0], go)
+    assert verdict == "refused", "let a generation start on an occupied card"
+
+
+def test_vram_guard_passes_when_the_card_cannot_be_queried():
+    # No nvidia-smi is not evidence of a busy card; it must not block the run.
+    from shorts.portrait import _require_free_vram
+    verdict, _ = _with_vram([None], lambda: _require_free_vram(15.0, wait_s=0) or "ok")
+    assert verdict == "ok"
+
+
 if __name__ == "__main__":
     import traceback
     fails = 0
