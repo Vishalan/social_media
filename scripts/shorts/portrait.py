@@ -62,6 +62,17 @@ STYLE = (
     "muted warm colour grade, natural skin texture, calm confident expression, "
     "looking at camera, shot on a full-frame camera, high detail"
 )
+# What the identity embedding does NOT carry.
+#
+# ArcFace is trained to be invariant to precisely the things that let you
+# recognise someone across a room, because a recognition model has to match
+# the same person with and without them. Glasses are the clearest case: he
+# wears them in every available reference and the first generated cover had
+# none, which is most of why it read as "a similar man" rather than "him".
+#
+# PuLID will never supply these. They have to be said in words, so they are.
+TRAITS = ("wearing thin round metal-framed glasses, short dark hair, "
+          "moustache and light stubble")
 NEGATIVE = (
     "cartoon, illustration, 3d render, cgi, plastic skin, oversaturated, "
     "harsh flash, studio seamless backdrop, watermark, text, logo, letters, "
@@ -555,7 +566,8 @@ def generate(*, scene: str, faces, out_path: str,
              width: int = 832, height: int = 1216, steps: int = 20,
              guidance: float = 3.5, seed: int = 0,
              id_weight: float = 1.05, start_at: float = 0.0,
-             end_at: float = 1.0, timeout_s: int = 900) -> str:
+             end_at: float = 1.0, traits: str = TRAITS,
+             timeout_s: int = 900) -> str:
     """One cover photograph.
 
     Rendered at 832x1216 rather than the final 1080x1920. FLUX is trained near
@@ -593,7 +605,8 @@ def generate(*, scene: str, faces, out_path: str,
         logger.debug("face precheck skipped: %s", str(exc)[:90])
 
     names = [stage_face(r) for r in refs]
-    full = f"{scene.strip().rstrip('.')}. {STYLE}"
+    full = f"{scene.strip().rstrip('.')}. {traits}. {STYLE}" if traits \
+        else f"{scene.strip().rstrip('.')}. {STYLE}"
     graph = _graph(prompt=full, face_images=names, width=width, height=height,
                    steps=steps, guidance=guidance,
                    seed=seed or int(uuid.uuid4().int % 2**31),
@@ -712,7 +725,8 @@ def paste_face(base_path: str, patch_path: str, box: tuple, out_path: str,
 def refine_face(*, image: str, faces, out_path: str, denoise: float = 0.40,
                 steps: int = 20, guidance: float = 3.5, id_weight: float = 1.05,
                 seed: int = 0, side: int = 768, pad: float = 0.55,
-                feather: float = 0.12, timeout_s: int = 600) -> str:
+                feather: float = 0.12, traits: str = TRAITS,
+                timeout_s: int = 600) -> str:
     """Re-sample the face at full resolution and drop it back in.
 
     The base render puts about 230 pixels of face in a 832px frame. PuLID
@@ -747,8 +761,9 @@ def refine_face(*, image: str, faces, out_path: str, denoise: float = 0.40,
     _free_gpu()
     _require_free_vram(min_free_gb=15.0)
     graph = _refine_graph(
-        prompt=("a close portrait of his face, natural skin texture, sharp "
-                "eyes, warm tungsten light, 85mm lens, photorealistic"),
+        prompt=(f"a close portrait of his face, {traits}, natural skin "
+                f"texture, sharp eyes, warm tungsten light, 85mm lens, "
+                f"photorealistic"),
         face_images=[stage_face(r) for r in refs],
         patch_image=stage_face(crop_path), steps=steps, guidance=guidance,
         seed=seed or int(uuid.uuid4().int % 2**31), denoise=denoise,
